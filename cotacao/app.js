@@ -917,7 +917,8 @@ async function abrirArquivoDataCar(file) {
         }
         return -1;
       })(),
-      linhas: dados.map(cels => ({ cels })),
+      linhas: dados.map((cels, orig) => ({ cels, orig })),
+      ordem: { campo: null, dir: 1 },
       cursor: 0,
     };
     casarLinhasDataCar();
@@ -1002,6 +1003,36 @@ function teclaDataCar(e) {
   }
 }
 
+const ORDEM_DC = { chave: 'OBS', arquivo: 'No arquivo', produto: 'Produto cadastrado', marca: 'Marca' };
+
+function chaveOrdemDataCar(l, campo) {
+  const d = ui.datacar;
+  const txt = c => (c >= 0 ? l.cels[c] : '');
+  const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
+  if (campo === 'chave') return l.chave || '';
+  if (campo === 'arquivo') return [d.colCod >= 0 && d.colCod !== d.col ? txt(d.colCod) : '', txt(d.colDesc)].filter(Boolean).join(' ') || l.cels.join(' ');
+  if (campo === 'produto') return p ? `${p.codigo} ${p.descricao}` : '';
+  if (campo === 'marca') return (p && p.marca) || l.marca || txt(d.colMarca) || '';
+  return '';
+}
+
+/** Ordena as linhas do arquivo: 1º clique crescente, 2º decrescente, 3º volta à ordem do arquivo. */
+function ordenarDataCar(campo) {
+  const d = ui.datacar;
+  const atual = d.linhas[d.cursor];
+  if (d.ordem.campo !== campo) d.ordem = { campo, dir: 1 };
+  else if (d.ordem.dir === 1) d.ordem.dir = -1;
+  else d.ordem = { campo: null, dir: 1 };
+  const { campo: c, dir } = d.ordem;
+  d.linhas.sort((a, b) => {
+    if (!c) return a.orig - b.orig;
+    const ka = chaveOrdemDataCar(a, c), kb = chaveOrdemDataCar(b, c);
+    if (!ka !== !kb) return ka ? -1 : 1; // vazios sempre no fim
+    return (ka.localeCompare(kb, 'pt-BR', { numeric: true, sensitivity: 'base' }) * dir) || a.orig - b.orig;
+  });
+  d.cursor = Math.max(0, d.linhas.indexOf(atual));
+}
+
 function renderDataCar() {
   const d = ui.datacar;
   if (!d) return '';
@@ -1033,7 +1064,11 @@ function renderDataCar() {
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
       </div>
       <div class="table-wrap dc-lista"><table>
-        <thead><tr><th></th><th>${esc(d.cab[d.col])}</th><th>No arquivo</th><th>Produto cadastrado</th><th>Marca</th></tr></thead>
+        <thead><tr><th></th>${Object.entries(ORDEM_DC).map(([campo, rotulo]) => {
+          const ativo = d.ordem.campo === campo;
+          const seta = ativo ? (d.ordem.dir === 1 ? ' ▲' : ' ▼') : '';
+          return `<th aria-sort="${ativo ? (d.ordem.dir === 1 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-ordem ${ativo ? 'ativo' : ''}" data-act="dcOrdenar" data-campo="${campo}" title="Ordenar por ${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}">${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}${seta}</button></th>`;
+        }).join('')}</tr></thead>
         <tbody>${d.linhas.map((l, i) => {
           const p = l.produtoId ? prod[l.produtoId] : null;
           const resumo = [d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '', txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
@@ -1720,6 +1755,7 @@ function adicionarItem(produtoId, quantidade = 1) {
 const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
+  dcOrdenar: el => { ordenarDataCar(el.dataset.campo); render(); focarDataCar(); },
   dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.chave) l.sel = true; }); render(); focarDataCar(); },
   dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); render(); focarDataCar(); },
   dcCancelar: () => { ui.datacar = null; render(); },
