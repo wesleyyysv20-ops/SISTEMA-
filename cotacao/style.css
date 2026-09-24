@@ -324,7 +324,9 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
 .dlg.dlg-largo { width: min(1000px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
 .dc-lista { overflow: auto; flex: 1; min-height: 120px; border: 1px solid var(--line); border-radius: 7px; }
 .dc-lista thead th { position: sticky; top: 0; z-index: 1; }
-tr.dc-off td { opacity: .5; }
+tr.dc-vazia td { opacity: .5; }
+.dc-lista tbody tr.dc-on td { background: var(--ok-bg); }
+.dc-lista tbody tr.dc-on td:nth-child(2) { color: var(--ok); }
 .th-ordem {
   all: unset;
   cursor: pointer;
@@ -338,6 +340,7 @@ tr.dc-off td { opacity: .5; }
 .th-ordem:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
 .dc-lista tbody tr { cursor: pointer; }
 .dc-lista tbody tr.dc-atual td { background: var(--blue-bg); }
+.dc-lista tbody tr.dc-atual.dc-on td { background: color-mix(in srgb, var(--ok-bg) 55%, var(--blue-bg)); }
 .dc-lista tbody tr.dc-atual td:first-child { box-shadow: inset 3px 0 0 var(--primary-2); }
 #dcCaixa:focus { outline: none; }
 .kbd {

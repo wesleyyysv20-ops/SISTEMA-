@@ -886,7 +886,8 @@ function casarLinhasDataCar() {
     }
     l.chave = chave;
     l.produtoId = p ? p.id : null;
-    l.sel = !!chave;
+    if (!chave) l.sel = false;
+    else if (l.sel === undefined) l.sel = false; // começam todos desmarcados
   });
 }
 
@@ -945,7 +946,7 @@ function marcarLinhaDataCar(i, valor) {
   l.sel = valor;
   const tr = document.querySelector(`[data-dc-linha="${i}"]`);
   if (tr) {
-    tr.classList.toggle('dc-off', !valor);
+    tr.classList.toggle('dc-on', valor);
     const cb = tr.querySelector('[data-dc-sel]');
     if (cb) cb.checked = valor;
   }
@@ -1078,7 +1079,7 @@ function renderDataCar() {
         <tbody>${d.linhas.map((l, i) => {
           const p = l.produtoId ? prod[l.produtoId] : null;
           const resumo = [d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '', txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
-          return `<tr class="${l.sel ? '' : 'dc-off'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
+          return `<tr class="${l.sel ? 'dc-on' : ''} ${l.chave ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
             <td><input type="checkbox" data-dc-sel="${i}" ${l.sel ? 'checked' : ''} ${l.chave ? '' : 'disabled'} aria-label="Selecionar linha ${i + 1}"></td>
             <td><b>${esc(l.chave || '—')}</b></td>
             <td class="small">${esc(resumo)}</td>
