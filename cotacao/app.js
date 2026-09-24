@@ -1007,6 +1007,14 @@ async function abrirArquivoDataCar(file) {
 const grupoDc = v => semAcento(v).replace(/\s+/g, ' ');
 const chaveCodigo = v => semAcento(v).replace(/\s+/g, '');
 
+/** Partes de um código para achar repetidos: "2527/GR12527" -> ["2527", "gr12527", "2527/gr12527"]. */
+function tokensCodigo(cod) {
+  const k = chaveCodigo(cod || '');
+  if (!k) return [];
+  const partes = k.split(/[\/,;|]+/).filter(t => t.length >= 3);
+  return [...new Set([k, ...partes])];
+}
+
 const ORDEM_DC = { chave: 'OBS', arquivo: 'No arquivo', produto: 'Produto cadastrado', marca: 'Marca' };
 
 function chaveOrdemDataCar(l, campo) {
@@ -1332,7 +1340,8 @@ function conteudoItem() {
   const txt = cc => (cc >= 0 ? l.cels[cc] : '');
   const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
   const m = marcaAtualDataCar(l, p);
-  const repetido = l.codigo && todosDataCar().filter(x => chaveCodigo(x.codigo || '') === chaveCodigo(l.codigo)).length > 1;
+  const meusTokens = new Set(tokensCodigo(l.codigo));
+  const repetido = l.codigo && todosDataCar().some(x => x !== l && tokensCodigo(x.codigo).some(t => meusTokens.has(t)));
   const vai = fila.filter(x => x.decisao === 'vai').length;
   const nao = fila.filter(x => x.decisao === 'nao').length;
   return `${progressoDataCar()}
@@ -1527,19 +1536,26 @@ function renderNova() {
   const forn = byId(db.fornecedores);
   r.fornecedorIds = r.fornecedorIds.filter(id => forn[id]);
 
-  // Códigos repetidos: o mesmo código em mais de um item, ou várias linhas do arquivo no mesmo item.
-  const contaCod = {};
-  r.itens.forEach(x => { const k = chaveCodigo(x.codigoArquivo || prod[x.produtoId].codigo); if (k) contaCod[k] = (contaCod[k] || 0) + 1; });
-  const repetido = x => {
-    if (x.dupVisto) return false;
-    const k = chaveCodigo(x.codigoArquivo || prod[x.produtoId].codigo);
-    return (k && contaCod[k] > 1) || (x.obsArquivo || []).length > 1;
-  };
+  // Códigos repetidos: itens cujo código é igual ou CONTÉM o mesmo código de outro item
+  // (ex.: "2527/GR12527" e "2527/RD45552", ou "UB152" e "UB152/20036"), ou várias linhas do arquivo no mesmo item.
+  const codDe = x => x.codigoArquivo || prod[x.produtoId].codigo || '';
+  const porToken = new Map();
+  const tokensDe = r.itens.map((x, i) => {
+    const toks = tokensCodigo(codDe(x));
+    toks.forEach(t => { if (!porToken.has(t)) porToken.set(t, new Set()); porToken.get(t).add(i); });
+    return toks;
+  });
+  const parceiros = r.itens.map((x, i) => {
+    const set = new Set();
+    tokensDe[i].forEach(t => porToken.get(t).forEach(j => { if (j !== i) set.add(j); }));
+    return [...set];
+  });
+  const repetido = (x, i = r.itens.indexOf(x)) => !x.dupVisto && (parceiros[i].length > 0 || (x.obsArquivo || []).length > 1);
   const nRepetidos = r.itens.filter(repetido).length;
 
   const linhas = r.itens.map((x, i) => {
     const p = prod[x.produtoId];
-    const dup = repetido(x);
+    const dup = repetido(x, i);
     // OBS da planilha original: todas as linhas do arquivo com este código; senão as linhas usadas; senão a OBS do cadastro
     const k = chaveCodigo(x.codigoArquivo || p.codigo);
     const daPlanilha = (r.obsPorCodigo && r.obsPorCodigo[k]) || x.obsArquivo || [];
@@ -1548,7 +1564,7 @@ function renderNova() {
     const textoObs = daPlanilha.length ? obs : p.obs ? [p.obs] : [];
     return `<tr data-item-linha="${i}" class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
       <td class="c">${i + 1}</td>
-      <td>${esc(x.codigoArquivo || p.codigo)}${dup ? ' <span class="badge warn">repetido</span>' : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
+      <td>${esc(x.codigoArquivo || p.codigo)}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: <b>${parceiros[i].slice(0, 4).map(j => esc(codDe(r.itens[j]))).join(' · ')}</b>${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}">${origemObs}: <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
@@ -2201,12 +2217,7 @@ const acoes = {
     const r = rascunho();
     const x = r.itens[+el.dataset.i];
     if (!x) return;
-    const prod = byId(db.produtos);
-    const k = chaveCodigo(x.codigoArquivo || prod[x.produtoId]?.codigo);
-    // os outros itens com o mesmo código deixam de ser "repetidos" se sobrar só um sem decisão
-    x.dupVisto = true;
-    const iguais = r.itens.filter(y => !y.dupVisto && chaveCodigo(y.codigoArquivo || prod[y.produtoId]?.codigo) === k);
-    if (iguais.length === 1 && (iguais[0].obsArquivo || []).length <= 1) iguais[0].dupVisto = true;
+    x.dupVisto = true; // analisado: fica na cotação e sai do destaque
     salvar();
     render();
   },
