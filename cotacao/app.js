@@ -924,7 +924,7 @@ async function abrirArquivoDataCar(file) {
       })(),
       linhas: dados.map((cels, orig) => ({ cels, orig })),
       ordem: { campo: 'chave', dir: 1 }, // abre já em ordem A-Z pelo OBS
-      agrupar: true,
+      agrupar: false, // marca item por item; o grupo inteiro só com a opção ligada
       cursor: 0,
     };
     casarLinhasDataCar();
