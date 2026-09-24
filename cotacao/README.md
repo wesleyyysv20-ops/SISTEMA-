@@ -22,7 +22,7 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
 1. **Configurações:** preencha nome da loja, CNPJ, seu nome, telefone e e-mail
    (aparecem no cabeçalho da planilha e no e-mail). Dá para editar o texto padrão do e-mail.
 2. **Produtos:** cadastre um a um ou importe uma planilha (`.xlsx` ou `.csv`) com as colunas
-   `Código, Descrição, Unidade, Marca, Categoria`. Produtos com o mesmo código são atualizados.
+   `Código, Descrição, Unidade, Similar, Marca, Categoria`. Produtos com o mesmo código são atualizados.
 3. **Fornecedores:** cadastre nome, contato e e-mail.
 4. **Nova cotação:** busque os produtos, informe as quantidades, marque os fornecedores e clique
    em *Criar cotação*.

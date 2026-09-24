@@ -155,7 +155,7 @@ async function comRetentativa(fn) {
 }
 
 async function carregarNuvem() {
-  const ler = async col => (await nuvem.db.collection(col).get()).docs.filter(d => d.exists).map(d => [`${col}/${d.id}`, d.data()]);
+  const ler = async col => (await nuvem.db.collection(col).limit(1000).get()).docs.filter(d => d.exists).map(d => [`${col}/${d.id}`, d.data()]);
   const [sis, prods, forns, cots] = await Promise.all(['sistema', 'produtos', 'fornecedores', 'cotacoes'].map(ler));
   const todos = [...sis, ...prods, ...forns, ...cots];
   if (!todos.length) return null;
@@ -522,12 +522,12 @@ async function gerarPlanilha(c, f) {
   c.itens.forEach((it, i) => {
     const r = FIRST + i;
     const row = ws.getRow(r);
-    row.values = [i + 1, it.codigo || '', it.descricao, it.marca || '', it.unidade || '', it.quantidade];
+    row.values = [i + 1, it.codigo || '', it.similar ? `${it.descricao}\nSimilar: ${it.similar}` : it.descricao, it.marca || '', it.unidade || '', it.quantidade];
     row.getCell(8).value = { formula: `IF(G${r}="","",F${r}*G${r})` };
     for (let col = 1; col <= 10; col++) {
       const cell = row.getCell(col);
       cell.border = XL.borda;
-      cell.alignment = { vertical: 'middle', wrapText: col === 3 || col === 10 };
+      cell.alignment = { vertical: 'middle', wrapText: col === 2 || col === 3 || col === 10 };
     }
     row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
     row.getCell(5).alignment = { horizontal: 'center', vertical: 'middle' };
@@ -775,6 +775,7 @@ async function exportarProdutos() {
     { header: 'Código', key: 'codigo', width: 16 },
     { header: 'Descrição', key: 'descricao', width: 50 },
     { header: 'Unidade', key: 'unidade', width: 10 },
+    { header: 'Similar', key: 'similar', width: 22 },
     { header: 'Marca', key: 'marca', width: 20 },
     { header: 'Categoria', key: 'categoria', width: 20 },
     { header: 'Observação', key: 'obs', width: 30 },
@@ -788,7 +789,8 @@ const MAPA_COLUNAS = {
   codigo: ['codigo', 'cod', 'cod.', 'sku', 'referencia interna', 'ref interna'],
   descricao: ['descricao', 'produto', 'nome', 'item', 'descricao do produto'],
   unidade: ['unidade', 'un', 'und', 'unid', 'unid.', 'un.'],
-  marca: ['marca', 'fabricante', 'referencia', 'ref', 'marca/ref.', 'marca/ref'],
+  similar: ['similar', 'similares', 'equivalente', 'codigo similar', 'cod similar'],
+  marca: ['marca', 'fabricante', 'referencia', 'ref', 'marca/ref.', 'marca/ref', 'brand'],
   categoria: ['categoria', 'grupo', 'departamento', 'secao'],
   obs: ['observacao', 'obs', 'observacoes'],
 };
@@ -843,7 +845,7 @@ async function importarProdutos(file) {
     let novos = 0, atualizados = 0;
     for (const l of dados) {
       const get = k => (idx[k] != null ? String(l[idx[k]] ?? '').trim() : '');
-      const p = { codigo: get('codigo'), descricao: get('descricao'), unidade: get('unidade').toUpperCase() || 'UN', marca: get('marca'), categoria: get('categoria'), obs: get('obs') };
+      const p = { codigo: get('codigo'), similar: get('similar'), descricao: get('descricao'), unidade: get('unidade').toUpperCase() || 'UN', marca: get('marca'), categoria: get('categoria'), obs: get('obs') };
       if (!p.descricao) continue;
       const existente = p.codigo && porCodigo[semAcento(p.codigo)];
       if (existente) {
@@ -919,7 +921,7 @@ function renderNova() {
     return `<tr>
       <td class="c">${i + 1}</td>
       <td>${esc(p.codigo)}</td>
-      <td>${esc(p.descricao)}</td>
+      <td>${esc(p.descricao)}${p.similar ? `<br><span class="small muted">Similar: ${esc(p.similar)}</span>` : ''}</td>
       <td>${esc(p.marca)}</td>
       <td class="c">${esc(p.unidade)}</td>
       <td style="width:110px"><input class="num" inputmode="decimal" data-qtd="${i}" value="${esc(fmtNum(x.quantidade))}"></td>
@@ -946,7 +948,7 @@ function renderNova() {
   <section class="card">
     <h3>1. Itens da cotação (${r.itens.length})</h3>
     <div class="search">
-      <input id="buscaProd" placeholder="Buscar produto por código, descrição ou marca… (Enter adiciona o primeiro)" autocomplete="off">
+      <input id="buscaProd" placeholder="Buscar por código, similar, descrição ou marca… (Enter adiciona o primeiro)" autocomplete="off">
       <div id="resultadosProd" class="results"></div>
     </div>
     <details>
@@ -993,11 +995,11 @@ function resultadosBusca(q) {
   const termos = q.split(/\s+/);
   const ja = new Set(rascunho().itens.map(x => x.produtoId));
   const achados = db.produtos
-    .filter(p => { const t = semAcento(`${p.codigo} ${p.descricao} ${p.marca} ${p.categoria}`); return termos.every(w => t.includes(w)); })
+    .filter(p => { const t = semAcento(`${p.codigo} ${p.similar || ''} ${p.descricao} ${p.marca} ${p.categoria}`); return termos.every(w => t.includes(w)); })
     .slice(0, 30);
   box.innerHTML = achados.length
     ? achados.map(p => `<button type="button" data-act="addItem" data-id="${p.id}" ${ja.has(p.id) ? 'disabled' : ''}>
-        <b>${esc(p.codigo || '—')}</b> · ${esc(p.descricao)} ${p.marca ? `<span class="muted">(${esc(p.marca)})</span>` : ''} <span class="muted small">${esc(p.unidade)}</span>
+        <b>${esc(p.codigo || '—')}</b> · ${esc(p.descricao)} ${p.marca ? `<span class="muted">(${esc(p.marca)})</span>` : ''}${p.similar ? ` <span class="muted small">sim. ${esc(p.similar)}</span>` : ''} <span class="muted small">${esc(p.unidade)}</span>
         ${ja.has(p.id) ? '<span class="badge">já adicionado</span>' : ''}</button>`).join('')
     : '<div class="none">Nenhum produto encontrado. Use "Cadastrar produto novo" abaixo.</div>';
 }
@@ -1157,7 +1159,7 @@ function renderCotacao(id) {
       <tbody>
         ${comp.linhas.map(l => `<tr>
           <td class="c">${l.i + 1}</td>
-          <td>${esc(l.it.descricao)}<br><span class="small muted">${esc([l.it.codigo, l.it.marca].filter(Boolean).join(' · '))}</span></td>
+          <td>${esc(l.it.descricao)}<br><span class="small muted">${esc([l.it.codigo, l.it.similar && 'sim. ' + l.it.similar, l.it.marca].filter(Boolean).join(' · '))}</span></td>
           <td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>
           ${l.precos.map((p, j) => {
             const o = c.fornecedores[j].respostas?.[l.i];
@@ -1231,13 +1233,17 @@ function linhasProdutos() {
   const q = semAcento(ui.filtroProd);
   const precos = ultimosPrecos();
   const lista = db.produtos
-    .filter(p => !q || q.split(/\s+/).every(w => semAcento(`${p.codigo} ${p.descricao} ${p.marca} ${p.categoria}`).includes(w)))
+    .filter(p => !q || q.split(/\s+/).every(w => semAcento(`${p.codigo} ${p.similar || ''} ${p.descricao} ${p.marca} ${p.categoria}`).includes(w)))
     .sort((a, b) => a.descricao.localeCompare(b.descricao));
+  const LIMITE = 300;
+  const extra = lista.length > LIMITE
+    ? `<tr><td colspan="7" class="empty">Mostrando ${LIMITE} de ${lista.length.toLocaleString('pt-BR')} produtos. Use a busca para encontrar o que precisa.</td></tr>`
+    : '';
   if (!lista.length) return `<tr><td colspan="7" class="empty">${db.produtos.length ? 'Nenhum produto encontrado.' : 'Nenhum produto cadastrado. Cadastre acima ou importe de uma planilha.'}</td></tr>`;
-  return lista.map(p => {
+  return lista.slice(0, LIMITE).map(p => {
     const u = precos[p.id];
     return `<tr>
-      <td>${esc(p.codigo || '—')}</td>
+      <td>${esc(p.codigo || '—')}${p.similar ? `<br><span class="small muted">sim. ${esc(p.similar)}</span>` : ''}</td>
       <td>${esc(p.descricao)}${p.obs ? `<br><span class="small muted">${esc(p.obs)}</span>` : ''}</td>
       <td class="c">${esc(p.unidade)}</td>
       <td>${esc(p.marca)}</td>
@@ -1248,7 +1254,7 @@ function linhasProdutos() {
         <button class="sm danger" data-act="excluirProd" data-id="${p.id}">✕</button>
       </td>
     </tr>`;
-  }).join('');
+  }).join('') + extra;
 }
 
 function renderProdutos() {
@@ -1261,6 +1267,7 @@ function renderProdutos() {
       <label>Código<input name="codigo" value="${esc(v.codigo)}"></label>
       <label style="grid-column:span 2">Descrição *<input name="descricao" required value="${esc(v.descricao)}"></label>
       <label>Unidade<input name="unidade" value="${esc(v.unidade)}" placeholder="UN, CX, KG, M…"></label>
+      <label>Similar (códigos equivalentes)<input name="similar" value="${esc(v.similar)}"></label>
       <label>Marca / Referência<input name="marca" value="${esc(v.marca)}"></label>
       <label>Categoria<input name="categoria" value="${esc(v.categoria)}" list="categorias"></label>
       <label style="grid-column:1/-1">Observação<input name="obs" value="${esc(v.obs)}"></label>
@@ -1283,7 +1290,7 @@ function renderProdutos() {
       <thead><tr><th>Código</th><th>Descrição</th><th class="c">Unid.</th><th>Marca</th><th>Categoria</th><th class="r">Último melhor preço</th><th></th></tr></thead>
       <tbody id="tbProd">${linhasProdutos()}</tbody>
     </table></div>
-    <p class="tip">Para importar sua lista de produtos, use uma planilha com as colunas <b>Código, Descrição, Unidade, Marca, Categoria</b> (a primeira linha é o cabeçalho). Produtos com o mesmo código são atualizados.</p>
+    <p class="tip">Para importar sua lista de produtos, use uma planilha com as colunas <b>Código, Descrição, Unidade, Similar, Marca, Categoria</b> (a primeira linha é o cabeçalho). Produtos com o mesmo código são atualizados.</p>
   </section>`;
 }
 
@@ -1485,7 +1492,7 @@ const acoes = {
       criadoEm: new Date().toISOString(),
       itens: itens.map(x => {
         const p = prod[x.produtoId];
-        return { produtoId: p.id, codigo: p.codigo, descricao: p.descricao, unidade: p.unidade, marca: p.marca, quantidade: x.quantidade };
+        return { produtoId: p.id, codigo: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: p.marca, quantidade: x.quantidade };
       }),
       fornecedores: fornecedores.map(novoFornCot),
     };
