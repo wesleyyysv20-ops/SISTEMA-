@@ -507,7 +507,6 @@ async function gerarPlanilha(c, f) {
   });
   const COLS = 7; // A..G
   const ULT = 'G';
-  ws.columns = [6, 18, 20, 18, 48, 16, 20].map(width => ({ width }));
 
   ws.mergeCells(`A1:${ULT}1`);
   const titulo = ws.getCell('A1');
@@ -515,7 +514,7 @@ async function gerarPlanilha(c, f) {
   titulo.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
   titulo.fill = XL.azul;
   titulo.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(1).height = 30;
+  ws.getRow(1).height = 21;
 
   const info = (row, label, value, label2, value2) => {
     ws.mergeCells(`A${row}:B${row}`);
@@ -552,16 +551,15 @@ async function gerarPlanilha(c, f) {
   ws.getCell('A8').alignment = { vertical: 'top' };
   ws.mergeCells(`C8:${ULT}8`);
   ws.getCell('C8').value = c.obs || '';
-  ws.getCell('C8').alignment = { wrapText: true, vertical: 'top' };
-  if (c.obs) ws.getRow(8).height = Math.min(120, 15 * Math.ceil(c.obs.length / 100 + (c.obs.match(/\n/g) || []).length));
+  ws.getCell('C8').alignment = { vertical: 'top', wrapText: !!c.obs };
+  if (c.obs && (c.obs.length > 120 || c.obs.includes('\n'))) ws.getRow(8).height = Math.min(120, 15 * Math.ceil(c.obs.length / 120 + (c.obs.match(/\n/g) || []).length));
 
   ws.mergeCells(`A9:${ULT}9`);
   const instr = ws.getCell('A9');
   instr.value = 'Preencha as colunas em AMARELO: VALOR (preço unitário) e MARCA (marca que você vai fornecer). Depois devolva esta planilha por e-mail.';
   instr.font = { italic: true, color: { argb: 'FF7F6000' } };
   instr.fill = XL.amarelo;
-  instr.alignment = { wrapText: true, vertical: 'middle' };
-  ws.getRow(9).height = 30;
+  instr.alignment = { vertical: 'middle' };
 
   const HEADER = 11;
   const FIRST = HEADER + 1;
@@ -573,9 +571,8 @@ async function gerarPlanilha(c, f) {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = XL.azul;
     cell.border = XL.borda;
-    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
   });
-  hr.height = 26;
 
   c.itens.forEach((it, i) => {
     const r = FIRST + i;
@@ -584,7 +581,7 @@ async function gerarPlanilha(c, f) {
     for (let col = 1; col <= COLS; col++) {
       const cell = row.getCell(col);
       cell.border = XL.borda;
-      cell.alignment = { vertical: 'middle', wrapText: col >= 2 && col <= 5 };
+      cell.alignment = { vertical: 'middle' };
     }
     row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
     const valor = row.getCell(6);
@@ -617,19 +614,18 @@ async function gerarPlanilha(c, f) {
     ws.getCell(`${col}${TOTAL}`).border = XL.borda;
   }
 
-  const COND = TOTAL + 2;
-  COND_CAMPOS.forEach(([, label], k) => {
-    const r = COND + k;
-    ws.mergeCells(`A${r}:C${r}`);
-    ws.getCell(`A${r}`).value = label + ':';
-    ws.getCell(`A${r}`).font = { bold: true };
-    ws.getCell(`A${r}`).alignment = { horizontal: 'right' };
-    ws.mergeCells(`D${r}:${ULT}${r}`);
-    const cell = ws.getCell(`D${r}`);
-    cell.fill = XL.amarelo;
-    cell.border = XL.borda;
-    cell.protection = { locked: false };
+  // Larguras ajustadas ao conteúdo (como "Auto Ajuste" do Excel), no padrão definido pela loja.
+  const larguras = cab.map((h, i) => {
+    let m = String(h).length;
+    c.itens.forEach(it => {
+      const v = [String(c.itens.indexOf(it) + 1), it.codigo || '', it.similar || '', it.marca || '', it.descricao || ''][i];
+      if (v != null) m = Math.max(m, String(v).length);
+    });
+    return m + 2;
   });
+  larguras[0] = Math.max(5, larguras[0]);
+  larguras[5] = Math.max(12, larguras[5]); // VALOR: espaço para "R$ 1.234,56" sem virar ####
+  ws.columns = larguras.map(width => ({ width: Math.min(width, 80) }));
 
   ws.views = [{ state: 'frozen', ySplit: HEADER }];
   if (cfg.protegerPlanilha) {
@@ -639,7 +635,7 @@ async function gerarPlanilha(c, f) {
   // Aba oculta usada para reconhecer a planilha quando o fornecedor devolver.
   const meta = wb.addWorksheet('_dados', { state: 'veryHidden' });
   [
-    'sistema-cotacao', c.id, f ? f.fornecedorId : '', HEADER, FIRST, c.itens.length, COND, c.numero, 2,
+    'sistema-cotacao', c.id, f ? f.fornecedorId : '', HEADER, FIRST, c.itens.length, 0, c.numero, 2,
   ].forEach((v, i) => { meta.getCell(`A${i + 1}`).value = v; });
 
   return wb;
