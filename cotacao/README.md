@@ -12,7 +12,8 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
   (Settings → Pages → Source: *GitHub Actions*), o workflow `Publicar sistema de cotação`
   publica o sistema a cada alteração na branch `main`.
 
-> Os dados ficam salvos **no navegador em que você usa o sistema**. Use
+> Quando aberto como página publicada no Claude, os dados ficam salvos na nuvem junto com a
+> página e aparecem em qualquer dispositivo. Aberto como arquivo local, os dados ficam salvos **no navegador em que você usa o sistema**. Use
 > *Configurações → Baixar backup* com frequência. O mesmo arquivo de backup serve para
 > passar os dados para outro computador/navegador (*Restaurar backup*).
 
@@ -25,10 +26,11 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
 3. **Fornecedores:** cadastre nome, contato e e-mail.
 4. **Nova cotação:** busque os produtos, informe as quantidades, marque os fornecedores e clique
    em *Criar cotação*.
-5. **Enviar:** na cotação, clique em **✉ E-mail** ou **Gmail** na linha do fornecedor. O sistema
-   baixa a planilha daquele fornecedor e abre o e-mail já com destinatário, assunto e texto —
-   é só **anexar o arquivo baixado** e enviar. (Navegadores não permitem anexar arquivos
-   automaticamente em links de e-mail.)
+5. **Enviar:** na cotação, clique em **✉ Enviar** na linha do fornecedor. No painel que abre,
+   baixe a planilha daquele fornecedor e abra o e-mail (Gmail, Outlook ou programa de e-mail)
+   já com destinatário, assunto e texto — é só **anexar o arquivo baixado** e enviar. Se o
+   e-mail não abrir, há botões para copiar destinatário, assunto e texto. (Navegadores não
+   permitem anexar arquivos automaticamente em links de e-mail.)
 6. **Receber:** quando o fornecedor devolver a planilha preenchida, clique em **📥 Importar**
    (ou use *Importar planilha respondida* na lista de cotações — o sistema reconhece sozinho
    de qual cotação e fornecedor é o arquivo). Também é possível **✎ Digitar** os preços.

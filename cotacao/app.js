@@ -45,7 +45,7 @@ const STATUS = {
 };
 
 let db = carregar();
-const ui = { digitando: null, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '' };
+const ui = { digitando: null, enviando: null, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '' };
 
 /* ---------------- persistência ---------------- */
 
@@ -75,11 +75,140 @@ function salvar() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   } catch (e) {
-    alert('Não foi possível salvar os dados no navegador. Faça um backup em Configurações.\n\n' + e.message);
+    if (!nuvem.db) avisar('Não foi possível salvar os dados no navegador. Faça um backup em Configurações.\n\n' + e.message);
+  }
+  agendarSincronia();
+}
+
+try {
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+} catch (e) { /* sem suporte */ }
+
+/* ---------------- nuvem (quando aberto como página do Claude) ----------------
+ * Os dados ficam em documentos: produtos e fornecedores em lotes,
+ * uma cotação por documento e as configurações em "sistema/*". */
+
+const LOTE = 200;
+const nuvem = { db: null, downloads: null, enviado: {}, timer: null, gravando: false, pendente: false, status: 'local' };
+
+function docsDoEstado() {
+  const docs = {
+    'sistema/config': db.config,
+    'sistema/extra': { rascunho: db.rascunho || null, ultimoBackup: db.ultimoBackup || null },
+  };
+  for (const col of ['produtos', 'fornecedores']) {
+    const lista = [...db[col]].sort((a, b) => a.id.localeCompare(b.id));
+    for (let i = 0; i * LOTE < lista.length; i++) docs[`${col}/lote-${pad(i)}`] = { itens: lista.slice(i * LOTE, (i + 1) * LOTE) };
+  }
+  for (const c of db.cotacoes) docs[`cotacoes/${c.id}`] = c;
+  return Object.fromEntries(Object.entries(docs).map(([k, v]) => [k, JSON.stringify(v)]));
+}
+
+function agendarSincronia() {
+  if (!nuvem.db) return;
+  clearTimeout(nuvem.timer);
+  nuvem.timer = setTimeout(sincronizar, 500);
+}
+
+async function sincronizar() {
+  if (!nuvem.db) return;
+  if (nuvem.gravando) { nuvem.pendente = true; return; }
+  nuvem.gravando = true;
+  mostrarStatus('salvando');
+  try {
+    const atual = docsDoEstado();
+    for (const [path, json] of Object.entries(atual)) {
+      if (nuvem.enviado[path] === json) continue;
+      await comRetentativa(() => nuvem.db.doc(path).set(JSON.parse(json)));
+      nuvem.enviado[path] = json;
+    }
+    for (const path of Object.keys(nuvem.enviado)) {
+      if (path in atual) continue;
+      await comRetentativa(() => nuvem.db.doc(path).delete());
+      delete nuvem.enviado[path];
+    }
+    mostrarStatus('salvo');
+  } catch (e) {
+    console.error(e);
+    mostrarStatus('erro');
+    toast(e.code === 'quota_exceeded'
+      ? 'O limite de armazenamento na nuvem foi atingido. Exclua cotações antigas.'
+      : 'Não foi possível salvar na nuvem agora. Vou tentar de novo na próxima alteração.', 6000);
+  } finally {
+    nuvem.gravando = false;
+    if (nuvem.pendente) { nuvem.pendente = false; agendarSincronia(); }
   }
 }
 
-if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+async function comRetentativa(fn) {
+  for (let tent = 0; ; tent++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (tent < 4 && (e.code === 'unavailable' || e.code === 'resource_exhausted')) {
+        await new Promise(r => setTimeout(r, 800 * 2 ** tent + Math.random() * 300));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+async function carregarNuvem() {
+  const ler = async col => (await nuvem.db.collection(col).get()).docs.filter(d => d.exists).map(d => [`${col}/${d.id}`, d.data()]);
+  const [sis, prods, forns, cots] = await Promise.all(['sistema', 'produtos', 'fornecedores', 'cotacoes'].map(ler));
+  const todos = [...sis, ...prods, ...forns, ...cots];
+  if (!todos.length) return null;
+  for (const [path, data] of todos) nuvem.enviado[path] = JSON.stringify(data);
+  const mapa = Object.fromEntries(sis);
+  return normalizar({
+    config: mapa['sistema/config'] || {},
+    rascunho: mapa['sistema/extra']?.rascunho || null,
+    ultimoBackup: mapa['sistema/extra']?.ultimoBackup || null,
+    produtos: prods.flatMap(([, d]) => d.itens || []),
+    fornecedores: forns.flatMap(([, d]) => d.itens || []),
+    cotacoes: cots.map(([, d]) => structuredClone(d)),
+  });
+}
+
+function mostrarStatus(s) {
+  nuvem.status = s;
+  const el = $('#statusNuvem');
+  if (!el) return;
+  const txt = { local: 'Salvo neste navegador', salvando: 'Salvando…', salvo: 'Salvo na nuvem', erro: 'Erro ao salvar', carregando: 'Carregando…' }[s];
+  el.textContent = txt;
+  el.dataset.s = s;
+}
+
+async function iniciarNuvem() {
+  if (!window.claude || typeof window.claude.use !== 'function') return;
+  const [dbx, dl] = await Promise.all([
+    window.claude.use('db').catch(() => null),
+    window.claude.use('downloads').catch(() => null),
+  ]);
+  nuvem.downloads = dl;
+  if (!dbx) return;
+  mostrarStatus('carregando');
+  try {
+    nuvem.db = dbx;
+    const remoto = await carregarNuvem();
+    if (remoto) {
+      db = remoto;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) { /* cache opcional */ }
+      render();
+      mostrarStatus('salvo');
+    } else if (db.produtos.length || db.fornecedores.length || db.cotacoes.length || db.config.loja) {
+      await sincronizar(); // primeira vez: leva para a nuvem o que já estava no navegador
+    } else {
+      mostrarStatus('salvo');
+    }
+  } catch (e) {
+    console.error(e);
+    nuvem.db = null;
+    mostrarStatus('local');
+    toast('Não consegui acessar os dados na nuvem. Usando os dados deste navegador.', 6000);
+  }
+}
 
 /* ---------------- utilitários ---------------- */
 
@@ -139,7 +268,17 @@ function toast(msg, ms = 3500) {
   toast._t = setTimeout(() => t.classList.remove('show'), ms);
 }
 
-function baixarBlob(blob, nome) {
+async function baixarBlob(blob, nome) {
+  if (nuvem.downloads) {
+    try {
+      await nuvem.downloads.save({ filename: nome, data: blob });
+      return true;
+    } catch (e) {
+      if (e && e.code === 'declined') return false;
+      if (e && e.code === 'rate_limited') { toast('Aguarde a confirmação do download anterior.'); return false; }
+      console.error(e);
+    }
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = nome;
@@ -147,11 +286,43 @@ function baixarBlob(blob, nome) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  return true;
+}
+
+/* ---------------- diálogos na própria página ---------------- */
+
+function abrirDialogo(msg, botoes) {
+  return new Promise(resolve => {
+    const fundo = document.createElement('div');
+    fundo.className = 'dlg-fundo';
+    fundo.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
+      <p>${esc(msg).replace(/\n/g, '<br>')}</p>
+      <div class="actions">${botoes.map((b, i) => `<button type="button" class="${b.cls || ''}" data-i="${i}">${esc(b.txt)}</button>`).join('')}</div>
+    </div>`;
+    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const tecla = e => { if (e.key === 'Escape') { e.stopPropagation(); fechar(botoes[0].valor); } };
+    fundo.addEventListener('click', e => {
+      e.stopPropagation();
+      const b = e.target.closest('button[data-i]');
+      if (b) fechar(botoes[+b.dataset.i].valor);
+    });
+    document.addEventListener('keydown', tecla, true);
+    document.body.appendChild(fundo);
+    fundo.querySelector('button:last-child').focus();
+  });
+}
+
+function confirmar(msg, ok = 'Confirmar') {
+  return abrirDialogo(msg, [{ txt: 'Cancelar', valor: false }, { txt: ok, valor: true, cls: 'primary' }]);
+}
+
+function avisar(msg) {
+  return abrirDialogo(msg, [{ txt: 'OK', valor: undefined, cls: 'primary' }]);
 }
 
 async function baixarWorkbook(wb, nome) {
   const buf = await wb.xlsx.writeBuffer();
-  baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), nome);
+  return baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), nome);
 }
 
 function cellValue(cell) {
@@ -249,7 +420,7 @@ function preencherModelo(tpl, c, f) {
     comprador: cfg.comprador,
     telefone: cfg.telefone,
     email: cfg.email,
-    prazo: c.prazoResposta ? fmtData(c.prazoResposta) : 'o quanto antes',
+    prazo: c.prazoResposta ? fmtData(c.prazoResposta) : 'o prazo combinado',
     titulo: c.titulo || '',
   };
   return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] || '' : m)).replace(/\n{3,}/g, '\n\n').trim();
@@ -502,7 +673,7 @@ async function importarResposta(file, cotId, fiSugerido) {
       const dona = db.cotacoes.find(x => x.id === meta.cotId);
       if (!dona) throw new Error(`Esta planilha é da cotação nº ${meta.numero}, que não existe mais neste sistema.`);
       if (c && dona.id !== c.id) {
-        if (!confirm(`Esta planilha pertence à cotação nº ${dona.numero}, não à nº ${c.numero}. Importar na cotação nº ${dona.numero}?`)) return;
+        if (!(await confirmar(`Esta planilha pertence à cotação nº ${dona.numero}, não à nº ${c.numero}. Importar na cotação nº ${dona.numero}?`))) return;
       }
       c = dona;
     }
@@ -512,21 +683,21 @@ async function importarResposta(file, cotId, fiSugerido) {
     if (meta) {
       const idx = c.fornecedores.findIndex(f => f.fornecedorId === meta.fornecedorId);
       if (idx >= 0 && fi != null && idx !== fi) {
-        if (!confirm(`Esta planilha foi gerada para "${c.fornecedores[idx].nome}". Importar os preços para "${c.fornecedores[idx].nome}"?`)) return;
+        if (!(await confirmar(`Esta planilha foi gerada para "${c.fornecedores[idx].nome}". Importar os preços para "${c.fornecedores[idx].nome}"?`))) return;
       }
       if (idx >= 0) fi = idx;
     }
     if (fi == null || !c.fornecedores[fi]) throw new Error('Não consegui identificar o fornecedor. Abra a cotação e use o botão "Importar" na linha do fornecedor.');
 
     const f = c.fornecedores[fi];
-    if (Object.keys(f.respostas || {}).length && !confirm(`${f.nome} já tem preços lançados. Substituir pelos da planilha?`)) return;
+    if (Object.keys(f.respostas || {}).length && !(await confirmar(`${f.nome} já tem preços lançados. Substituir pelos da planilha?`))) return;
     const qtd = aplicarResposta(c, fi, ws, meta);
     toast(`${qtd} preço(s) importado(s) de ${f.nome}.`);
-    location.hash = `#/cotacao/${c.id}`;
+    ir('cotacao', c.id);
     render();
   } catch (e) {
     console.error(e);
-    alert('Erro ao importar a planilha:\n' + e.message);
+    avisar('Erro ao importar a planilha:\n' + e.message);
   }
 }
 
@@ -690,30 +861,46 @@ async function importarProdutos(file) {
     toast(`${novos} produto(s) novo(s), ${atualizados} atualizado(s).`);
   } catch (e) {
     console.error(e);
-    alert('Erro ao importar produtos:\n' + e.message);
+    avisar('Erro ao importar produtos:\n' + e.message);
   }
 }
 
 /* ---------------- e-mail ---------------- */
 
-async function enviarEmail(c, fi, via) {
-  const f = c.fornecedores[fi];
-  if (!f.email && !confirm(`${f.nome} não tem e-mail cadastrado. Continuar mesmo assim?`)) return;
+function dadosEmail(c, f) {
   const assunto = preencherModelo(db.config.assuntoEmail, c, f);
   const corpo = preencherModelo(db.config.corpoEmail, c, f);
-  // Abre a janela antes de gerar o arquivo para o navegador não bloquear o pop-up.
-  const janela = via === 'gmail' ? window.open('about:blank', '_blank') : null;
-  await baixarPlanilha(c, fi);
-  if (via === 'gmail') {
-    const url = `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(f.email)}&su=${enc(assunto)}&body=${enc(corpo)}`;
-    if (janela) janela.location.href = url; else window.open(url, '_blank');
-  } else {
-    location.href = `mailto:${enc(f.email)}?subject=${enc(assunto)}&body=${enc(corpo.replace(/\n/g, '\r\n'))}`;
-  }
+  return {
+    assunto,
+    corpo,
+    gmail: `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(f.email)}&su=${enc(assunto)}&body=${enc(corpo)}`,
+    outlook: `https://outlook.office.com/mail/deeplink/compose?to=${enc(f.email)}&subject=${enc(assunto)}&body=${enc(corpo)}`,
+    mailto: `mailto:${enc(f.email)}?subject=${enc(assunto)}&body=${enc(corpo.replace(/\n/g, '\r\n'))}`,
+  };
+}
+
+function marcarEnviado(c, fi) {
+  const f = c.fornecedores[fi];
+  if (!f) return;
   f.enviadoEm = new Date().toISOString();
   salvar();
-  render();
-  toast(`Planilha "${nomePlanilha(c, f)}" baixada. Anexe-a ao e-mail que foi aberto.`, 7000);
+}
+
+async function copiar(texto, el) {
+  try {
+    await navigator.clipboard.writeText(texto);
+    toast('Copiado.');
+  } catch (e) {
+    const alvo = el && el.closest('.copiavel')?.querySelector('.copia-alvo');
+    if (alvo) {
+      const r = document.createRange();
+      r.selectNodeContents(alvo);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+    toast('Selecionei o texto. Use Ctrl+C para copiar.');
+  }
 }
 
 /* ============================================================
@@ -826,7 +1013,7 @@ function linhasCotacoes() {
     const resp = c.fornecedores.filter(f => f.respondidoEm).length;
     const { melhor, itensCotados } = comparar(c);
     return `<tr>
-      <td><a href="#/cotacao/${c.id}"><b>${esc(c.numero)}</b></a></td>
+      <td><a href="#" data-route="cotacao" data-id="${c.id}"><b>${esc(c.numero)}</b></a></td>
       <td>${fmtData(c.data)}</td>
       <td>${esc(c.titulo || '—')}</td>
       <td class="c">${c.itens.length}</td>
@@ -846,7 +1033,7 @@ function renderCotacoes() {
       <h2>Cotações</h2>
       <div class="row">
         <label class="btn" style="margin:0">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx" data-import-geral></label>
-        <a class="btn primary" href="#/nova" style="background:var(--primary);color:#fff">+ Nova cotação</a>
+        <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
       </div>
     </div>
     <div class="stats">
@@ -872,7 +1059,7 @@ function renderCotacoes() {
 
 function renderCotacao(id) {
   const c = db.cotacoes.find(x => x.id === id);
-  if (!c) return `<section class="card"><p class="empty">Cotação não encontrada. <a href="#/cotacoes">Voltar</a></p></section>`;
+  if (!c) return `<section class="card"><p class="empty">Cotação não encontrada. <a href="#" data-route="cotacoes">Voltar</a></p></section>`;
   const comp = comparar(c);
   const naLista = new Set(c.fornecedores.map(f => f.fornecedorId));
   const disponiveis = db.fornecedores.filter(f => !naLista.has(f.id)).sort((a, b) => a.nome.localeCompare(b.nome));
@@ -887,8 +1074,7 @@ function renderCotacao(id) {
       <td class="r">${f.respondidoEm ? fmtMoeda(t.total) : '—'}</td>
       <td class="actions-cell">
         <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="Baixar a planilha Excel deste fornecedor">⬇ Excel</button>
-        <button class="sm" data-act="email" data-f="${fi}" title="Baixa a planilha e abre seu programa de e-mail">✉ E-mail</button>
-        <button class="sm" data-act="gmail" data-f="${fi}" title="Baixa a planilha e abre o Gmail">Gmail</button>
+        <button class="sm" data-act="enviar" data-f="${fi}" title="Preparar o e-mail para este fornecedor">✉ Enviar</button>
         <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥 Importar<input type="file" class="hidden" accept=".xlsx" data-import="${fi}"></label>
         <button class="sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎ Digitar</button>
         <button class="sm danger" data-act="removerFornCot" data-f="${fi}" title="Remover da cotação">✕</button>
@@ -897,6 +1083,36 @@ function renderCotacao(id) {
   }).join('');
 
   let painel = '';
+  if (ui.enviando && ui.enviando.cotId === c.id && c.fornecedores[ui.enviando.fi]) {
+    const fi = ui.enviando.fi;
+    const f = c.fornecedores[fi];
+    const m = dadosEmail(c, f);
+    painel += `
+    <section class="card envio" id="painelEnvio">
+      <div class="row-between">
+        <h3>Enviar cotação para ${esc(f.nome)}</h3>
+        <button class="sm" data-act="fecharEnvio">Fechar</button>
+      </div>
+      <ol class="passos">
+        <li><span>Baixe a planilha deste fornecedor.</span>
+          <button class="primary sm" data-act="baixarPlanilha" data-f="${fi}">⬇ Baixar ${esc(nomePlanilha(c, f))}</button></li>
+        <li><span>Abra o e-mail já preenchido e <b>anexe a planilha baixada</b>.</span>
+          <span class="row">
+            <a class="btn sm" href="${esc(m.gmail)}" target="_blank" rel="noopener" data-marca-envio="${fi}">Abrir no Gmail</a>
+            <a class="btn sm" href="${esc(m.outlook)}" target="_blank" rel="noopener" data-marca-envio="${fi}">Abrir no Outlook</a>
+            <a class="btn sm" href="${esc(m.mailto)}" data-marca-envio="${fi}">Programa de e-mail</a>
+          </span></li>
+        <li><span>Depois de enviar, marque como enviada.</span>
+          <button class="sm" data-act="marcarEnviado" data-f="${fi}">${f.enviadoEm ? '✓ Enviada em ' + fmtData(f.enviadoEm) : 'Marcar como enviada'}</button></li>
+      </ol>
+      <p class="small muted">Se o e-mail não abrir, copie os dados abaixo e cole no seu e-mail.</p>
+      <div class="copia-grid">
+        <div class="copiavel"><span class="muted small">Para</span><code class="copia-alvo">${esc(f.email || '(sem e-mail cadastrado)')}</code><button class="sm" data-act="copiar" data-campo="email">Copiar</button></div>
+        <div class="copiavel"><span class="muted small">Assunto</span><code class="copia-alvo">${esc(m.assunto)}</code><button class="sm" data-act="copiar" data-campo="assunto">Copiar</button></div>
+        <div class="copiavel"><span class="muted small">Texto</span><pre class="copia-alvo">${esc(m.corpo)}</pre><button class="sm" data-act="copiar" data-campo="corpo">Copiar</button></div>
+      </div>
+    </section>`;
+  }
   if (ui.digitando && ui.digitando.cotId === c.id && c.fornecedores[ui.digitando.fi]) {
     const fi = ui.digitando.fi;
     const f = c.fornecedores[fi];
@@ -969,7 +1185,7 @@ function renderCotacao(id) {
     <div class="row-between">
       <h2>Cotação nº ${esc(c.numero)} ${statusBadge(c.status)}</h2>
       <div class="row">
-        <a class="btn" href="#/cotacoes">← Voltar</a>
+        <a class="btn" href="#" data-route="cotacoes">← Voltar</a>
         <select data-change="statusCot" style="width:auto">
           ${Object.entries(STATUS).map(([k, [t]]) => `<option value="${k}" ${c.status === k ? 'selected' : ''}>${t}</option>`).join('')}
         </select>
@@ -990,7 +1206,7 @@ function renderCotacao(id) {
       <button class="sm" data-act="addFornCot">+ Adicionar fornecedor</button>` : ''}
       ${nf > 1 ? '<button class="sm" data-act="baixarTodas">⬇ Baixar todas as planilhas</button>' : ''}
     </div>
-    <p class="tip"><b>Como enviar:</b> clique em <b>✉ E-mail</b> ou <b>Gmail</b>. O sistema baixa a planilha do fornecedor e abre o e-mail já com destinatário, assunto e texto — só falta <b>anexar o arquivo baixado</b> e enviar.
+    <p class="tip"><b>Como enviar:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
     Quando o fornecedor devolver a planilha preenchida, use <b>📥 Importar</b> para lançar os preços automaticamente.</p>
   </section>
 
@@ -1147,7 +1363,9 @@ function renderConfig() {
   </section>
   <section class="card">
     <h2>Backup dos dados</h2>
-    <p class="muted small">Os dados ficam salvos <b>somente neste navegador</b>. Faça backup com frequência e guarde o arquivo (Google Drive, pendrive…). Com o backup você também passa os dados para outro computador.</p>
+    <p class="muted small">${nuvem.db
+      ? 'Os dados ficam salvos <b>na nuvem, junto com esta página</b>, e aparecem em qualquer computador ou celular em que você abrir o link. Mesmo assim, baixe um backup de vez em quando.'
+      : 'Os dados ficam salvos <b>somente neste navegador</b>. Faça backup com frequência e guarde o arquivo (Google Drive, pendrive…). Com o backup você também passa os dados para outro computador.'}</p>
     <div class="row">
       <button data-act="backup">⬇ Baixar backup</button>
       <label class="btn" style="margin:0">📥 Restaurar backup<input type="file" class="hidden" accept=".json" data-restaurar></label>
@@ -1159,9 +1377,19 @@ function renderConfig() {
 
 /* ---------------- roteamento ---------------- */
 
+const navegacao = { nome: 'cotacoes', id: null };
+
 function rota() {
-  const [, nome = 'cotacoes', id] = location.hash.replace(/^#/, '').split('/');
-  return { nome, id };
+  return navegacao;
+}
+
+function ir(nome, id = null) {
+  navegacao.nome = nome;
+  navegacao.id = id;
+  ui.digitando = null;
+  ui.enviando = null;
+  render();
+  window.scrollTo(0, 0);
 }
 
 function render() {
@@ -1181,10 +1409,18 @@ function render() {
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
 }
 
-window.addEventListener('hashchange', () => {
-  ui.digitando = null;
-  render();
-  window.scrollTo(0, 0);
+document.addEventListener('click', e => {
+  const link = e.target.closest('[data-route]');
+  if (link) {
+    e.preventDefault();
+    ir(link.dataset.route, link.dataset.id || null);
+    return;
+  }
+  const envio = e.target.closest('[data-marca-envio]');
+  if (envio) {
+    const c = cotAtual();
+    if (c) { marcarEnviado(c, +envio.dataset.marcaEnvio); setTimeout(render, 400); }
+  }
 });
 
 /* ---------------- ações ---------------- */
@@ -1217,8 +1453,8 @@ const acoes = {
     render();
   },
 
-  limparRascunho: () => {
-    if (!confirm('Limpar todos os itens e fornecedores desta nova cotação?')) return;
+  limparRascunho: async () => {
+    if (!(await confirmar('Limpar todos os itens e fornecedores desta nova cotação?'))) return;
     db.rascunho = null;
     salvar();
     render();
@@ -1229,11 +1465,11 @@ const acoes = {
     const prod = byId(db.produtos);
     const forn = byId(db.fornecedores);
     const itens = r.itens.filter(x => prod[x.produtoId]);
-    if (!itens.length) return alert('Adicione pelo menos um item.');
+    if (!itens.length) return avisar('Adicione pelo menos um item.');
     const semQtd = itens.findIndex(x => !(x.quantidade > 0));
-    if (semQtd >= 0) return alert(`Informe a quantidade do item ${semQtd + 1}.`);
+    if (semQtd >= 0) return avisar(`Informe a quantidade do item ${semQtd + 1}.`);
     const fornecedores = r.fornecedorIds.map(id => forn[id]).filter(Boolean);
-    if (!fornecedores.length) return alert('Selecione pelo menos um fornecedor.');
+    if (!fornecedores.length) return avisar('Selecione pelo menos um fornecedor.');
 
     const cfg = db.config;
     const numero = String(cfg.proxNumero).padStart(4, '0');
@@ -1256,7 +1492,7 @@ const acoes = {
     db.cotacoes.push(c);
     db.rascunho = null;
     salvar();
-    location.hash = `#/cotacao/${c.id}`;
+    ir('cotacao', c.id);
     toast(`Cotação nº ${numero} criada. Agora envie para os fornecedores.`);
   },
 
@@ -1274,22 +1510,36 @@ const acoes = {
     toast(`${c.fornecedores.length} planilhas baixadas.`);
   },
 
-  email: el => enviarEmail(cotAtual(), +el.dataset.f, 'mailto'),
-  gmail: el => enviarEmail(cotAtual(), +el.dataset.f, 'gmail'),
+  enviar: el => {
+    const c = cotAtual();
+    ui.enviando = { cotId: c.id, fi: +el.dataset.f };
+    ui.digitando = null;
+    render();
+    $('#painelEnvio')?.scrollIntoView({ behavior: 'smooth' });
+  },
+  fecharEnvio: () => { ui.enviando = null; render(); },
+  marcarEnviado: el => { marcarEnviado(cotAtual(), +el.dataset.f); render(); toast('Marcada como enviada.'); },
+  copiar: el => {
+    const c = cotAtual();
+    const f = c.fornecedores[ui.enviando.fi];
+    const m = dadosEmail(c, f);
+    return copiar({ email: f.email || '', assunto: m.assunto, corpo: m.corpo }[el.dataset.campo], el);
+  },
 
   digitar: el => {
     const c = cotAtual();
     ui.digitando = { cotId: c.id, fi: +el.dataset.f };
+    ui.enviando = null;
     render();
     $('#painelDigitar')?.scrollIntoView({ behavior: 'smooth' });
   },
 
   fecharDigitar: () => { ui.digitando = null; render(); },
 
-  removerFornCot: el => {
+  removerFornCot: async el => {
     const c = cotAtual();
     const f = c.fornecedores[+el.dataset.f];
-    if (!confirm(`Remover ${f.nome} desta cotação? Os preços lançados dele serão perdidos.`)) return;
+    if (!(await confirmar(`Remover ${f.nome} desta cotação? Os preços lançados dele serão perdidos.`))) return;
     c.fornecedores.splice(+el.dataset.f, 1);
     ui.digitando = null;
     salvar();
@@ -1307,12 +1557,12 @@ const acoes = {
 
   exportarComparativo: () => exportarComparativo(cotAtual()),
 
-  duplicarCot: () => {
+  duplicarCot: async () => {
     const c = cotAtual();
     const prod = byId(db.produtos);
     const forn = byId(db.fornecedores);
     const r = rascunho();
-    if (r.itens.length && !confirm('Já existe uma nova cotação em andamento. Substituir pelos itens desta?')) return;
+    if (r.itens.length && !(await confirmar('Já existe uma nova cotação em andamento. Substituir pelos itens desta?'))) return;
     db.rascunho = {
       titulo: c.titulo,
       prazoResposta: '',
@@ -1321,22 +1571,22 @@ const acoes = {
       fornecedorIds: c.fornecedores.map(f => f.fornecedorId).filter(id => forn[id]),
     };
     salvar();
-    location.hash = '#/nova';
+    ir('nova');
   },
 
-  excluirCot: () => {
+  excluirCot: async () => {
     const c = cotAtual();
-    if (!confirm(`Excluir a cotação nº ${c.numero}? Isso não pode ser desfeito.`)) return;
+    if (!(await confirmar(`Excluir a cotação nº ${c.numero}? Isso não pode ser desfeito.`))) return;
     db.cotacoes = db.cotacoes.filter(x => x.id !== c.id);
     salvar();
-    location.hash = '#/cotacoes';
+    ir('cotacoes');
   },
 
   editarProd: el => { ui.editProd = el.dataset.id; render(); window.scrollTo(0, 0); },
   cancelarProd: () => { ui.editProd = null; render(); },
-  excluirProd: el => {
+  excluirProd: async el => {
     const p = db.produtos.find(x => x.id === el.dataset.id);
-    if (!confirm(`Excluir o produto "${p.descricao}"? (As cotações antigas não são alteradas.)`)) return;
+    if (!(await confirmar(`Excluir o produto "${p.descricao}"? (As cotações antigas não são alteradas.)`))) return;
     db.produtos = db.produtos.filter(x => x.id !== p.id);
     salvar();
     render();
@@ -1345,9 +1595,9 @@ const acoes = {
 
   editarForn: el => { ui.editForn = el.dataset.id; render(); window.scrollTo(0, 0); },
   cancelarForn: () => { ui.editForn = null; render(); },
-  excluirForn: el => {
+  excluirForn: async el => {
     const f = db.fornecedores.find(x => x.id === el.dataset.id);
-    if (!confirm(`Excluir o fornecedor "${f.nome}"? (As cotações antigas não são alteradas.)`)) return;
+    if (!(await confirmar(`Excluir o fornecedor "${f.nome}"? (As cotações antigas não são alteradas.)`))) return;
     db.fornecedores = db.fornecedores.filter(x => x.id !== f.id);
     salvar();
     render();
@@ -1360,9 +1610,9 @@ const acoes = {
     render();
   },
 
-  apagarTudo: () => {
-    if (!confirm('Apagar TODOS os produtos, fornecedores e cotações deste navegador?')) return;
-    if (prompt('Para confirmar, digite APAGAR') !== 'APAGAR') return;
+  apagarTudo: async () => {
+    if (!(await confirmar('Apagar TODOS os produtos, fornecedores e cotações?', 'Apagar'))) return;
+    if (!(await confirmar('Tem certeza mesmo? Todos os dados serão apagados para sempre.', 'Apagar tudo'))) return;
     db = structuredClone(DEFAULT_DB);
     salvar();
     render();
@@ -1371,10 +1621,10 @@ const acoes = {
 };
 
 const formularios = {
-  produtoRapido: form => {
+  produtoRapido: async form => {
     const d = formDados(form);
     if (!d.descricao) return;
-    if (d.codigo && db.produtos.some(p => semAcento(p.codigo) === semAcento(d.codigo)) && !confirm(`Já existe um produto com o código ${d.codigo}. Cadastrar mesmo assim?`)) return;
+    if (d.codigo && db.produtos.some(p => semAcento(p.codigo) === semAcento(d.codigo)) && !(await confirmar(`Já existe um produto com o código ${d.codigo}. Cadastrar mesmo assim?`))) return;
     const p = { id: uid(), codigo: d.codigo, descricao: d.descricao, unidade: (d.unidade || 'UN').toUpperCase(), marca: d.marca, categoria: '', obs: '', criadoEm: new Date().toISOString() };
     db.produtos.push(p);
     adicionarItem(p.id, parseNum(d.quantidade) || 1);
@@ -1392,12 +1642,12 @@ const formularios = {
     toast('Fornecedor cadastrado e selecionado.');
   },
 
-  produto: form => {
+  produto: async form => {
     const d = formDados(form);
     if (!d.descricao) return;
     d.unidade = (d.unidade || 'UN').toUpperCase();
     const dup = d.codigo && db.produtos.find(p => p.id !== ui.editProd && semAcento(p.codigo) === semAcento(d.codigo));
-    if (dup && !confirm(`O código ${d.codigo} já é usado por "${dup.descricao}". Salvar mesmo assim?`)) return;
+    if (dup && !(await confirmar(`O código ${d.codigo} já é usado por "${dup.descricao}". Salvar mesmo assim?`))) return;
     if (ui.editProd) {
       Object.assign(db.produtos.find(p => p.id === ui.editProd), d);
       ui.editProd = null;
@@ -1467,7 +1717,7 @@ document.addEventListener('click', e => {
   e.preventDefault();
   Promise.resolve(acoes[el.dataset.act](el, e)).catch(err => {
     console.error(err);
-    alert('Ocorreu um erro: ' + err.message);
+    avisar('Ocorreu um erro: ' + err.message);
   });
 });
 
@@ -1539,13 +1789,13 @@ document.addEventListener('change', async e => {
       try {
         const dados = JSON.parse(await file.text());
         if (!dados || !Array.isArray(dados.produtos) || !dados.config) throw new Error('Arquivo não é um backup deste sistema.');
-        if (!confirm(`Restaurar backup com ${dados.produtos.length} produtos, ${(dados.fornecedores || []).length} fornecedores e ${(dados.cotacoes || []).length} cotações? Os dados atuais serão substituídos.`)) return;
+        if (!(await confirmar(`Restaurar backup com ${dados.produtos.length} produtos, ${(dados.fornecedores || []).length} fornecedores e ${(dados.cotacoes || []).length} cotações? Os dados atuais serão substituídos.`))) return;
         db = normalizar(dados);
         salvar();
         render();
         toast('Backup restaurado.');
       } catch (err) {
-        alert('Não foi possível restaurar: ' + err.message);
+        avisar('Não foi possível restaurar: ' + err.message);
       }
     }
   }
@@ -1559,5 +1809,7 @@ document.addEventListener('click', e => {
   }
 });
 
-if (!location.hash) location.hash = db.config.loja ? '#/cotacoes' : '#/config';
+navegacao.nome = db.config.loja ? 'cotacoes' : 'config';
 render();
+mostrarStatus(nuvem.status);
+iniciarNuvem();

@@ -4,17 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sistema de Cotação</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand" id="brand">Cotações</div>
+    <span id="statusNuvem" class="status-nuvem" data-s="local">Salvo neste navegador</span>
     <nav id="nav">
-      <a href="#/nova" data-route="nova">Nova cotação</a>
-      <a href="#/cotacoes" data-route="cotacoes">Cotações</a>
-      <a href="#/produtos" data-route="produtos">Produtos</a>
-      <a href="#/fornecedores" data-route="fornecedores">Fornecedores</a>
-      <a href="#/config" data-route="config">Configurações</a>
+      <a href="#" data-route="nova">Nova cotação</a>
+      <a href="#" data-route="cotacoes">Cotações</a>
+      <a href="#" data-route="produtos">Produtos</a>
+      <a href="#" data-route="fornecedores">Fornecedores</a>
+      <a href="#" data-route="config">Configurações</a>
     </nav>
   </header>
   <main id="app"></main>
