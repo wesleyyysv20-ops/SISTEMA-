@@ -316,7 +316,10 @@ function abrirDialogo(msg, botoes) {
       <div class="actions">${botoes.map((b, i) => `<button type="button" class="${b.cls || ''}" data-i="${i}">${esc(b.txt)}</button>`).join('')}</div>
     </div>`;
     const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
-    const tecla = e => { if (e.key === 'Escape') { e.stopPropagation(); fechar(botoes[0].valor); } };
+    const tecla = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(botoes[0].valor); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.stopImmediatePropagation(); }
+    };
     fundo.addEventListener('click', e => {
       e.stopPropagation();
       const b = e.target.closest('button[data-i]');
@@ -1874,7 +1877,20 @@ const acoes = {
   dcOrdenar: el => { ordenarDataCar(el.dataset.campo); renderSoDataCar(); focarDataCar(); },
   dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.codigo || l.chave) l.sel = true; }); renderSoDataCar(); focarDataCar(); },
   dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); renderSoDataCar(); focarDataCar(); },
-  dcCancelar: () => { ui.datacar = null; render(); },
+  dcCancelar: async () => {
+    const d = ui.datacar;
+    if (!d) return;
+    const sel = d.linhas.filter(l => l.sel).length;
+    const msg = sel
+      ? `Sair desta tela? Os ${sel} item(ns) marcado(s) não serão adicionados à cotação.`
+      : 'Sair desta tela sem adicionar itens à cotação?';
+    if (!(await abrirDialogo(msg, [{ txt: 'Continuar aqui', valor: false }, { txt: 'Sair', valor: true, cls: 'danger' }]))) {
+      focarDataCar();
+      return;
+    }
+    ui.datacar = null;
+    render();
+  },
   dcAdicionar: () => {
     const d = ui.datacar;
     const escolhidas = d.linhas.filter(l => l.sel && (l.codigo || l.chave));
