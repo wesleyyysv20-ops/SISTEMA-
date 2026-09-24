@@ -1051,7 +1051,9 @@ function botoesGruposDataCar() {
     g.n++;
     if (l.sel) g.sel++;
   }
-  const lista = [...grupos.entries()].sort((a, b) => (!a[0] - !b[0]) || COLLATOR.compare(a[0], b[0]));
+  // grupos já marcados por inteiro vão para o final; os que faltam ficam no começo (A-Z)
+  const completo = g => g.sel === g.n;
+  const lista = [...grupos.entries()].sort((a, b) => (completo(a[1]) - completo(b[1])) || (!a[0] - !b[0]) || COLLATOR.compare(a[0], b[0]));
   return `<span class="small muted">Marcar por ${esc(d.cab[d.col])}:</span> ` + lista.map(([k, g]) => {
     const estado = g.sel === g.n ? 'on' : g.sel ? 'parcial' : '';
     return `<button type="button" class="dc-chip ${estado}" data-act="dcGrupo" data-g="${esc(k)}" aria-pressed="${g.sel === g.n}" title="${g.sel}/${g.n} marcados. Clique para ${g.sel === g.n ? 'desmarcar' : 'marcar'} todos com ${esc(g.rotulo)}.">${esc(g.rotulo)} <span>(${g.sel ? g.sel + '/' : ''}${g.n})</span></button>`;
@@ -1060,7 +1062,7 @@ function botoesGruposDataCar() {
 
 function atualizarResumoDataCar() {
   const caixaGrupos = $('#dcGrupos');
-  if (caixaGrupos) caixaGrupos.innerHTML = botoesGruposDataCar();
+  if (caixaGrupos) { caixaGrupos.innerHTML = botoesGruposDataCar(); caixaGrupos.scrollTop = 0; }
   const d = ui.datacar;
   const sel = d.linhas.filter(l => l.sel).length;
   const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
