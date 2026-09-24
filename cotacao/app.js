@@ -990,7 +990,9 @@ async function abrirArquivoDataCar(file) {
       })(),
       linhas: dados.map((cels, orig) => ({ cels, orig })),
       ordem: { campo: 'chave', dir: 1 }, // conferência em ordem A-Z pelo OBS
-      pos: 0, // item em conferência (posição na fila)
+      pos: 0, // item em conferência dentro do grupo aberto
+      gcur: 0, // grupo selecionado na lista
+      grupoAberto: null,
     };
     casarLinhasDataCar();
     aplicarOrdemDataCar();
@@ -1037,20 +1039,85 @@ function marcaAtualDataCar(l, p) {
   return l.marca ?? (p ? p.marca : (d.colMarca >= 0 ? l.cels[d.colMarca] : '')) ?? '';
 }
 
-/* ---------------- conferência item a item ----------------
- * Mostra UM item por vez. → ou Espaço: vai para a cotação · ←: não vai · Backspace: volta.
- * Digitar preenche a marca. O próximo só aparece depois de decidir o atual. */
+/* ---------------- conferência por grupo de OBS ----------------
+ * Nível 1 (grupos): uma linha por OBS. → o grupo todo vai, ← não vai, Enter abre para escolher itens.
+ * Nível 2 (itens do grupo): um item por vez. → / Espaço vai, ← não vai, Backspace volta, Esc volta aos grupos.
+ * Itens sem decisão não vão. Enter duas vezes na linha "Concluir" adiciona à cotação. */
 
+function okDataCar(l) {
+  return !!(l.codigo || l.chave);
+}
+
+function todosDataCar() {
+  return ui.datacar.linhas.filter(okDataCar);
+}
+
+/** Itens em conferência: os do grupo aberto (nível 2) ou todos. */
 function filaDataCar() {
   const d = ui.datacar;
-  return d.linhas.filter(l => l.codigo || l.chave);
+  const todos = todosDataCar();
+  return d.grupoAberto == null ? todos : todos.filter(l => grupoDc(l.chave || '') === d.grupoAberto);
+}
+
+function gruposDataCar() {
+  const d = ui.datacar;
+  const mapa = new Map();
+  for (const l of todosDataCar()) {
+    const k = grupoDc(l.chave || '');
+    if (!mapa.has(k)) mapa.set(k, { k, rotulo: l.chave || 'Sem ' + d.cab[d.col], itens: [] });
+    mapa.get(k).itens.push(l);
+  }
+  return [...mapa.values()].sort((a, b) => (!a.k - !b.k) || COLLATOR.compare(a.k, b.k));
+}
+
+function estadoGrupo(g) {
+  const vai = g.itens.filter(l => l.decisao === 'vai').length;
+  const nao = g.itens.filter(l => l.decisao === 'nao').length;
+  const n = g.itens.length;
+  const falta = n - vai - nao;
+  const estado = falta === n ? 'pendente' : falta ? 'incompleto' : vai === n ? 'vai' : nao === n ? 'nao' : 'misto';
+  return { vai, nao, n, falta, estado };
 }
 
 function contagemDataCar() {
-  const fila = filaDataCar();
-  const vai = fila.filter(l => l.decisao === 'vai').length;
-  const nao = fila.filter(l => l.decisao === 'nao').length;
-  return { total: fila.length, vai, nao, falta: fila.length - vai - nao };
+  const todos = todosDataCar();
+  const vai = todos.filter(l => l.decisao === 'vai').length;
+  const nao = todos.filter(l => l.decisao === 'nao').length;
+  return { total: todos.length, vai, nao, falta: todos.length - vai - nao };
+}
+
+function proximoGrupoPendente(depois) {
+  const gs = gruposDataCar();
+  for (let i = depois + 1; i < gs.length; i++) if (['pendente', 'incompleto'].includes(estadoGrupo(gs[i]).estado)) return i;
+  for (let i = 0; i <= depois && i < gs.length; i++) if (['pendente', 'incompleto'].includes(estadoGrupo(gs[i]).estado)) return i;
+  return gs.length; // linha "Concluir"
+}
+
+function decidirGrupoDataCar(gi, decisao) {
+  const d = ui.datacar;
+  const g = gruposDataCar()[gi];
+  if (!g) return;
+  for (const l of g.itens) { l.decisao = decisao; l.sel = decisao === 'vai'; }
+  d.gcur = proximoGrupoPendente(gi);
+  desenharConferencia();
+}
+
+function abrirGrupoDataCar(gi) {
+  const d = ui.datacar;
+  const g = gruposDataCar()[gi];
+  if (!g) return;
+  d.gcur = gi;
+  d.grupoAberto = g.k;
+  const i = g.itens.findIndex(l => !l.decisao);
+  d.pos = i < 0 ? 0 : i;
+  desenharConferencia();
+}
+
+function fecharGrupoDataCar(avancar) {
+  const d = ui.datacar;
+  d.grupoAberto = null;
+  if (avancar) d.gcur = proximoGrupoPendente(d.gcur);
+  desenharConferencia();
 }
 
 function decidirDataCar(decisao) {
@@ -1060,23 +1127,23 @@ function decidirDataCar(decisao) {
   if (!l) return;
   l.decisao = decisao;
   l.sel = decisao === 'vai';
-  d.pos = Math.min(d.pos + 1, fila.length); // fila.length = tela de resumo
+  if (d.pos + 1 >= fila.length) { fecharGrupoDataCar(true); return; } // fim do grupo: volta à lista
+  d.pos++;
   desenharConferencia();
 }
 
 function voltarDataCar() {
   const d = ui.datacar;
-  if (d.pos <= 0) { toast('Este é o primeiro item.'); return; }
+  if (d.grupoAberto == null) { moverGrupoDataCar(d.gcur - 1); return; }
+  if (d.pos <= 0) { fecharGrupoDataCar(false); return; }
   d.pos--;
   desenharConferencia();
 }
 
-/** Vai para o primeiro item ainda sem decisão (ou para o resumo). */
-function irPendenteDataCar() {
+function moverGrupoDataCar(i) {
   const d = ui.datacar;
-  const fila = filaDataCar();
-  const i = fila.findIndex(l => !l.decisao);
-  d.pos = i < 0 ? fila.length : i;
+  const n = gruposDataCar().length;
+  d.gcur = Math.max(0, Math.min(n, i));
   desenharConferencia();
 }
 
@@ -1121,7 +1188,8 @@ function desarmarEnterDataCar() {
 
 function enterDuploDataCar() {
   const d = ui.datacar;
-  const { vai, falta } = contagemDataCar();
+  const { vai } = contagemDataCar();
+  const pend = gruposDataCar().filter(g => ['pendente', 'incompleto'].includes(estadoGrupo(g).estado)).length;
   if (d.enterArmado && Date.now() - d.enterArmado < 5000) {
     d.enterArmado = 0;
     acoes.dcAdicionar();
@@ -1130,8 +1198,8 @@ function enterDuploDataCar() {
   d.enterArmado = Date.now();
   document.querySelectorAll('#dlgDataCar [data-act="dcAdicionar"]').forEach(btn => { btn.textContent = 'Enter de novo para adicionar'; btn.classList.add('armado'); });
   toast(vai
-    ? `Pressione Enter de novo para adicionar ${vai} item(ns) à cotação.${falta ? ` Ainda faltam ${falta} sem decisão (não vão).` : ''}`
-    : 'Nenhum item marcado para ir. Use → ou Espaço nos itens que vão.', 4500);
+    ? `Pressione Enter de novo para adicionar ${vai} item(ns) à cotação.${pend ? ` Atenção: ${pend} grupo(s) ainda sem decisão (não vão).` : ''}`
+    : 'Nenhum item marcado para ir.', 5000);
 }
 
 function teclaDataCar(e) {
@@ -1148,89 +1216,132 @@ function teclaDataCar(e) {
     return;
   }
   if (t.matches('select, input, textarea')) return; // seletores de coluna
-  if (e.repeat && (e.key === ' ' || e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Backspace')) { e.preventDefault(); return; } // tecla segurada não decide vários itens
-  const noResumo = d.pos >= filaDataCar().length;
-  const letra = e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey;
-  if (e.key === 'ArrowRight' || e.key === ' ') {
-    e.preventDefault();
-    if (!noResumo) decidirDataCar('vai');
-  } else if (e.key === 'ArrowLeft') {
-    e.preventDefault();
-    if (!noResumo) decidirDataCar('nao');
-  } else if (e.key === 'Backspace' || e.key === 'ArrowUp') {
-    e.preventDefault();
-    voltarDataCar();
-  } else if (e.key === 'F2') {
-    e.preventDefault();
-    if (!noResumo) editarMarcaDataCar();
-  } else if (letra && !noResumo) {
-    e.preventDefault();
-    editarMarcaDataCar(e.key);
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    enterDuploDataCar();
-  } else if (e.key === 'Escape') {
-    e.preventDefault();
-    acoes.dcCancelar();
+  if (e.repeat && [' ', 'ArrowRight', 'ArrowLeft', 'Backspace', 'Enter'].includes(e.key)) { e.preventDefault(); return; } // tecla segurada não decide vários
+
+  if (d.grupoAberto == null) {
+    // ----- nível 1: grupos
+    const n = gruposDataCar().length;
+    const naLista = d.gcur < n;
+    if (e.key === 'ArrowDown') { e.preventDefault(); moverGrupoDataCar(d.gcur + 1); }
+    else if (e.key === 'ArrowUp' || e.key === 'Backspace') { e.preventDefault(); moverGrupoDataCar(d.gcur - 1); }
+    else if ((e.key === 'ArrowRight' || e.key === ' ') && naLista) { e.preventDefault(); decidirGrupoDataCar(d.gcur, 'vai'); }
+    else if (e.key === 'ArrowLeft' && naLista) { e.preventDefault(); decidirGrupoDataCar(d.gcur, 'nao'); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (naLista) abrirGrupoDataCar(d.gcur); else enterDuploDataCar(); }
+    else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); moverGrupoDataCar(e.key === 'Home' ? 0 : n); }
+    else if (e.key === 'Escape') { e.preventDefault(); acoes.dcCancelar(); }
+    return;
   }
+  // ----- nível 2: itens do grupo aberto
+  const letra = e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey;
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); decidirDataCar('vai'); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); decidirDataCar('nao'); }
+  else if (e.key === 'Backspace' || e.key === 'ArrowUp') { e.preventDefault(); voltarDataCar(); }
+  else if (e.key === 'F2') { e.preventDefault(); editarMarcaDataCar(); }
+  else if (letra) { e.preventDefault(); editarMarcaDataCar(e.key); }
+  else if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); fecharGrupoDataCar(false); }
 }
 
-/** Redesenha só o miolo da conferência (item atual, progresso e próximos). */
+/** Redesenha o miolo (lista de grupos ou item do grupo aberto). */
 function desenharConferencia() {
   const alvo = $('#dcConferencia');
   if (!alvo) return;
   const det = alvo.querySelector('.conf-arquivo');
   if (det) ui.datacar.verArquivo = det.open;
+  const lista = alvo.querySelector('.conf-grupos');
+  const topo = lista ? lista.scrollTop : 0;
   alvo.innerHTML = conteudoConferencia();
+  const nova = alvo.querySelector('.conf-grupos');
+  if (nova) {
+    nova.scrollTop = topo;
+    const atual = nova.querySelector('.conf-grupo.atual');
+    if (atual) {
+      // mantém a linha atual visível, com a próxima à vista
+      const alt = atual.offsetHeight;
+      const ini = atual.offsetTop;
+      if (nova.scrollTop > ini - 4) nova.scrollTop = ini - 4;
+      else if (nova.scrollTop + nova.clientHeight < ini + alt * 2) nova.scrollTop = ini + alt * 2 - nova.clientHeight;
+    }
+  }
   focarDataCar();
 }
 
-function conteudoConferencia() {
-  const d = ui.datacar;
-  const fila = filaDataCar();
+function progressoDataCar() {
+  const gs = gruposDataCar();
   const c = contagemDataCar();
-  const pct = c.total ? Math.round(((c.vai + c.nao) / c.total) * 100) : 100;
-  const progresso = `
+  const decididos = gs.filter(g => !['pendente', 'incompleto'].includes(estadoGrupo(g).estado)).length;
+  const pct = gs.length ? Math.round((decididos / gs.length) * 100) : 100;
+  return `
     <div class="conf-progresso">
-      <div class="conf-barra" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.vai + c.nao}"><span style="width:${pct}%"></span></div>
+      <div class="conf-barra" role="progressbar" aria-valuemin="0" aria-valuemax="${gs.length}" aria-valuenow="${decididos}"><span style="width:${pct}%"></span></div>
       <div class="conf-numeros">
-        <span>${d.pos < fila.length ? `Item <b>${d.pos + 1}</b> de ${fila.length}` : `<b>${fila.length}</b> itens`}</span>
-        <span class="conf-vai">✓ ${c.vai} vão</span>
+        <span>Grupos decididos: <b>${decididos}</b> de ${gs.length}</span>
+        <span class="conf-vai">✓ ${c.vai} itens vão</span>
         <span class="conf-nao">✗ ${c.nao} não vão</span>
         ${c.falta ? `<span class="muted">${c.falta} sem decisão</span>` : ''}
       </div>
     </div>`;
+}
 
-  if (d.pos >= fila.length) {
-    const vao = fila.filter(l => l.decisao === 'vai');
-    return `${progresso}
-      <div class="conf-card conf-fim">
-        <h3 style="margin:0 0 6px">${c.falta ? 'Fim da lista' : '✓ Conferência concluída'}</h3>
-        <p style="margin:0 0 10px">${c.vai} item(ns) vão para a cotação e ${c.nao} não vão.${c.falta ? ` ${c.falta} ficaram sem decisão.` : ''}</p>
-        ${vao.length ? `<div class="conf-lista-vai">${vao.slice(0, 200).map(l => `<span>${esc(l.codigo || l.chave)}</span>`).join('')}${vao.length > 200 ? `<span class="muted">+${vao.length - 200}</span>` : ''}</div>` : ''}
-        <div class="row" style="margin-top:12px">
-          ${c.falta ? '<button class="sm" data-act="dcPendente">Ir para o próximo sem decisão</button>' : ''}
-          <button class="sm" data-act="dcVoltar">↶ Voltar ao último item (Backspace)</button>
-          <button class="sm" data-act="dcRecomecar">Revisar do início</button>
-        </div>
-        <p class="small muted" style="margin:10px 0 0">Aperte <span class="kbd">Enter</span> duas vezes para adicionar à cotação.</p>
-      </div>`;
-  }
+function conteudoConferencia() {
+  const d = ui.datacar;
+  return d.grupoAberto == null ? conteudoGrupos() : conteudoItem();
+}
 
+function conteudoGrupos() {
+  const d = ui.datacar;
+  const gs = gruposDataCar();
+  if (d.gcur == null || d.gcur > gs.length) d.gcur = 0;
+  const rotEstado = { pendente: 'sem decisão', incompleto: 'incompleto', vai: 'VAI', nao: 'NÃO VAI', misto: 'escolhido' };
+  const linhas = gs.map((g, i) => {
+    const e = estadoGrupo(g);
+    const amostra = g.itens.slice(0, 3).map(l => (d.colDesc >= 0 && l.cels[d.colDesc]) || l.codigo).filter(Boolean);
+    return `<div class="conf-grupo est-${e.estado} ${i === d.gcur ? 'atual' : ''}" data-g-idx="${i}">
+      <div class="cg-obs"><b>${esc(g.rotulo)}</b><span>${e.n} ${e.n === 1 ? 'item' : 'itens'}</span></div>
+      <div class="cg-amostra small">${amostra.map(esc).join(' · ')}${e.n > 3 ? ` <span class="muted">+${e.n - 3}</span>` : ''}</div>
+      <div class="cg-estado"><span class="badge ${e.estado === 'vai' ? 'ok' : e.estado === 'nao' ? 'danger' : e.estado === 'pendente' ? '' : 'warn'}">${rotEstado[e.estado]}${e.estado === 'misto' || e.estado === 'incompleto' ? ` · ${e.vai} vão` : ''}</span></div>
+      <div class="cg-acoes">
+        <button type="button" class="sm conf-mini-nao" data-act="dcGNao" data-i="${i}" title="O grupo todo NÃO vai (←)">✗</button>
+        <button type="button" class="sm" data-act="dcGAbrir" data-i="${i}" title="Escolher itens deste grupo (Enter)">Escolher</button>
+        <button type="button" class="sm conf-mini-vai" data-act="dcGVai" data-i="${i}" title="O grupo todo VAI (→)">✓ Vai</button>
+      </div>
+    </div>`;
+  }).join('');
+  const pend = gs.filter(g => ['pendente', 'incompleto'].includes(estadoGrupo(g).estado)).length;
+  const c = contagemDataCar();
+  return `${progressoDataCar()}
+    <div class="conf-grupos" role="listbox" aria-label="Grupos de ${esc(d.cab[d.col])}">
+      ${linhas}
+      <div class="conf-grupo conf-concluir ${d.gcur === gs.length ? 'atual' : ''}" data-g-idx="${gs.length}">
+        <div><b>Concluir</b> · ${c.vai} item(ns) vão para a cotação${pend ? ` · <span class="conf-alerta">${pend} grupo(s) sem decisão</span>` : ' · ✓ todos os grupos decididos'}</div>
+        <div class="small muted">Nesta linha, <span class="kbd">Enter</span> <span class="kbd">Enter</span> adiciona à cotação</div>
+      </div>
+    </div>
+    <p class="small muted" style="margin:8px 0 0">
+      <span class="kbd">↑</span> <span class="kbd">↓</span> grupos · <span class="kbd">→</span>/<span class="kbd">Espaço</span> grupo todo vai ·
+      <span class="kbd">←</span> grupo todo não vai · <span class="kbd">Enter</span> escolher itens do grupo · <span class="kbd">Esc</span> sair
+    </p>`;
+}
+
+function conteudoItem() {
+  const d = ui.datacar;
+  const fila = filaDataCar();
+  if (d.pos >= fila.length) d.pos = Math.max(0, fila.length - 1);
   const l = fila[d.pos];
+  if (!l) return conteudoGrupos();
   const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
   const txt = cc => (cc >= 0 ? l.cels[cc] : '');
   const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
   const m = marcaAtualDataCar(l, p);
-  const doGrupo = l.chave ? fila.filter(x => grupoDc(x.chave || '') === grupoDc(l.chave)) : [];
-  const posGrupo = doGrupo.indexOf(l) + 1;
-  const repetido = l.codigo && fila.filter(x => chaveCodigo(x.codigo || '') === chaveCodigo(l.codigo)).length > 1;
-  const proximos = fila.slice(d.pos + 1, d.pos + 4);
-  const anterior = fila[d.pos - 1];
-  return `${progresso}
+  const repetido = l.codigo && todosDataCar().filter(x => chaveCodigo(x.codigo || '') === chaveCodigo(l.codigo)).length > 1;
+  const vai = fila.filter(x => x.decisao === 'vai').length;
+  const nao = fila.filter(x => x.decisao === 'nao').length;
+  return `${progressoDataCar()}
+    <div class="conf-grupo-aberto">
+      <button type="button" class="sm" data-act="dcGFechar">← Voltar aos grupos (Esc)</button>
+      <span>Grupo <b>${esc(l.chave || '—')}</b> · item <b>${d.pos + 1}</b> de ${fila.length} · <span class="conf-vai">✓ ${vai}</span> · <span class="conf-nao">✗ ${nao}</span></span>
+    </div>
     <div class="conf-card ${l.decisao ? 'conf-' + l.decisao : ''}">
       <div class="conf-topo">
-        <span class="conf-obs">${esc(d.cab[d.col])}: <b>${esc(l.chave || '—')}</b>${doGrupo.length > 1 ? ` <span class="muted">(${posGrupo} de ${doGrupo.length} do grupo)</span>` : ''}</span>
         ${l.decisao ? `<span class="badge ${l.decisao === 'vai' ? 'ok' : 'danger'}">já decidido: ${l.decisao === 'vai' ? 'VAI' : 'NÃO VAI'}</span>` : ''}
         ${repetido ? '<span class="badge warn">código repetido no arquivo</span>' : ''}
         ${p && naCotacao.has(p.id) ? '<span class="badge">já está na cotação</span>' : ''}
@@ -1254,9 +1365,11 @@ function conteudoConferencia() {
         <button type="button" class="conf-btn conf-btn-nao" data-act="dcDecidir" data-d="nao"><span class="kbd">←</span> Não vai</button>
         <button type="button" class="conf-btn conf-btn-vai" data-act="dcDecidir" data-d="vai">Vai para a cotação <span class="kbd">→</span> <span class="kbd">Espaço</span></button>
       </div>
-      <button type="button" class="sm conf-voltar" data-act="dcVoltar" ${d.pos ? '' : 'disabled'}>↶ Voltar (Backspace)${anterior ? ` · anterior: ${esc(anterior.codigo || anterior.chave)} ${anterior.decisao === 'vai' ? '✓' : anterior.decisao === 'nao' ? '✗' : ''}` : ''}</button>
     </div>
-    ${proximos.length ? `<div class="conf-proximos small muted">Próximos: ${proximos.map(x => `<span>${esc(x.chave || '—')} · ${esc(x.codigo || '')}${d.colDesc >= 0 && x.cels[d.colDesc] ? ' · ' + esc(x.cels[d.colDesc]) : ''}</span>`).join('')}</div>` : ''}`;
+    <p class="small muted" style="margin:8px 0 0">
+      <span class="kbd">→</span>/<span class="kbd">Espaço</span> vai · <span class="kbd">←</span> não vai · <span class="kbd">Backspace</span> item anterior ·
+      digite para trocar a marca · <span class="kbd">Esc</span> volta aos grupos
+    </p>`;
 }
 
 function renderSoDataCar() {
@@ -1274,7 +1387,7 @@ function renderDataCar() {
   <div class="dlg-fundo" id="dlgDataCar">
     <div class="dlg dlg-conf" role="dialog" aria-modal="true" aria-labelledby="dcTitulo" tabindex="-1" id="dcCaixa">
       <div class="row-between">
-        <h3 id="dcTitulo" style="margin:0">Conferência dos itens do arquivo</h3>
+        <h3 id="dcTitulo" style="margin:0">Conferência por grupo de OBS</h3>
         <span class="muted small">${esc(d.arquivo)}</span>
       </div>
       <details class="conf-colunas">
@@ -1293,10 +1406,6 @@ function renderDataCar() {
         </div>
       </details>
       <div id="dcConferencia">${conteudoConferencia()}</div>
-      <p class="small muted" style="margin:10px 0 0">
-        <span class="kbd">→</span>/<span class="kbd">Espaço</span> vai · <span class="kbd">←</span> não vai · <span class="kbd">Backspace</span> volta ·
-        digite para trocar a marca · <span class="kbd">Enter</span> <span class="kbd">Enter</span> adiciona à cotação · <span class="kbd">Esc</span> sair
-      </p>
       <div class="row-between" style="margin-top:8px">
         <span></span>
         <div class="row">
@@ -1964,6 +2073,8 @@ function render() {
 }
 
 document.addEventListener('click', e => {
+  const linhaGrupo = e.target.closest('[data-g-idx]');
+  if (linhaGrupo && ui.datacar && !e.target.closest('button')) moverGrupoDataCar(+linhaGrupo.dataset.gIdx);
   const linhaItem = e.target.closest('[data-item-linha]');
   if (linhaItem) {
     const campo = e.target.closest('[data-marca-item], [data-similar-prod]');
@@ -2008,10 +2119,11 @@ const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
   dcDecidir: el => decidirDataCar(el.dataset.d),
-  dcVoltar: () => voltarDataCar(),
-  dcPendente: () => irPendenteDataCar(),
-  dcRecomecar: () => { ui.datacar.pos = 0; desenharConferencia(); },
   dcEditarMarca: () => editarMarcaDataCar(),
+  dcGVai: el => decidirGrupoDataCar(+el.dataset.i, 'vai'),
+  dcGNao: el => decidirGrupoDataCar(+el.dataset.i, 'nao'),
+  dcGAbrir: el => abrirGrupoDataCar(+el.dataset.i),
+  dcGFechar: () => fecharGrupoDataCar(false),
 
   dcCancelar: async () => {
     const d = ui.datacar;
@@ -2552,7 +2664,7 @@ document.addEventListener('change', async e => {
     if (t.id === 'dcColCod') ui.datacar.colCod = +t.value; else ui.datacar.col = +t.value;
     casarLinhasDataCar();
     aplicarOrdemDataCar();
-    ui.datacar.pos = 0;
+    Object.assign(ui.datacar, { pos: 0, gcur: 0, grupoAberto: null });
     renderSoDataCar();
     focarDataCar();
   } else if (t.id === 'statusCot') {
