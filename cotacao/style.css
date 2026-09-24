@@ -540,3 +540,8 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
 .dc-filtros .dc-chip.on { background: var(--primary-2); border-color: var(--primary-2); color: var(--on-primary); }
 .dc-filtros .dc-chip.on span { color: var(--on-primary); }
 .dc-row.dc-oculta { display: none; }
+
+.dc-chip.ignorado { background: var(--card-2); color: var(--muted); text-decoration: line-through; border-style: dashed; }
+.dc-chip.ignorado span { text-decoration: none; }
+.dc-row.dc-ignorada > div { opacity: .45; text-decoration: line-through; }
+.dc-row.dc-ignorada .dc-marca { text-decoration: none; }

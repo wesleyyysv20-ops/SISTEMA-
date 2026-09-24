@@ -990,6 +990,7 @@ async function abrirArquivoDataCar(file) {
       })(),
       linhas: dados.map((cels, orig) => ({ cels, orig })),
       ordem: { campo: 'chave', dir: 1 }, // abre já em ordem A-Z pelo OBS
+      ignorados: new Set(), // grupos de OBS ignorados (botão direito): não vão para a cotação
       agrupar: false, // marca item por item; o grupo inteiro só com a opção ligada
       cursor: 0,
     };
@@ -1010,7 +1011,7 @@ function aplicarFiltroDataCar() {
   const f = d.filtro || { modo: 'todos', texto: '' };
   const termos = semAcento(f.texto || '').split(/\s+/).filter(Boolean);
   d.visivel = d.linhas.map(l => {
-    if (f.modo === 'pendentes' && l.sel) return false;
+    if (f.modo === 'pendentes' && (l.sel || ignoradaDataCar(l))) return false;
     if (f.modo === 'marcados' && !l.sel) return false;
     if (termos.length) {
       if (!l._busca) l._busca = semAcento([l.chave, l.codigo, ...l.cels].join(' '));
@@ -1020,10 +1021,12 @@ function aplicarFiltroDataCar() {
   });
   document.querySelectorAll('#dlgDataCar [data-dc-linha]').forEach(tr => {
     tr.classList.toggle('dc-oculta', d.visivel[+tr.dataset.dcLinha] === false);
+    tr.classList.toggle('dc-ignorada', ignoradaDataCar(d.linhas[+tr.dataset.dcLinha]));
   });
   const sel = d.linhas.filter(l => l.sel).length;
   const total = d.linhas.filter(l => l.codigo || l.chave).length;
-  const cont = { todos: total, pendentes: total - sel, marcados: sel };
+  const ign = d.linhas.filter(l => (l.codigo || l.chave) && ignoradaDataCar(l)).length;
+  const cont = { todos: total, pendentes: total - sel - ign, marcados: sel };
   document.querySelectorAll('#dlgDataCar [data-act="dcModo"]').forEach(b => {
     b.classList.toggle('on', b.dataset.modo === f.modo);
     const c = b.querySelector('span');
@@ -1052,9 +1055,12 @@ function botoesGruposDataCar() {
     if (l.sel) g.sel++;
   }
   // grupos já marcados por inteiro vão para o final; os que faltam ficam no começo (A-Z)
-  const completo = g => g.sel === g.n;
-  const lista = [...grupos.entries()].sort((a, b) => (completo(a[1]) - completo(b[1])) || (!a[0] - !b[0]) || COLLATOR.compare(a[0], b[0]));
-  return `<span class="small muted">Marcar por ${esc(d.cab[d.col])}:</span> ` + lista.map(([k, g]) => {
+  const completo = ([k, g]) => (d.ignorados.has(k) ? 2 : g.sel === g.n ? 1 : 0);
+  const lista = [...grupos.entries()].sort((a, b) => (completo(a) - completo(b)) || (!a[0] - !b[0]) || COLLATOR.compare(a[0], b[0]));
+  return `<span class="small muted" title="Clique marca o grupo. Botão direito ignora o grupo (não vai para a cotação).">Marcar por ${esc(d.cab[d.col])} (botão direito ignora):</span> ` + lista.map(([k, g]) => {
+    if (d.ignorados.has(k)) {
+      return `<button type="button" class="dc-chip ignorado" data-act="dcGrupo" data-g="${esc(k)}" title="Ignorado: não vai para a cotação. Clique (ou botão direito) para voltar.">${esc(g.rotulo)} <span>(${g.n}) ignorado</span></button>`;
+    }
     const estado = g.sel === g.n ? 'on' : g.sel ? 'parcial' : '';
     return `<button type="button" class="dc-chip ${estado}" data-act="dcGrupo" data-g="${esc(k)}" aria-pressed="${g.sel === g.n}" title="${g.sel}/${g.n} marcados. Clique para ${g.sel === g.n ? 'desmarcar' : 'marcar'} todos com ${esc(g.rotulo)}.">${esc(g.rotulo)} <span>(${g.sel ? g.sel + '/' : ''}${g.n})</span></button>`;
   }).join('');
@@ -1068,21 +1074,49 @@ function atualizarResumoDataCar() {
   const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
   const grupos = new Set(d.linhas.filter(l => l.sel && l.chave).map(l => grupoDc(l.chave))).size;
   const el = $('#dcResumo');
-  if (el) el.textContent = `${sel} selecionado(s)${grupos ? ` em ${grupos} grupo(s) de ${d.cab[d.col]}` : ''}${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}`;
+  const ignorados = d.ignorados && d.ignorados.size ? d.linhas.filter(l => (l.codigo || l.chave) && ignoradaDataCar(l)).length : 0;
+  if (el) el.textContent = `${sel} selecionado(s)${grupos ? ` em ${grupos} grupo(s) de ${d.cab[d.col]}` : ''}${ignorados ? ` · ${ignorados} ignorado(s)` : ''}${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}`;
 }
 
 const grupoDc = v => semAcento(v).replace(/\s+/g, ' ');
 const chaveCodigo = v => semAcento(v).replace(/\s+/g, '');
 
 /** Marca/desmarca a linha i — e, com "agrupar" ligado, todas as linhas com a mesma OBS. */
+function ignoradaDataCar(l) {
+  const ig = ui.datacar.ignorados;
+  return !!(ig && ig.size && ig.has(grupoDc(l.chave || '')));
+}
+
+/** Botão direito num grupo: ignora (desmarca tudo, esconde de "Não marcados" e manda para o final) ou volta. */
+function alternarIgnorarGrupoDataCar(k) {
+  const d = ui.datacar;
+  const ignorar = !d.ignorados.has(k);
+  if (ignorar) d.ignorados.add(k); else d.ignorados.delete(k);
+  d.linhas.forEach((l, i) => {
+    if (grupoDc(l.chave || '') !== k) return;
+    if (ignorar) l.sel = false;
+    const tr = document.querySelector(`[data-dc-linha="${i}"]`);
+    if (tr) {
+      tr.classList.toggle('dc-on', !!l.sel);
+      tr.querySelector('.dc-check')?.setAttribute('aria-checked', String(!!l.sel));
+    }
+  });
+  atualizarResumoDataCar();
+  aplicarFiltroDataCar();
+  moverCursorDataCar(d.cursor, 1);
+  $('#dcCaixa')?.focus({ preventScroll: true });
+}
+
 function marcarLinhaDataCar(i, valor) {
   const d = ui.datacar;
   const l = d.linhas[i];
   if (!l || !(l.codigo || l.chave)) return;
+  if (valor && ignoradaDataCar(l)) { toast(`O grupo "${l.chave || 'sem OBS'}" está ignorado. Clique com o botão direito no botão do grupo para voltar a usá-lo.`, 4000); return; }
   const alvo = d.agrupar && l.chave ? grupoDc(l.chave) : null;
   d.linhas.forEach((x, j) => {
     if (j !== i && (!alvo || !x.chave || grupoDc(x.chave) !== alvo)) return;
     if (!(x.codigo || x.chave)) return;
+    if (valor && ignoradaDataCar(x)) return; // grupo ignorado não é marcado
     x.sel = valor;
     const tr = document.querySelector(`[data-dc-linha="${j}"]`);
     if (tr) {
@@ -1146,6 +1180,13 @@ function rolagemDataCar(e) {
   lista.scrollTop = Math.round(lista.scrollTop / alt) * alt + passo * alt;
 }
 document.addEventListener('wheel', rolagemDataCar, { passive: false });
+
+document.addEventListener('contextmenu', e => {
+  const b = e.target.closest && e.target.closest('#dcGrupos [data-act="dcGrupo"]');
+  if (!b || !ui.datacar) return;
+  e.preventDefault();
+  alternarIgnorarGrupoDataCar(b.dataset.g);
+});
 
 function focarDataCar() {
   atualizarResumoDataCar();
@@ -2139,6 +2180,7 @@ const acoes = {
   dcGrupo: el => {
     const d = ui.datacar;
     const k = el.dataset.g;
+    if (d.ignorados.has(k)) return alternarIgnorarGrupoDataCar(k);
     const idx = [];
     d.linhas.forEach((l, i) => { if ((l.codigo || l.chave) && grupoDc(l.chave || '') === k) idx.push(i); });
     const todos = idx.every(i => d.linhas[i].sel);
@@ -2156,7 +2198,7 @@ const acoes = {
     $('#dcCaixa')?.focus({ preventScroll: true });
   },
 
-  dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.codigo || l.chave) l.sel = true; }); renderSoDataCar(); focarDataCar(); },
+  dcTodos: () => { ui.datacar.linhas.forEach(l => { if ((l.codigo || l.chave) && !ignoradaDataCar(l)) l.sel = true; }); renderSoDataCar(); focarDataCar(); },
   dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); renderSoDataCar(); focarDataCar(); },
   dcCancelar: async () => {
     const d = ui.datacar;
