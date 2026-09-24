@@ -160,13 +160,14 @@ async function carregarNuvem() {
   const todos = [...sis, ...prods, ...forns, ...cots];
   if (!todos.length) return null;
   for (const [path, data] of todos) nuvem.enviado[path] = JSON.stringify(data);
-  const mapa = Object.fromEntries(sis);
+  // Os documentos chegam congelados (somente leitura): trabalhamos sempre com cópias.
+  const mapa = structuredClone(Object.fromEntries(sis));
   return normalizar({
     config: mapa['sistema/config'] || {},
     rascunho: mapa['sistema/extra']?.rascunho || null,
     ultimoBackup: mapa['sistema/extra']?.ultimoBackup || null,
-    produtos: prods.flatMap(([, d]) => d.itens || []),
-    fornecedores: forns.flatMap(([, d]) => d.itens || []),
+    produtos: structuredClone(prods.flatMap(([, d]) => d.itens || [])),
+    fornecedores: structuredClone(forns.flatMap(([, d]) => d.itens || [])),
     cotacoes: cots.map(([, d]) => structuredClone(d)),
   });
 }
@@ -1650,7 +1651,14 @@ function render() {
     fornecedores: renderFornecedores,
     config: renderConfig,
   };
-  app.innerHTML = (views[nome] || renderCotacoes)();
+  try {
+    app.innerHTML = (views[nome] || renderCotacoes)();
+  } catch (e) {
+    console.error(e);
+    app.innerHTML = `<section class="card"><h2>Não foi possível abrir esta tela</h2>
+      <p class="muted">Ocorreu um erro: ${esc(e.message)}</p>
+      <p class="muted small">Tente recarregar a página. Se continuar, avise com a mensagem acima.</p></section>`;
+  }
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
