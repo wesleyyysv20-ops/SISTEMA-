@@ -908,12 +908,87 @@ async function abrirArquivoDataCar(file) {
       colQtd: acharColuna(cab, [/^qt/, /quant/]),
       colMarca: acharColuna(cab, [/marca/, /fabric/]),
       linhas: dados.map(cels => ({ cels })),
+      cursor: 0,
     };
     casarLinhasDataCar();
     render();
+    focarDataCar();
   } catch (e) {
     console.error(e);
     avisar('Não consegui ler o arquivo:\n' + e.message);
+  }
+}
+
+function atualizarResumoDataCar() {
+  const d = ui.datacar;
+  const sel = d.linhas.filter(l => l.sel).length;
+  const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
+  const el = $('#dcResumo');
+  if (el) el.textContent = `${sel} selecionado(s)${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}`;
+}
+
+function marcarLinhaDataCar(i, valor) {
+  const l = ui.datacar.linhas[i];
+  if (!l || !l.chave) return;
+  l.sel = valor;
+  const tr = document.querySelector(`[data-dc-linha="${i}"]`);
+  if (tr) {
+    tr.classList.toggle('dc-off', !valor);
+    const cb = tr.querySelector('[data-dc-sel]');
+    if (cb) cb.checked = valor;
+  }
+  atualizarResumoDataCar();
+}
+
+function moverCursorDataCar(i) {
+  const d = ui.datacar;
+  if (!d.linhas.length) return;
+  d.cursor = Math.max(0, Math.min(d.linhas.length - 1, i));
+  document.querySelectorAll('tr.dc-atual').forEach(tr => tr.classList.remove('dc-atual'));
+  const tr = document.querySelector(`[data-dc-linha="${d.cursor}"]`);
+  if (tr) {
+    tr.classList.add('dc-atual');
+    tr.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function focarDataCar() {
+  const caixa = $('#dcCaixa');
+  if (caixa && !caixa.contains(document.activeElement)) caixa.focus({ preventScroll: true });
+  moverCursorDataCar(ui.datacar.cursor);
+}
+
+function teclaDataCar(e) {
+  const d = ui.datacar;
+  const t = e.target;
+  const campoTexto = t.matches('input:not([type=checkbox]), select, textarea');
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (t.tagName === 'SELECT') return;
+    e.preventDefault();
+    moverCursorDataCar(d.cursor + (e.key === 'ArrowDown' ? 1 : -1));
+    if (campoTexto) {
+      const q = document.querySelector(`[data-dc-qtd="${d.cursor}"]`);
+      if (q) { q.focus(); q.select(); }
+    } else {
+      $('#dcCaixa').focus({ preventScroll: true });
+    }
+  } else if ((e.key === 'PageDown' || e.key === 'PageUp') && !campoTexto) {
+    e.preventDefault();
+    moverCursorDataCar(d.cursor + (e.key === 'PageDown' ? 10 : -10));
+  } else if ((e.key === 'Home' || e.key === 'End') && !campoTexto) {
+    e.preventDefault();
+    moverCursorDataCar(e.key === 'Home' ? 0 : d.linhas.length - 1);
+  } else if (e.key === ' ' && !campoTexto) {
+    e.preventDefault();
+    const idx = t.dataset && t.dataset.dcSel != null ? +t.dataset.dcSel : d.cursor;
+    moverCursorDataCar(idx);
+    marcarLinhaDataCar(idx, !d.linhas[idx].sel);
+  } else if (e.key === 'Enter' && t.tagName !== 'BUTTON' && t.tagName !== 'SELECT') {
+    e.preventDefault();
+    acoes.dcAdicionar();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    acoes.dcCancelar();
   }
 }
 
@@ -927,7 +1002,7 @@ function renderDataCar() {
   const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
   return `
   <div class="dlg-fundo" id="dlgDataCar">
-    <div class="dlg dlg-largo" role="dialog" aria-modal="true" aria-labelledby="dcTitulo">
+    <div class="dlg dlg-largo" role="dialog" aria-modal="true" aria-labelledby="dcTitulo" tabindex="-1" id="dcCaixa">
       <div class="row-between">
         <h3 id="dcTitulo" style="margin:0">Selecione os itens para a cotação</h3>
         <span class="muted small">${esc(d.arquivo)} · ${d.linhas.length} linha(s)</span>
@@ -945,7 +1020,7 @@ function renderDataCar() {
         <tbody>${d.linhas.map((l, i) => {
           const p = l.produtoId ? prod[l.produtoId] : null;
           const resumo = [txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
-          return `<tr class="${l.sel ? '' : 'dc-off'}">
+          return `<tr class="${l.sel ? '' : 'dc-off'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
             <td><input type="checkbox" data-dc-sel="${i}" ${l.sel ? 'checked' : ''} ${l.chave ? '' : 'disabled'} aria-label="Selecionar linha ${i + 1}"></td>
             <td><b>${esc(l.chave || '—')}</b></td>
             <td class="small">${esc(resumo)}</td>
@@ -956,7 +1031,8 @@ function renderDataCar() {
           </tr>`;
         }).join('')}</tbody>
       </table></div>
-      <div class="row-between" style="margin-top:12px">
+      <p class="small muted" style="margin:10px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
+      <div class="row-between" style="margin-top:8px">
         <span class="small muted" id="dcResumo">${sel} selecionado(s)${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}</span>
         <div class="row">
           <button data-act="dcCancelar">Cancelar</button>
@@ -1577,6 +1653,12 @@ function render() {
 }
 
 document.addEventListener('click', e => {
+  const linhaDc = e.target.closest('[data-dc-linha]');
+  if (linhaDc && ui.datacar) {
+    moverCursorDataCar(+linhaDc.dataset.dcLinha);
+    if (!e.target.closest('input, button, select, label')) marcarLinhaDataCar(+linhaDc.dataset.dcLinha, !ui.datacar.linhas[+linhaDc.dataset.dcLinha].sel);
+    if (!e.target.closest('input, select')) $('#dcCaixa')?.focus({ preventScroll: true });
+  }
   const link = e.target.closest('[data-route]');
   if (link) {
     e.preventDefault();
@@ -1614,8 +1696,8 @@ function adicionarItem(produtoId, quantidade = 1) {
 const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
-  dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.chave) l.sel = true; }); render(); },
-  dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); render(); },
+  dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.chave) l.sel = true; }); render(); focarDataCar(); },
+  dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); render(); focarDataCar(); },
   dcCancelar: () => { ui.datacar = null; render(); },
   dcAdicionar: () => {
     const d = ui.datacar;
@@ -1951,6 +2033,10 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('keydown', e => {
+  if (ui.datacar && $('#dlgDataCar') && !document.querySelector('.dlg-fundo:not(#dlgDataCar)')) {
+    teclaDataCar(e);
+    return;
+  }
   if (e.target.id === 'buscaProd') {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -1976,13 +2062,10 @@ document.addEventListener('change', async e => {
     ui.datacar.col = +t.value;
     casarLinhasDataCar();
     render();
+    focarDataCar();
   } else if (t.dataset.dcSel != null) {
-    ui.datacar.linhas[+t.dataset.dcSel].sel = t.checked;
-    t.closest('tr').classList.toggle('dc-off', !t.checked);
-    const d = ui.datacar;
-    const sel = d.linhas.filter(l => l.sel).length;
-    const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
-    $('#dcResumo').textContent = `${sel} selecionado(s)${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}`;
+    marcarLinhaDataCar(+t.dataset.dcSel, t.checked);
+    moverCursorDataCar(+t.dataset.dcSel);
   } else if (t.id === 'statusCot') {
     ui.statusCot = t.value;
     $('#tbCot').innerHTML = linhasCotacoes();
