@@ -878,15 +878,19 @@ function casarLinhasDataCar() {
   const d = ui.datacar;
   const mapa = indiceProdutos();
   d.linhas.forEach(l => {
+    // OBS (chave) agrupa os itens; o código do arquivo identifica o produto.
     const chave = String(l.cels[d.col] ?? '').trim();
+    const codigo = d.colCod >= 0 && d.colCod !== d.col ? String(l.cels[d.colCod] ?? '').trim() : '';
+    const busca = codigo || chave;
     let p = null;
-    if (chave) {
-      p = mapa.get(semAcento(chave).replace(/\s+/g, '')) || null;
-      if (!p) for (const parte of chave.split(/[\/,;]+/)) { p = mapa.get(semAcento(parte).replace(/\s+/g, '')); if (p) break; }
+    if (busca) {
+      p = mapa.get(semAcento(busca).replace(/\s+/g, '')) || null;
+      if (!p) for (const parte of busca.split(/[\/,;]+/)) { p = mapa.get(semAcento(parte).replace(/\s+/g, '')); if (p) break; }
     }
     l.chave = chave;
+    l.codigo = codigo;
     l.produtoId = p ? p.id : null;
-    if (!chave) l.sel = false;
+    if (!busca) l.sel = false;
     else if (l.sel === undefined) l.sel = false; // começam todos desmarcados
   });
 }
@@ -920,6 +924,7 @@ async function abrirArquivoDataCar(file) {
       })(),
       linhas: dados.map((cels, orig) => ({ cels, orig })),
       ordem: { campo: 'chave', dir: 1 }, // abre já em ordem A-Z pelo OBS
+      agrupar: true,
       cursor: 0,
     };
     casarLinhasDataCar();
@@ -936,20 +941,30 @@ function atualizarResumoDataCar() {
   const d = ui.datacar;
   const sel = d.linhas.filter(l => l.sel).length;
   const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
+  const grupos = new Set(d.linhas.filter(l => l.sel && l.chave).map(l => grupoDc(l.chave))).size;
   const el = $('#dcResumo');
-  if (el) el.textContent = `${sel} selecionado(s)${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}`;
+  if (el) el.textContent = `${sel} selecionado(s)${grupos ? ` em ${grupos} grupo(s) de ${d.cab[d.col]}` : ''}${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}`;
 }
 
+const grupoDc = v => semAcento(v).replace(/\s+/g, ' ');
+
+/** Marca/desmarca a linha i — e, com "agrupar" ligado, todas as linhas com a mesma OBS. */
 function marcarLinhaDataCar(i, valor) {
-  const l = ui.datacar.linhas[i];
-  if (!l || !l.chave) return;
-  l.sel = valor;
-  const tr = document.querySelector(`[data-dc-linha="${i}"]`);
-  if (tr) {
-    tr.classList.toggle('dc-on', valor);
-    const cb = tr.querySelector('[data-dc-sel]');
-    if (cb) cb.checked = valor;
-  }
+  const d = ui.datacar;
+  const l = d.linhas[i];
+  if (!l || !(l.codigo || l.chave)) return;
+  const alvo = d.agrupar && l.chave ? grupoDc(l.chave) : null;
+  d.linhas.forEach((x, j) => {
+    if (j !== i && (!alvo || !x.chave || grupoDc(x.chave) !== alvo)) return;
+    if (!(x.codigo || x.chave)) return;
+    x.sel = valor;
+    const tr = document.querySelector(`[data-dc-linha="${j}"]`);
+    if (tr) {
+      tr.classList.toggle('dc-on', valor);
+      const cb = tr.querySelector('[data-dc-sel]');
+      if (cb) cb.checked = valor;
+    }
+  });
   atualizarResumoDataCar();
 }
 
@@ -966,6 +981,7 @@ function moverCursorDataCar(i) {
 }
 
 function focarDataCar() {
+  atualizarResumoDataCar();
   const caixa = $('#dcCaixa');
   if (caixa && !caixa.contains(document.activeElement)) caixa.focus({ preventScroll: true });
   moverCursorDataCar(ui.datacar.cursor);
@@ -1045,9 +1061,9 @@ function renderDataCar() {
   if (!d) return '';
   const prod = byId(db.produtos);
   const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
-  const sel = d.linhas.filter(l => l.sel).length;
-  const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
   const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
+  const tamGrupo = {};
+  d.linhas.forEach(l => { if (l.chave) tamGrupo[grupoDc(l.chave)] = (tamGrupo[grupoDc(l.chave)] || 0) + 1; });
   return `
   <div class="dlg-fundo" id="dlgDataCar">
     <div class="dlg dlg-largo" role="dialog" aria-modal="true" aria-labelledby="dcTitulo" tabindex="-1" id="dcCaixa">
@@ -1056,7 +1072,7 @@ function renderDataCar() {
         <span class="muted small">${esc(d.arquivo)} · ${d.linhas.length} linha(s)</span>
       </div>
       <div class="row" style="margin:10px 0">
-        <label style="margin:0;display:flex;gap:6px;align-items:center">Identificar pelo campo
+        <label style="margin:0;display:flex;gap:6px;align-items:center">Agrupar pelo campo
           <select id="dcCol" style="width:auto;margin:0">${d.cab.map((c, i) => `<option value="${i}" ${i === d.col ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
         </label>
         <label style="margin:0;display:flex;gap:6px;align-items:center">Código do item
@@ -1066,6 +1082,7 @@ function renderDataCar() {
           </select>
         </label>
         ${d.colCod < 0 ? '<span class="badge warn">Não achei a coluna de código: escolha ao lado</span>' : ''}
+        <label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="dcAgrupar" ${d.agrupar ? 'checked' : ''}> Marcar o grupo inteiro</label>
         <span class="grow"></span>
         <button class="sm" data-act="dcTodos">Marcar todos</button>
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
@@ -1079,23 +1096,25 @@ function renderDataCar() {
         <tbody>${d.linhas.map((l, i) => {
           const p = l.produtoId ? prod[l.produtoId] : null;
           const resumo = [d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '', txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
-          return `<tr class="${l.sel ? 'dc-on' : ''} ${l.chave ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
-            <td><input type="checkbox" data-dc-sel="${i}" ${l.sel ? 'checked' : ''} ${l.chave ? '' : 'disabled'} aria-label="Selecionar linha ${i + 1}"></td>
-            <td><b>${esc(l.chave || '—')}</b></td>
+          const ok = !!(l.codigo || l.chave);
+          const n = l.chave ? tamGrupo[grupoDc(l.chave)] : 0;
+          return `<tr class="${l.sel ? 'dc-on' : ''} ${ok ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
+            <td><input type="checkbox" data-dc-sel="${i}" ${l.sel ? 'checked' : ''} ${ok ? '' : 'disabled'} aria-label="Selecionar linha ${i + 1}"></td>
+            <td><b>${esc(l.chave || '—')}</b>${n > 1 ? ` <span class="small muted">(${n})</span>` : ''}</td>
             <td class="small">${esc(resumo)}</td>
             <td class="small">${p
               ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
-              : l.chave ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem valor no campo</span>'}</td>
+              : ok ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem código</span>'}</td>
             <td style="width:150px">${p
               ? (p.marca ? `<span class="small">${esc(p.marca)}</span>` : `<input data-dc-marca="${i}" value="${esc(l.marca ?? '')}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">`)
-              : l.chave ? `<input data-dc-marca="${i}" value="${esc(l.marca ?? txt(l, d.colMarca))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">` : ''}</td>
+              : ok ? `<input data-dc-marca="${i}" value="${esc(l.marca ?? txt(l, d.colMarca))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">` : ''}</td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>
       <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
       <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
       <div class="row-between" style="margin-top:8px">
-        <span class="small muted" id="dcResumo">${sel} selecionado(s)${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}</span>
+        <span class="small muted" id="dcResumo"></span>
         <div class="row">
           <button data-act="dcCancelar">Cancelar</button>
           <button class="primary" data-act="dcAdicionar">Adicionar à cotação</button>
@@ -1764,26 +1783,25 @@ const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
   dcOrdenar: el => { ordenarDataCar(el.dataset.campo); render(); focarDataCar(); },
-  dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.chave) l.sel = true; }); render(); focarDataCar(); },
+  dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.codigo || l.chave) l.sel = true; }); render(); focarDataCar(); },
   dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); render(); focarDataCar(); },
   dcCancelar: () => { ui.datacar = null; render(); },
   dcAdicionar: () => {
     const d = ui.datacar;
-    const escolhidas = d.linhas.filter(l => l.sel && l.chave);
+    const escolhidas = d.linhas.filter(l => l.sel && (l.codigo || l.chave));
     if (!escolhidas.length) return avisar('Marque pelo menos um item.');
     const r = rascunho();
     const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
     let novos = 0, somados = 0;
     for (const l of escolhidas) {
       const qtd = 1; // o fornecedor informa o preço unitário
-      const codArq = d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '';
+      const codArq = l.codigo;
       let id = l.produtoId;
       if (!id) {
-        // Produto novo: código = coluna de código do arquivo; o valor do OBS fica
-        // guardado em "obsDataCar" para o item ser reconhecido nas próximas importações.
+        // Produto novo: código = coluna de código do arquivo; a OBS (grupo) vai no campo Observação.
         const p = {
-          id: uid(), codigo: codArq || l.chave, similar: '', obsDataCar: l.chave, descricao: txt(l, d.colDesc) || l.chave, unidade: 'UN',
-          marca: (l.marca ?? txt(l, d.colMarca)).trim(), categoria: '', obs: '', criadoEm: new Date().toISOString(),
+          id: uid(), codigo: codArq || l.chave, similar: '', obsDataCar: codArq ? '' : l.chave, descricao: txt(l, d.colDesc) || codArq || l.chave, unidade: 'UN',
+          marca: (l.marca ?? txt(l, d.colMarca)).trim(), categoria: '', obs: l.chave, criadoEm: new Date().toISOString(),
         };
         db.produtos.push(p);
         id = p.id;
@@ -2149,8 +2167,13 @@ document.addEventListener('change', async e => {
     t.classList.toggle('falta', !p.marca);
     salvar();
     toast(p.marca ? `Marca "${p.marca}" salva no cadastro de ${p.codigo || p.descricao}.` : 'Marca removida do cadastro.');
+  } else if (t.id === 'dcAgrupar') {
+    ui.datacar.agrupar = t.checked;
+    focarDataCar();
   } else if (t.id === 'dcColCod') {
     ui.datacar.colCod = +t.value;
+    casarLinhasDataCar();
+    aplicarOrdemDataCar();
     render();
     focarDataCar();
   } else if (t.id === 'dcCol') {
