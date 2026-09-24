@@ -492,7 +492,7 @@ const XL = {
 };
 
 /**
- * Planilha da cotação (layout v2): Item, Código, Similar, Marca, Descrição e,
+ * Planilha da cotação (layout v3): Item, Código, Similar, QTD (sempre 1), Marca, Descrição e,
  * no final, as colunas VALOR e MARCA para o fornecedor preencher.
  * `f` pode ser nulo: planilha genérica, sem nome de fornecedor.
  */
@@ -505,8 +505,8 @@ async function gerarPlanilha(c, f) {
   const ws = wb.addWorksheet('Cotação', {
     pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });
-  const COLS = 7; // A..G
-  const ULT = 'G';
+  const COLS = 8; // A..H
+  const ULT = 'H';
 
   ws.mergeCells(`A1:${ULT}1`);
   const titulo = ws.getCell('A1');
@@ -520,14 +520,14 @@ async function gerarPlanilha(c, f) {
     ws.mergeCells(`A${row}:B${row}`);
     ws.getCell(`A${row}`).value = label;
     ws.getCell(`A${row}`).font = { bold: true };
-    ws.mergeCells(`C${row}:D${row}`);
+    ws.mergeCells(`C${row}:E${row}`);
     ws.getCell(`C${row}`).value = value || '';
     if (label2) {
-      ws.getCell(`E${row}`).value = label2;
-      ws.getCell(`E${row}`).font = { bold: true };
-      ws.mergeCells(`F${row}:G${row}`);
-      ws.getCell(`F${row}`).value = value2 || '';
-      ws.getCell(`F${row}`).alignment = { horizontal: 'left' };
+      ws.getCell(`F${row}`).value = label2;
+      ws.getCell(`F${row}`).font = { bold: true };
+      ws.mergeCells(`G${row}:H${row}`);
+      ws.getCell(`G${row}`).value = value2 || '';
+      ws.getCell(`G${row}`).alignment = { horizontal: 'left' };
     }
   };
   info(2, 'Solicitante:', cfg.loja, 'Cotação nº:', c.numero);
@@ -563,7 +563,7 @@ async function gerarPlanilha(c, f) {
 
   const HEADER = 11;
   const FIRST = HEADER + 1;
-  const cab = ['Item', 'Código', 'Similar', 'Marca', 'Descrição', 'VALOR', 'MARCA'];
+  const cab = ['Item', 'Código', 'Similar', 'QTD', 'Marca', 'Descrição', 'VALOR', 'MARCA'];
   const hr = ws.getRow(HEADER);
   cab.forEach((txt, i) => {
     const cell = hr.getCell(i + 1);
@@ -577,14 +577,15 @@ async function gerarPlanilha(c, f) {
   c.itens.forEach((it, i) => {
     const r = FIRST + i;
     const row = ws.getRow(r);
-    row.values = [i + 1, it.codigo || '', it.similar || '', it.marca || '', it.descricao];
+    row.values = [i + 1, it.codigo || '', it.similar || '', 1, it.marca || '', it.descricao];
     for (let col = 1; col <= COLS; col++) {
       const cell = row.getCell(col);
       cell.border = XL.borda;
       cell.alignment = { vertical: 'middle' };
     }
     row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
-    const valor = row.getCell(6);
+    row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+    const valor = row.getCell(7);
     valor.numFmt = XL.moeda;
     valor.dataValidation = {
       type: 'decimal',
@@ -595,7 +596,7 @@ async function gerarPlanilha(c, f) {
       errorTitle: 'Valor inválido',
       error: 'Digite apenas o valor (número).',
     };
-    for (const col of [6, 7]) {
+    for (const col of [7, 8]) {
       row.getCell(col).fill = XL.amarelo;
       row.getCell(col).protection = { locked: false };
     }
@@ -603,12 +604,12 @@ async function gerarPlanilha(c, f) {
 
   const LAST = FIRST + c.itens.length - 1;
   const TOTAL = LAST + 1;
-  ws.mergeCells(`A${TOTAL}:E${TOTAL}`);
+  ws.mergeCells(`A${TOTAL}:F${TOTAL}`);
   ws.getCell(`A${TOTAL}`).value = 'TOTAL';
   ws.getCell(`A${TOTAL}`).alignment = { horizontal: 'right' };
-  ws.getCell(`F${TOTAL}`).value = { formula: `SUM(F${FIRST}:F${LAST})` };
-  ws.getCell(`F${TOTAL}`).numFmt = XL.moeda;
-  for (const col of ['A', 'F', 'G']) {
+  ws.getCell(`G${TOTAL}`).value = { formula: `SUM(G${FIRST}:G${LAST})` };
+  ws.getCell(`G${TOTAL}`).numFmt = XL.moeda;
+  for (const col of ['A', 'G', 'H']) {
     ws.getCell(`${col}${TOTAL}`).font = { bold: true };
     ws.getCell(`${col}${TOTAL}`).fill = XL.cinza;
     ws.getCell(`${col}${TOTAL}`).border = XL.borda;
@@ -618,13 +619,13 @@ async function gerarPlanilha(c, f) {
   const larguras = cab.map((h, i) => {
     let m = String(h).length;
     c.itens.forEach(it => {
-      const v = [String(c.itens.indexOf(it) + 1), it.codigo || '', it.similar || '', it.marca || '', it.descricao || ''][i];
+      const v = [String(c.itens.indexOf(it) + 1), it.codigo || '', it.similar || '', '1', it.marca || '', it.descricao || ''][i];
       if (v != null) m = Math.max(m, String(v).length);
     });
     return m + 2;
   });
   larguras[0] = Math.max(5, larguras[0]);
-  larguras[5] = Math.max(12, larguras[5]); // VALOR: espaço para "R$ 1.234,56" sem virar ####
+  larguras[6] = Math.max(12, larguras[6]); // VALOR: espaço para "R$ 1.234,56" sem virar ####
   ws.columns = larguras.map(width => ({ width: Math.min(width, 80) }));
 
   ws.views = [{ state: 'frozen', ySplit: HEADER }];
@@ -635,7 +636,7 @@ async function gerarPlanilha(c, f) {
   // Aba oculta usada para reconhecer a planilha quando o fornecedor devolver.
   const meta = wb.addWorksheet('_dados', { state: 'veryHidden' });
   [
-    'sistema-cotacao', c.id, f ? f.fornecedorId : '', HEADER, FIRST, c.itens.length, 0, c.numero, 2,
+    'sistema-cotacao', c.id, f ? f.fornecedorId : '', HEADER, FIRST, c.itens.length, 0, c.numero, 3,
   ].forEach((v, i) => { meta.getCell(`A${i + 1}`).value = v; });
 
   return wb;
@@ -682,12 +683,14 @@ function aplicarResposta(c, fi, ws, meta) {
   if (!first) {
     // Planilha sem aba de controle: procura o cabeçalho "VALOR" (v2) ou "Preço Unit." (v1).
     for (let r = 1; r <= 60 && !first; r++) {
-      if (/^valor/i.test(cellTexto(ws.getCell(`F${r}`)))) { first = r + 1; versao = 2; }
+      if (/^valor/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 3; }
+      else if (/^valor/i.test(cellTexto(ws.getCell(`F${r}`)))) { first = r + 1; versao = 2; }
       else if (/pre[çc]o/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 1; }
     }
     if (!first) throw new Error('Não encontrei a coluna VALOR nesta planilha.');
   }
-  const colPreco = versao >= 2 ? 'F' : 'G';
+  const colPreco = versao >= 3 ? 'G' : versao === 2 ? 'F' : 'G';
+  const colMarca = versao >= 3 ? 'H' : versao === 2 ? 'G' : null;
   const respostas = {};
   let qtd = 0;
   const limite = meta?.n || c.itens.length;
@@ -697,7 +700,7 @@ function aplicarResposta(c, fi, ws, meta) {
     const i = Number.isInteger(idx) && idx >= 1 && idx <= c.itens.length ? idx - 1 : k;
     if (i >= c.itens.length) break;
     const preco = parseNum(cellValue(ws.getCell(`${colPreco}${r}`)));
-    const marca = versao >= 2 ? cellTexto(ws.getCell(`G${r}`)) : '';
+    const marca = colMarca ? cellTexto(ws.getCell(`${colMarca}${r}`)) : '';
     const prazo = versao >= 2 ? '' : cellTexto(ws.getCell(`I${r}`));
     const obs = versao >= 2 ? '' : cellTexto(ws.getCell(`J${r}`));
     if (preco != null || marca || prazo || obs) respostas[i] = { preco, marca, prazo, obs };
