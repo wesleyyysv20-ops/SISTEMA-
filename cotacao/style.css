@@ -165,6 +165,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); out
 input[type=checkbox] { width: auto; accent-color: var(--primary-2); }
 textarea { min-height: 70px; resize: vertical; }
 input.num { text-align: right; }
+input.falta { background: var(--field); color: var(--field-text); }
 input.price { background: var(--field); color: var(--field-text); text-align: right; }
 
 .grid { display: grid; gap: 0 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }

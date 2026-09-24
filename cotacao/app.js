@@ -967,7 +967,8 @@ function teclaDataCar(e) {
     e.preventDefault();
     moverCursorDataCar(d.cursor + (e.key === 'ArrowDown' ? 1 : -1));
     if (campoTexto) {
-      const q = document.querySelector(`[data-dc-qtd="${d.cursor}"]`);
+      const attr = t.dataset.dcMarca != null ? 'data-dc-marca' : 'data-dc-qtd';
+      const q = document.querySelector(`[${attr}="${d.cursor}"]`) || document.querySelector(`[data-dc-qtd="${d.cursor}"]`);
       if (q) { q.focus(); q.select(); }
     } else {
       $('#dcCaixa').focus({ preventScroll: true });
@@ -1016,7 +1017,7 @@ function renderDataCar() {
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
       </div>
       <div class="table-wrap dc-lista"><table>
-        <thead><tr><th></th><th>${esc(d.cab[d.col])}</th><th>No arquivo</th><th>Produto cadastrado</th><th class="r">Qtd.</th></tr></thead>
+        <thead><tr><th></th><th>${esc(d.cab[d.col])}</th><th>No arquivo</th><th>Produto cadastrado</th><th>Marca</th><th class="r">Qtd.</th></tr></thead>
         <tbody>${d.linhas.map((l, i) => {
           const p = l.produtoId ? prod[l.produtoId] : null;
           const resumo = [txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
@@ -1027,6 +1028,9 @@ function renderDataCar() {
             <td class="small">${p
               ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
               : l.chave ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem valor no campo</span>'}</td>
+            <td style="width:150px">${p
+              ? (p.marca ? `<span class="small">${esc(p.marca)}</span>` : `<input data-dc-marca="${i}" value="${esc(l.marca ?? '')}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">`)
+              : l.chave ? `<input data-dc-marca="${i}" value="${esc(l.marca ?? txt(l, d.colMarca))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">` : ''}</td>
             <td style="width:90px"><input class="num" inputmode="decimal" data-dc-qtd="${i}" value="${esc(l.qtd ?? (parseNum(txt(l, d.colQtd)) || 1))}"></td>
           </tr>`;
         }).join('')}</tbody>
@@ -1152,7 +1156,7 @@ function renderNova() {
       <td class="c">${i + 1}</td>
       <td>${esc(p.codigo)}</td>
       <td>${esc(p.descricao)}${p.similar ? `<br><span class="small muted">Similar: ${esc(p.similar)}</span>` : ''}</td>
-      <td>${esc(p.marca)}</td>
+      <td style="width:170px"><input class="${p.marca ? '' : 'falta'}" data-marca-prod="${p.id}" value="${esc(p.marca)}" placeholder="Informar marca" aria-label="Marca de ${esc(p.descricao)}"></td>
       <td class="c">${esc(p.unidade)}</td>
       <td style="width:110px"><input class="num" inputmode="decimal" data-qtd="${i}" value="${esc(fmtNum(x.quantidade))}"></td>
       <td class="c"><button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
@@ -1712,12 +1716,14 @@ const acoes = {
       if (!id) {
         const p = {
           id: uid(), codigo: l.chave, similar: '', descricao: txt(l, d.colDesc) || l.chave, unidade: 'UN',
-          marca: txt(l, d.colMarca), categoria: '', obs: '', criadoEm: new Date().toISOString(),
+          marca: (l.marca ?? txt(l, d.colMarca)).trim(), categoria: '', obs: '', criadoEm: new Date().toISOString(),
         };
         db.produtos.push(p);
         id = p.id;
         novos++;
       }
+      const existente = db.produtos.find(p => p.id === id);
+      if (existente && !existente.marca && l.marca) existente.marca = l.marca;
       const ja = r.itens.find(x => x.produtoId === id);
       if (ja) { ja.quantidade = (ja.quantidade || 0) + qtd; somados++; } else r.itens.push({ produtoId: id, quantidade: qtd });
     }
@@ -2016,6 +2022,8 @@ document.addEventListener('input', e => {
   } else if (t.dataset.qtd != null) {
     rascunho().itens[+t.dataset.qtd].quantidade = parseNum(t.value);
     salvar();
+  } else if (t.dataset.dcMarca != null) {
+    ui.datacar.linhas[+t.dataset.dcMarca].marca = t.value.trim();
   } else if (t.dataset.dcQtd != null) {
     ui.datacar.linhas[+t.dataset.dcQtd].qtd = parseNum(t.value) || 1;
   } else if (t.id === 'buscaProd') {
@@ -2058,6 +2066,13 @@ document.addEventListener('change', async e => {
     salvar();
     const h3 = t.closest('.card').querySelector('h3');
     if (h3) h3.textContent = `2. Fornecedores que vão receber (${ids.length})`;
+  } else if (t.dataset.marcaProd) {
+    const p = db.produtos.find(x => x.id === t.dataset.marcaProd);
+    if (!p) return;
+    p.marca = t.value.trim();
+    t.classList.toggle('falta', !p.marca);
+    salvar();
+    toast(p.marca ? `Marca "${p.marca}" salva no cadastro de ${p.codigo || p.descricao}.` : 'Marca removida do cadastro.');
   } else if (t.id === 'dcCol') {
     ui.datacar.col = +t.value;
     casarLinhasDataCar();
