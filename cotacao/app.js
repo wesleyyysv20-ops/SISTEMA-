@@ -45,7 +45,7 @@ const STATUS = {
 };
 
 let db = carregar();
-const ui = { digitando: null, enviando: null, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '' };
+const ui = { digitando: null, enviando: null, datacar: null, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '' };
 
 /* ---------------- persistência ---------------- */
 
@@ -798,7 +798,9 @@ const MAPA_COLUNAS = {
 function lerCSV(texto) {
   const linhas = texto.replace(/\r/g, '').split('\n').filter(l => l.trim());
   if (!linhas.length) return [];
-  const sep = (linhas[0].match(/;/g) || []).length >= (linhas[0].match(/,/g) || []).length ? ';' : ',';
+  const amostra = linhas.slice(0, 5).join('\n');
+  const conta = ch => amostra.split(ch).length - 1;
+  const sep = ['\t', ';', '|', ','].reduce((m, ch) => (conta(ch) > conta(m) ? ch : m), ';');
   return linhas.map(l => {
     const out = [];
     let cur = '', q = false;
@@ -811,6 +813,158 @@ function lerCSV(texto) {
     out.push(cur);
     return out.map(s => s.trim());
   });
+}
+
+/* ---------------- arquivo do DataCar (itens da cotação) ---------------- */
+
+async function lerTextoArquivo(file) {
+  const buf = await file.arrayBuffer();
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch (e) {
+    return new TextDecoder('windows-1252').decode(buf);
+  }
+}
+
+/** Lê .xlsx, .csv, .txt ou tabela HTML (.xls/.htm) e devolve as linhas como listas de textos. */
+async function lerLinhasArquivo(file) {
+  const cab = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  const zip = cab[0] === 0x50 && cab[1] === 0x4b;
+  const xlsAntigo = cab[0] === 0xd0 && cab[1] === 0xcf;
+  if (xlsAntigo) throw new Error('Este arquivo está no formato antigo do Excel (.xls). Abra no Excel e salve como "Pasta de Trabalho do Excel (.xlsx)" ou como CSV, e selecione de novo.');
+  if (zip) {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await file.arrayBuffer());
+    const ws = wb.worksheets.find(w => w.rowCount > 0) || wb.worksheets[0];
+    const linhas = [];
+    ws.eachRow({ includeEmpty: false }, row => {
+      const vals = [];
+      for (let col = 1; col <= row.cellCount; col++) vals.push(cellTexto(row.getCell(col)));
+      linhas.push(vals);
+    });
+    return linhas;
+  }
+  const texto = await lerTextoArquivo(file);
+  if (/^\s*</.test(texto) && /<table/i.test(texto)) {
+    const doc = new DOMParser().parseFromString(texto, 'text/html');
+    return [...doc.querySelectorAll('tr')].map(tr => [...tr.querySelectorAll('th,td')].map(td => td.textContent.replace(/\s+/g, ' ').trim()));
+  }
+  return lerCSV(texto);
+}
+
+function acharColuna(cab, padroes) {
+  const norm = cab.map(semAcento);
+  for (const p of padroes) {
+    const i = norm.findIndex(h => p.test(h));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+function indiceProdutos() {
+  const mapa = new Map();
+  const add = (k, p) => { k = semAcento(k).replace(/\s+/g, ''); if (k && !mapa.has(k)) mapa.set(k, p); };
+  for (const p of db.produtos) add(p.codigo, p);
+  for (const p of db.produtos) {
+    for (const parte of String(p.codigo || '').split(/[\/,;]+/)) add(parte, p);
+    for (const parte of String(p.similar || '').split(/[\/,;\s]+/)) add(parte, p);
+  }
+  return mapa;
+}
+
+function casarLinhasDataCar() {
+  const d = ui.datacar;
+  const mapa = indiceProdutos();
+  d.linhas.forEach(l => {
+    const chave = String(l.cels[d.col] ?? '').trim();
+    let p = null;
+    if (chave) {
+      p = mapa.get(semAcento(chave).replace(/\s+/g, '')) || null;
+      if (!p) for (const parte of chave.split(/[\/,;]+/)) { p = mapa.get(semAcento(parte).replace(/\s+/g, '')); if (p) break; }
+    }
+    l.chave = chave;
+    l.produtoId = p ? p.id : null;
+    l.sel = !!chave;
+  });
+}
+
+async function abrirArquivoDataCar(file) {
+  try {
+    let linhas = (await lerLinhasArquivo(file)).filter(l => l.some(v => String(v).trim()));
+    if (!linhas.length) throw new Error('O arquivo está vazio.');
+    // Cabeçalho: a primeira das 15 primeiras linhas que tenha uma coluna OBS.
+    let h = linhas.slice(0, 15).findIndex(l => l.some(v => /^obs/.test(semAcento(v))));
+    if (h < 0) h = 0;
+    const largura = Math.max(...linhas.map(l => l.length));
+    const cab = Array.from({ length: largura }, (_, i) => String(linhas[h][i] ?? '').trim() || `Coluna ${i + 1}`);
+    const dados = linhas.slice(h + 1).map(l => Array.from({ length: largura }, (_, i) => String(l[i] ?? '').trim()));
+    let col = acharColuna(cab, [/^obs/, /observ/]);
+    if (col < 0) col = 0;
+    ui.datacar = {
+      arquivo: file.name,
+      cab,
+      col,
+      colDesc: acharColuna(cab, [/^descri/, /descri/, /produto/, /^nome/, /aplica/]),
+      colQtd: acharColuna(cab, [/^qt/, /quant/]),
+      colMarca: acharColuna(cab, [/marca/, /fabric/]),
+      linhas: dados.map(cels => ({ cels })),
+    };
+    casarLinhasDataCar();
+    render();
+  } catch (e) {
+    console.error(e);
+    avisar('Não consegui ler o arquivo:\n' + e.message);
+  }
+}
+
+function renderDataCar() {
+  const d = ui.datacar;
+  if (!d) return '';
+  const prod = byId(db.produtos);
+  const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
+  const sel = d.linhas.filter(l => l.sel).length;
+  const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
+  const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
+  return `
+  <div class="dlg-fundo" id="dlgDataCar">
+    <div class="dlg dlg-largo" role="dialog" aria-modal="true" aria-labelledby="dcTitulo">
+      <div class="row-between">
+        <h3 id="dcTitulo" style="margin:0">Selecione os itens para a cotação</h3>
+        <span class="muted small">${esc(d.arquivo)} · ${d.linhas.length} linha(s)</span>
+      </div>
+      <div class="row" style="margin:10px 0">
+        <label style="margin:0;display:flex;gap:6px;align-items:center">Identificar pelo campo
+          <select id="dcCol" style="width:auto;margin:0">${d.cab.map((c, i) => `<option value="${i}" ${i === d.col ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        </label>
+        <span class="grow"></span>
+        <button class="sm" data-act="dcTodos">Marcar todos</button>
+        <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
+      </div>
+      <div class="table-wrap dc-lista"><table>
+        <thead><tr><th></th><th>${esc(d.cab[d.col])}</th><th>No arquivo</th><th>Produto cadastrado</th><th class="r">Qtd.</th></tr></thead>
+        <tbody>${d.linhas.map((l, i) => {
+          const p = l.produtoId ? prod[l.produtoId] : null;
+          const resumo = [txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
+          return `<tr class="${l.sel ? '' : 'dc-off'}">
+            <td><input type="checkbox" data-dc-sel="${i}" ${l.sel ? 'checked' : ''} ${l.chave ? '' : 'disabled'} aria-label="Selecionar linha ${i + 1}"></td>
+            <td><b>${esc(l.chave || '—')}</b></td>
+            <td class="small">${esc(resumo)}</td>
+            <td class="small">${p
+              ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
+              : l.chave ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem valor no campo</span>'}</td>
+            <td style="width:90px"><input class="num" inputmode="decimal" data-dc-qtd="${i}" value="${esc(l.qtd ?? (parseNum(txt(l, d.colQtd)) || 1))}"></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+      <div class="row-between" style="margin-top:12px">
+        <span class="small muted" id="dcResumo">${sel} selecionado(s)${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}</span>
+        <div class="row">
+          <button data-act="dcCancelar">Cancelar</button>
+          <button class="primary" data-act="dcAdicionar">Adicionar à cotação</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 
 async function importarProdutos(file) {
@@ -947,6 +1101,11 @@ function renderNova() {
 
   <section class="card">
     <h3>1. Itens da cotação (${r.itens.length})</h3>
+    <div class="datacar-box">
+      <label class="btn btn-primary" style="margin:0">📂 Abrir arquivo do DataCar<input type="file" class="hidden" accept=".xlsx,.xls,.csv,.txt,.htm,.html" data-import-datacar></label>
+      <span class="small muted">Escolha o arquivo gerado pelo DataCar e marque os itens que vão para a cotação. Os itens são reconhecidos pelo campo <b>OBS</b>.</span>
+    </div>
+    <p class="small muted" style="margin:10px 0 6px">Ou busque um produto cadastrado:</p>
     <div class="search">
       <input id="buscaProd" placeholder="Buscar por código, similar, descrição ou marca… (Enter adiciona o primeiro)" autocomplete="off">
       <div id="resultadosProd" class="results"></div>
@@ -984,7 +1143,8 @@ function renderNova() {
   <div class="actions">
     <button data-act="limparRascunho">Limpar tudo</button>
     <button class="primary" data-act="criarCotacao">Criar cotação →</button>
-  </div>`;
+  </div>
+  ${renderDataCar()}`;
 }
 
 function resultadosBusca(q) {
@@ -1454,6 +1614,37 @@ function adicionarItem(produtoId, quantidade = 1) {
 const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
+  dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.chave) l.sel = true; }); render(); },
+  dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); render(); },
+  dcCancelar: () => { ui.datacar = null; render(); },
+  dcAdicionar: () => {
+    const d = ui.datacar;
+    const escolhidas = d.linhas.filter(l => l.sel && l.chave);
+    if (!escolhidas.length) return avisar('Marque pelo menos um item.');
+    const r = rascunho();
+    const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
+    let novos = 0, somados = 0;
+    for (const l of escolhidas) {
+      const qtd = l.qtd ?? (parseNum(txt(l, d.colQtd)) || 1);
+      let id = l.produtoId;
+      if (!id) {
+        const p = {
+          id: uid(), codigo: l.chave, similar: '', descricao: txt(l, d.colDesc) || l.chave, unidade: 'UN',
+          marca: txt(l, d.colMarca), categoria: '', obs: '', criadoEm: new Date().toISOString(),
+        };
+        db.produtos.push(p);
+        id = p.id;
+        novos++;
+      }
+      const ja = r.itens.find(x => x.produtoId === id);
+      if (ja) { ja.quantidade = (ja.quantidade || 0) + qtd; somados++; } else r.itens.push({ produtoId: id, quantidade: qtd });
+    }
+    ui.datacar = null;
+    salvar();
+    render();
+    toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação (quantidade somada)` : ''}.`, 6000);
+  },
+
   removerItem: el => {
     rascunho().itens.splice(+el.dataset.i, 1);
     salvar();
@@ -1743,6 +1934,8 @@ document.addEventListener('input', e => {
   } else if (t.dataset.qtd != null) {
     rascunho().itens[+t.dataset.qtd].quantidade = parseNum(t.value);
     salvar();
+  } else if (t.dataset.dcQtd != null) {
+    ui.datacar.linhas[+t.dataset.dcQtd].qtd = parseNum(t.value) || 1;
   } else if (t.id === 'buscaProd') {
     resultadosBusca(t.value);
   } else if (t.id === 'filtroProd') {
@@ -1779,6 +1972,17 @@ document.addEventListener('change', async e => {
     salvar();
     const h3 = t.closest('.card').querySelector('h3');
     if (h3) h3.textContent = `2. Fornecedores que vão receber (${ids.length})`;
+  } else if (t.id === 'dcCol') {
+    ui.datacar.col = +t.value;
+    casarLinhasDataCar();
+    render();
+  } else if (t.dataset.dcSel != null) {
+    ui.datacar.linhas[+t.dataset.dcSel].sel = t.checked;
+    t.closest('tr').classList.toggle('dc-off', !t.checked);
+    const d = ui.datacar;
+    const sel = d.linhas.filter(l => l.sel).length;
+    const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
+    $('#dcResumo').textContent = `${sel} selecionado(s)${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}`;
   } else if (t.id === 'statusCot') {
     ui.statusCot = t.value;
     $('#tbCot').innerHTML = linhasCotacoes();
@@ -1792,6 +1996,7 @@ document.addEventListener('change', async e => {
     if (t.dataset.import != null) await importarResposta(file, cotAtual()?.id, +t.dataset.import);
     else if (t.hasAttribute('data-import-geral')) await importarResposta(file, null, null);
     else if (t.hasAttribute('data-import-produtos')) await importarProdutos(file);
+    else if (t.hasAttribute('data-import-datacar')) await abrirArquivoDataCar(file);
     else if (t.hasAttribute('data-restaurar')) {
       try {
         const dados = JSON.parse(await file.text());

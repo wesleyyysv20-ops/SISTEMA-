@@ -309,6 +309,22 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
   .copiavel > span { grid-column: 1 / -1; }
 }
 
+/* arquivo do DataCar */
+.datacar-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 12px;
+  border: 1px dashed var(--primary-2);
+  border-radius: 8px;
+  background: var(--blue-bg);
+}
+.dlg.dlg-largo { width: min(1000px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
+.dc-lista { overflow: auto; flex: 1; min-height: 120px; border: 1px solid var(--line); border-radius: 7px; }
+.dc-lista thead th { position: sticky; top: 0; z-index: 1; }
+tr.dc-off td { opacity: .5; }
+
 /* diálogos */
 .dlg-fundo {
   position: fixed;
