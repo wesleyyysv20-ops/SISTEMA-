@@ -976,9 +976,8 @@ function teclaDataCar(e) {
     e.preventDefault();
     moverCursorDataCar(d.cursor + (e.key === 'ArrowDown' ? 1 : -1));
     if (campoTexto) {
-      const attr = t.dataset.dcMarca != null ? 'data-dc-marca' : 'data-dc-qtd';
-      const q = document.querySelector(`[${attr}="${d.cursor}"]`) || document.querySelector(`[data-dc-qtd="${d.cursor}"]`);
-      if (q) { q.focus(); q.select(); }
+      const q = document.querySelector(`[data-dc-marca="${d.cursor}"]`);
+      if (q) { q.focus(); q.select(); } else $('#dcCaixa').focus({ preventScroll: true });
     } else {
       $('#dcCaixa').focus({ preventScroll: true });
     }
@@ -1033,7 +1032,7 @@ function renderDataCar() {
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
       </div>
       <div class="table-wrap dc-lista"><table>
-        <thead><tr><th></th><th>${esc(d.cab[d.col])}</th><th>No arquivo</th><th>Produto cadastrado</th><th>Marca</th><th class="r">Qtd.</th></tr></thead>
+        <thead><tr><th></th><th>${esc(d.cab[d.col])}</th><th>No arquivo</th><th>Produto cadastrado</th><th>Marca</th></tr></thead>
         <tbody>${d.linhas.map((l, i) => {
           const p = l.produtoId ? prod[l.produtoId] : null;
           const resumo = [d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '', txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
@@ -1047,7 +1046,6 @@ function renderDataCar() {
             <td style="width:150px">${p
               ? (p.marca ? `<span class="small">${esc(p.marca)}</span>` : `<input data-dc-marca="${i}" value="${esc(l.marca ?? '')}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">`)
               : l.chave ? `<input data-dc-marca="${i}" value="${esc(l.marca ?? txt(l, d.colMarca))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">` : ''}</td>
-            <td style="width:90px"><input class="num" inputmode="decimal" data-dc-qtd="${i}" value="${esc(l.qtd ?? (parseNum(txt(l, d.colQtd)) || 1))}"></td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>
@@ -1173,7 +1171,6 @@ function renderNova() {
       <td>${esc(x.codigoArquivo || p.codigo)}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}</td>
       <td>${esc(p.descricao)}${p.similar ? `<br><span class="small muted">Similar: ${esc(p.similar)}</span>` : ''}</td>
       <td style="width:170px"><input class="${p.marca ? '' : 'falta'}" data-marca-prod="${p.id}" value="${esc(p.marca)}" placeholder="Informar marca" aria-label="Marca de ${esc(p.descricao)}"></td>
-      <td style="width:110px"><input class="num" inputmode="decimal" data-qtd="${i}" value="${esc(fmtNum(x.quantidade))}"></td>
       <td class="c"><button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
   }).join('');
@@ -1212,12 +1209,11 @@ function renderNova() {
         <label>Descrição *<input name="descricao" required></label>
         <label>Unidade<input name="unidade" value="UN"></label>
         <label>Marca/Ref.<input name="marca"></label>
-        <label>Quantidade<input name="quantidade" inputmode="decimal" value="1" class="num"></label>
         <div class="actions" style="align-self:end"><button class="primary">Salvar e adicionar</button></div>
       </form>
     </details>
     ${r.itens.length ? `<div class="table-wrap"><table>
-      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th>Marca</th><th class="r">Qtd.</th><th></th></tr></thead>
+      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th>Marca</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
   </section>
 
@@ -1733,7 +1729,7 @@ const acoes = {
     const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
     let novos = 0, somados = 0;
     for (const l of escolhidas) {
-      const qtd = l.qtd ?? (parseNum(txt(l, d.colQtd)) || 1);
+      const qtd = 1; // o fornecedor informa o preço unitário
       const codArq = d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '';
       let id = l.produtoId;
       if (!id) {
@@ -1752,7 +1748,7 @@ const acoes = {
       const ja = r.itens.find(x => x.produtoId === id);
       const codigoArquivo = codArq;
       if (ja) {
-        ja.quantidade = (ja.quantidade || 0) + qtd;
+        ja.quantidade = qtd;
         if (!ja.codigoArquivo) ja.codigoArquivo = codigoArquivo;
         somados++;
       } else {
@@ -1762,7 +1758,7 @@ const acoes = {
     ui.datacar = null;
     salvar();
     render();
-    toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação (quantidade somada)` : ''}.`, 6000);
+    toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação` : ''}.`, 6000);
   },
 
   removerItem: el => {
@@ -1784,8 +1780,6 @@ const acoes = {
     const forn = byId(db.fornecedores);
     const itens = r.itens.filter(x => prod[x.produtoId]);
     if (!itens.length) return avisar('Adicione pelo menos um item.');
-    const semQtd = itens.findIndex(x => !(x.quantidade > 0));
-    if (semQtd >= 0) return avisar(`Informe a quantidade do item ${semQtd + 1}.`);
     const fornecedores = r.fornecedorIds.map(id => forn[id]).filter(Boolean);
     if (!fornecedores.length) return avisar('Selecione pelo menos um fornecedor.');
 
@@ -1803,7 +1797,7 @@ const acoes = {
       criadoEm: new Date().toISOString(),
       itens: itens.map(x => {
         const p = prod[x.produtoId];
-        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: p.marca, quantidade: x.quantidade };
+        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: p.marca, quantidade: 1 };
       }),
       fornecedores: fornecedores.map(novoFornCot),
     };
@@ -1945,7 +1939,7 @@ const formularios = {
     if (d.codigo && db.produtos.some(p => semAcento(p.codigo) === semAcento(d.codigo)) && !(await confirmar(`Já existe um produto com o código ${d.codigo}. Cadastrar mesmo assim?`))) return;
     const p = { id: uid(), codigo: d.codigo, descricao: d.descricao, unidade: (d.unidade || 'UN').toUpperCase(), marca: d.marca, categoria: '', obs: '', criadoEm: new Date().toISOString() };
     db.produtos.push(p);
-    adicionarItem(p.id, parseNum(d.quantidade) || 1);
+    adicionarItem(p.id, 1);
     toast('Produto cadastrado e adicionado.');
   },
 
@@ -2056,8 +2050,6 @@ document.addEventListener('input', e => {
     salvar();
   } else if (t.dataset.dcMarca != null) {
     ui.datacar.linhas[+t.dataset.dcMarca].marca = t.value.trim();
-  } else if (t.dataset.dcQtd != null) {
-    ui.datacar.linhas[+t.dataset.dcQtd].qtd = parseNum(t.value) || 1;
   } else if (t.id === 'buscaProd') {
     resultadosBusca(t.value);
   } else if (t.id === 'filtroProd') {
