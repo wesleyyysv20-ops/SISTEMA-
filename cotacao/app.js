@@ -1064,9 +1064,35 @@ function moverCursorDataCar(i) {
   const tr = document.querySelector(`[data-dc-linha="${d.cursor}"]`);
   if (tr) {
     tr.classList.add('dc-atual');
-    tr.scrollIntoView({ block: 'nearest' });
+    const lista = tr.closest('.dc-lista');
+    if (lista) {
+      // rola linha a linha: a linha atual fica sempre visível, logo abaixo do cabeçalho ou acima da próxima
+      const alt = tr.offsetHeight;
+      const cab = lista.querySelector('.dc-cab')?.offsetHeight || 0;
+      const topo = tr.offsetTop - cab;
+      const base = tr.offsetTop + alt * 2 - lista.clientHeight; // deixa a próxima linha à vista
+      if (lista.scrollTop > topo) lista.scrollTop = topo;
+      else if (lista.scrollTop < base) lista.scrollTop = Math.min(base, topo);
+    }
   }
 }
+
+/** Roda do mouse na lista: rola por linhas inteiras (nada fica pela metade ou é pulado sem ver). */
+function rolagemDataCar(e) {
+  const lista = e.target.closest && e.target.closest('.dc-lista');
+  if (!lista || e.ctrlKey) return;
+  const linha = lista.querySelector('.dc-row:not(.dc-cab)');
+  const alt = linha ? linha.offsetHeight : 40;
+  e.preventDefault();
+  const px = e.deltaMode === 1 ? e.deltaY * alt : e.deltaMode === 2 ? e.deltaY * lista.clientHeight : e.deltaY;
+  lista._acum = (lista._acum || 0) + px;
+  const linhas = Math.trunc(lista._acum / alt);
+  if (!linhas) return;
+  lista._acum -= linhas * alt;
+  const passo = Math.max(-3, Math.min(3, linhas)); // no máximo 3 linhas por movimento da roda
+  lista.scrollTop = Math.round(lista.scrollTop / alt) * alt + passo * alt;
+}
+document.addEventListener('wheel', rolagemDataCar, { passive: false });
 
 function focarDataCar() {
   atualizarResumoDataCar();
@@ -1125,6 +1151,7 @@ function teclaDataCar(e) {
     e.preventDefault();
     moverCursorDataCar(e.key === 'Home' ? 0 : d.linhas.length - 1);
   } else if (e.key === ' ' && !campoTexto) {
+    if (e.repeat) { e.preventDefault(); return; } // tecla segurada não pula itens
     e.preventDefault();
     marcarLinhaDataCar(d.cursor, !d.linhas[d.cursor].sel);
     moverCursorDataCar(d.cursor + 1); // já desce para o próximo item
@@ -1285,8 +1312,8 @@ function renderDataCar() {
           return `<div role="row" class="dc-row ${l.sel ? 'dc-on' : ''} ${ok ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
             <div class="c"><span class="dc-check" role="checkbox" aria-checked="${l.sel ? 'true' : 'false'}" aria-label="Selecionar linha ${i + 1}"></span></div>
             <div><b>${esc(l.chave || '—')}</b>${n > 1 ? ` <span class="small muted">(${n})</span>` : ''}</div>
-            <div class="small">${esc(resumo)}${l.codigo && contaCodArq[chaveCodigo(l.codigo)] > 1 ? ` <span class="badge warn" title="Este código aparece ${contaCodArq[chaveCodigo(l.codigo)]} vezes no arquivo">código repetido</span>` : ''}</div>
-            <div class="small">${p
+            <div class="small" title="${esc(resumo)}">${esc(resumo)}${l.codigo && contaCodArq[chaveCodigo(l.codigo)] > 1 ? ` <span class="badge warn" title="Este código aparece ${contaCodArq[chaveCodigo(l.codigo)]} vezes no arquivo">código repetido</span>` : ''}</div>
+            <div class="small" title="${esc(p ? `${p.codigo} · ${p.descricao}` : '')}">${p
               ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
               : ok ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem código</span>'}</div>
             ${ok ? celulaMarcaDataCar(l, i, p) : '<div></div>'}

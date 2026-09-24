@@ -331,13 +331,14 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
   grid-template-columns: 40px minmax(90px, 14%) 1fr 1.2fr 190px;
   align-items: center;
   gap: 0 8px;
-  padding: 6px 8px;
+  height: 44px;               /* todas as linhas com a mesma altura: a rolagem anda linha por linha */
+  padding: 0 8px;
   border-bottom: 1px solid var(--line);
   content-visibility: auto;
-  contain-intrinsic-size: auto 48px;
+  contain-intrinsic-size: auto 44px;
   cursor: pointer;
 }
-.dc-row > div { min-width: 0; overflow-wrap: anywhere; }
+.dc-row > div { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dc-row .c { text-align: center; }
 .dc-cab {
   position: sticky;
