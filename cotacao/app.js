@@ -1019,11 +1019,19 @@ function teclaDataCar(e) {
       e.preventDefault();
       fecharMarcaDataCar(t, true);
       moverCursorDataCar(d.cursor + (e.key === 'ArrowDown' ? 1 : -1));
-      editarMarcaDataCar(d.cursor);
+      editarMarcaDataCar(d.cursor, null, true); // marca selecionada: digitar substitui
     }
     return;
   }
-  if (e.key === 'F2') {
+  const letra = e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey;
+  if (!campoTexto && (letra || e.key === 'Backspace' || e.key === 'Delete')) {
+    // qualquer tecla de texto na linha já começa a digitar a marca
+    const l = d.linhas[d.cursor];
+    if (l && (l.codigo || l.chave)) {
+      e.preventDefault();
+      editarMarcaDataCar(d.cursor, letra ? e.key : '');
+    }
+  } else if (e.key === 'F2') {
     e.preventDefault();
     editarMarcaDataCar(d.cursor);
   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -1098,7 +1106,7 @@ function celulaMarcaDataCar(l, i, p) {
 }
 
 /** Abre um único campo de edição na célula de marca da linha i. */
-function editarMarcaDataCar(i) {
+function editarMarcaDataCar(i, textoInicial, selecionarTudo = false) {
   const td = document.querySelector(`[data-dc-marca-cel="${i}"]`);
   if (!td || td.querySelector('input')) return;
   const l = ui.datacar.linhas[i];
@@ -1106,7 +1114,11 @@ function editarMarcaDataCar(i) {
   td.innerHTML = `<input data-dc-marca="${i}" value="${esc(marcaAtualDataCar(l, p))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">`;
   const inp = td.firstChild;
   inp.focus();
-  inp.select();
+  // começou a digitar direto na linha: substitui a marca pelo que está sendo digitado;
+  // F2 ou clique: mantém a marca e põe o cursor no fim para completar
+  if (textoInicial != null) inp.value = textoInicial;
+  if (selecionarTudo) inp.select();
+  else inp.setSelectionRange(inp.value.length, inp.value.length);
 }
 
 /** Fecha o campo de edição: salva (ou descarta) e volta a mostrar o texto. */
@@ -1189,7 +1201,7 @@ function renderDataCar() {
         }).join('')}
       </div>
       <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
-      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · <span class="kbd">F2</span> editar marca · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
+      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · digite para preencher a marca (<span class="kbd">F2</span> edita sem apagar) · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
       <div class="row-between" style="margin-top:8px">
         <span class="small muted" id="dcResumo"></span>
         <div class="row">
