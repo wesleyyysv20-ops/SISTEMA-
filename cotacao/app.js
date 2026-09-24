@@ -908,6 +908,10 @@ async function abrirArquivoDataCar(file) {
       colDesc: acharColuna(cab, [/^descri/, /descri/, /produto/, /^nome/, /aplica/]),
       colQtd: acharColuna(cab, [/^qt/, /quant/]),
       colMarca: acharColuna(cab, [/marca/, /fabric/]),
+      colCod: (() => {
+        const i = cab.findIndex((h, j) => j !== col && /^(cod|codigo|referencia|ref\b)/.test(semAcento(h)));
+        return i;
+      })(),
       linhas: dados.map(cels => ({ cels })),
       cursor: 0,
     };
@@ -1013,6 +1017,12 @@ function renderDataCar() {
         <label style="margin:0;display:flex;gap:6px;align-items:center">Identificar pelo campo
           <select id="dcCol" style="width:auto;margin:0">${d.cab.map((c, i) => `<option value="${i}" ${i === d.col ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
         </label>
+        <label style="margin:0;display:flex;gap:6px;align-items:center">Código do item
+          <select id="dcColCod" style="width:auto;margin:0">
+            <option value="-1" ${d.colCod < 0 ? 'selected' : ''}>(mesmo campo: ${esc(d.cab[d.col])})</option>
+            ${d.cab.map((c, i) => `<option value="${i}" ${i === d.colCod ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+          </select>
+        </label>
         <span class="grow"></span>
         <button class="sm" data-act="dcTodos">Marcar todos</button>
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
@@ -1021,7 +1031,7 @@ function renderDataCar() {
         <thead><tr><th></th><th>${esc(d.cab[d.col])}</th><th>No arquivo</th><th>Produto cadastrado</th><th>Marca</th><th class="r">Qtd.</th></tr></thead>
         <tbody>${d.linhas.map((l, i) => {
           const p = l.produtoId ? prod[l.produtoId] : null;
-          const resumo = [txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
+          const resumo = [d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '', txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
           return `<tr class="${l.sel ? '' : 'dc-off'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
             <td><input type="checkbox" data-dc-sel="${i}" ${l.sel ? 'checked' : ''} ${l.chave ? '' : 'disabled'} aria-label="Selecionar linha ${i + 1}"></td>
             <td><b>${esc(l.chave || '—')}</b></td>
@@ -1155,7 +1165,7 @@ function renderNova() {
     const p = prod[x.produtoId];
     return `<tr>
       <td class="c">${i + 1}</td>
-      <td>${esc(p.codigo)}</td>
+      <td>${esc(x.codigoArquivo || p.codigo)}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}</td>
       <td>${esc(p.descricao)}${p.similar ? `<br><span class="small muted">Similar: ${esc(p.similar)}</span>` : ''}</td>
       <td style="width:170px"><input class="${p.marca ? '' : 'falta'}" data-marca-prod="${p.id}" value="${esc(p.marca)}" placeholder="Informar marca" aria-label="Marca de ${esc(p.descricao)}"></td>
       <td class="c">${esc(p.unidade)}</td>
@@ -1733,7 +1743,14 @@ const acoes = {
       const existente = db.produtos.find(p => p.id === id);
       if (existente && !existente.marca && l.marca) existente.marca = l.marca;
       const ja = r.itens.find(x => x.produtoId === id);
-      if (ja) { ja.quantidade = (ja.quantidade || 0) + qtd; somados++; } else r.itens.push({ produtoId: id, quantidade: qtd });
+      const codigoArquivo = (d.colCod >= 0 ? txt(l, d.colCod) : '') || l.chave;
+      if (ja) {
+        ja.quantidade = (ja.quantidade || 0) + qtd;
+        if (!ja.codigoArquivo) ja.codigoArquivo = codigoArquivo;
+        somados++;
+      } else {
+        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo });
+      }
     }
     ui.datacar = null;
     salvar();
@@ -1779,7 +1796,7 @@ const acoes = {
       criadoEm: new Date().toISOString(),
       itens: itens.map(x => {
         const p = prod[x.produtoId];
-        return { produtoId: p.id, codigo: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: p.marca, quantidade: x.quantidade };
+        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: p.marca, quantidade: x.quantidade };
       }),
       fornecedores: fornecedores.map(novoFornCot),
     };
@@ -1861,7 +1878,7 @@ const acoes = {
       titulo: c.titulo,
       prazoResposta: '',
       obs: c.obs,
-      itens: c.itens.filter(i => prod[i.produtoId]).map(i => ({ produtoId: i.produtoId, quantidade: i.quantidade })),
+      itens: c.itens.filter(i => prod[i.produtoId]).map(i => ({ produtoId: i.produtoId, quantidade: i.quantidade, codigoArquivo: i.codigoArquivo || '' })),
       fornecedorIds: c.fornecedores.map(f => f.fornecedorId).filter(id => forn[id]),
     };
     salvar();
@@ -2081,6 +2098,10 @@ document.addEventListener('change', async e => {
     t.classList.toggle('falta', !p.marca);
     salvar();
     toast(p.marca ? `Marca "${p.marca}" salva no cadastro de ${p.codigo || p.descricao}.` : 'Marca removida do cadastro.');
+  } else if (t.id === 'dcColCod') {
+    ui.datacar.colCod = +t.value;
+    render();
+    focarDataCar();
   } else if (t.id === 'dcCol') {
     ui.datacar.col = +t.value;
     casarLinhasDataCar();
