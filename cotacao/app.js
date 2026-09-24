@@ -869,6 +869,7 @@ function indiceProdutos() {
   for (const p of db.produtos) {
     for (const parte of String(p.codigo || '').split(/[\/,;]+/)) add(parte, p);
     for (const parte of String(p.similar || '').split(/[\/,;\s]+/)) add(parte, p);
+    if (p.obsDataCar) add(p.obsDataCar, p);
   }
   return mapa;
 }
@@ -1169,7 +1170,8 @@ function renderNova() {
     return `<tr>
       <td class="c">${i + 1}</td>
       <td>${esc(x.codigoArquivo || p.codigo)}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}</td>
-      <td>${esc(p.descricao)}${p.similar ? `<br><span class="small muted">Similar: ${esc(p.similar)}</span>` : ''}</td>
+      <td>${esc(p.descricao)}</td>
+      <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
       <td style="width:170px"><input class="${p.marca ? '' : 'falta'}" data-marca-prod="${p.id}" value="${esc(p.marca)}" placeholder="Informar marca" aria-label="Marca de ${esc(p.descricao)}"></td>
       <td class="c"><button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
@@ -1213,7 +1215,7 @@ function renderNova() {
       </form>
     </details>
     ${r.itens.length ? `<div class="table-wrap"><table>
-      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th>Marca</th><th></th></tr></thead>
+      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th>Similar</th><th>Marca</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
   </section>
 
@@ -1734,9 +1736,9 @@ const acoes = {
       let id = l.produtoId;
       if (!id) {
         // Produto novo: código = coluna de código do arquivo; o valor do OBS fica
-        // no "similar" para o item ser reconhecido nas próximas importações.
+        // guardado em "obsDataCar" para o item ser reconhecido nas próximas importações.
         const p = {
-          id: uid(), codigo: codArq || l.chave, similar: codArq && codArq !== l.chave ? l.chave : '', descricao: txt(l, d.colDesc) || l.chave, unidade: 'UN',
+          id: uid(), codigo: codArq || l.chave, similar: '', obsDataCar: l.chave, descricao: txt(l, d.colDesc) || l.chave, unidade: 'UN',
           marca: (l.marca ?? txt(l, d.colMarca)).trim(), categoria: '', obs: '', criadoEm: new Date().toISOString(),
         };
         db.produtos.push(p);
@@ -2090,6 +2092,12 @@ document.addEventListener('change', async e => {
     salvar();
     const h3 = t.closest('.card').querySelector('h3');
     if (h3) h3.textContent = `2. Fornecedores que vão receber (${ids.length})`;
+  } else if (t.dataset.similarProd) {
+    const p = db.produtos.find(x => x.id === t.dataset.similarProd);
+    if (!p) return;
+    p.similar = t.value.trim();
+    salvar();
+    toast(p.similar ? `Similar salvo no cadastro de ${p.codigo || p.descricao}.` : 'Similar removido do cadastro.');
   } else if (t.dataset.marcaProd) {
     const p = db.produtos.find(x => x.id === t.dataset.marcaProd);
     if (!p) return;
