@@ -2282,9 +2282,14 @@ const acoes = {
   },
 
   removerItem: el => {
-    rascunho().itens.splice(+el.dataset.i, 1);
+    const r = rascunho();
+    const [x] = r.itens.splice(+el.dataset.i, 1); // tira só este item
     salvar();
     render();
+    if (x) {
+      const p = db.produtos.find(y => y.id === x.produtoId);
+      toast(`Removido só o item ${x.codigoArquivo || p?.codigo || ''}${p ? ' · ' + p.descricao : ''}. Os outros continuam na cotação.`, 5000);
+    }
   },
 
   limparRascunho: async () => {
