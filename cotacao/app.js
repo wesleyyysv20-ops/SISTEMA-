@@ -331,6 +331,38 @@ function abrirDialogo(msg, botoes) {
   });
 }
 
+/** Diálogo com um campo (texto com sugestões ou lista). Devolve o valor, ou null se cancelar. */
+function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK' } = {}) {
+  return new Promise(resolve => {
+    const fundo = document.createElement('div');
+    fundo.className = 'dlg-fundo';
+    const campo = tipo === 'lista'
+      ? `<select id="dlgCampo">${opcoes.map(o => `<option value="${esc(o.valor)}">${esc(o.texto)}</option>`).join('')}</select>`
+      : `<input id="dlgCampo" list="dlgOpcoes" value="${esc(valor)}" autocomplete="off"><datalist id="dlgOpcoes">${opcoes.map(o => `<option value="${esc(o)}">`).join('')}</datalist>`;
+    fundo.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
+      <p>${esc(msg).replace(/\n/g, '<br>')}</p>
+      ${campo}
+      <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" class="primary" data-r="1">${esc(ok)}</button></div>
+    </div>`;
+    const inp = () => fundo.querySelector('#dlgCampo');
+    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const tecla = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(null); }
+      else if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); fechar(inp().value.trim() || null); }
+      else e.stopImmediatePropagation();
+    };
+    fundo.addEventListener('click', e => {
+      e.stopPropagation();
+      const b = e.target.closest('button[data-r]');
+      if (b) fechar(b.dataset.r === '1' ? (inp().value.trim() || null) : null);
+    });
+    document.addEventListener('keydown', tecla, true);
+    document.body.appendChild(fundo);
+    inp().focus();
+    if (inp().select) inp().select();
+  });
+}
+
 function confirmar(msg, ok = 'Confirmar') {
   return abrirDialogo(msg, [{ txt: 'Cancelar', valor: false }, { txt: ok, valor: true, cls: 'primary' }]);
 }
@@ -655,8 +687,16 @@ async function baixarPlanilha(c, fi) {
 /* ---------------- Excel: leitura da resposta ---------------- */
 
 async function lerPlanilha(file) {
+  const cab = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  if (!(cab[0] === 0x50 && cab[1] === 0x4b)) {
+    throw new Error(`O arquivo "${file.name}" não está no formato Excel .xlsx${cab[0] === 0xd0 ? ' (é o formato antigo .xls)' : ''}.\nAbra no Excel e use "Salvar como" → "Pasta de Trabalho do Excel (.xlsx)", depois importe de novo.`);
+  }
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(await file.arrayBuffer());
+  try {
+    await wb.xlsx.load(await file.arrayBuffer());
+  } catch (e) {
+    throw new Error(`Não consegui abrir "${file.name}". Abra no Excel, use "Salvar como" .xlsx e importe de novo.\n(detalhe técnico: ${e.message})`);
+  }
   const m = wb.getWorksheet('_dados');
   let meta = null;
   if (m && cellTexto(m.getCell('A1')) === 'sistema-cotacao') {
@@ -683,9 +723,11 @@ function aplicarResposta(c, fi, ws, meta) {
   if (!first) {
     // Planilha sem aba de controle: procura o cabeçalho "VALOR" (v2) ou "Preço Unit." (v1).
     for (let r = 1; r <= 60 && !first; r++) {
-      if (/^valor/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 3; }
-      else if (/^valor/i.test(cellTexto(ws.getCell(`F${r}`)))) { first = r + 1; versao = 2; }
-      else if (/pre[çc]o/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 1; }
+      // procura a linha de cabeçalho (coluna A = "Item"); a faixa de instruções também cita VALOR/preço
+      if (!/^item$/i.test(cellTexto(ws.getCell(`A${r}`)))) continue;
+      if (/^valor$/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 3; }
+      else if (/^valor$/i.test(cellTexto(ws.getCell(`F${r}`)))) { first = r + 1; versao = 2; }
+      else if (/^pre[çc]o unit/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 1; }
     }
     if (!first) throw new Error('Não encontrei a coluna VALOR nesta planilha.');
   }
@@ -735,7 +777,16 @@ async function importarResposta(file, cotId, fiSugerido) {
       }
       c = dona;
     }
-    if (!c) throw new Error('Não consegui identificar a cotação desta planilha. Abra a cotação e use o botão "Importar" do fornecedor.');
+    if (!c) {
+      const abertas = [...db.cotacoes].sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
+      if (!abertas.length) throw new Error('Não há cotações no sistema para receber esta planilha.');
+      const id = await pedirValor('Não consegui identificar a cotação desta planilha. Escolha a cotação:', {
+        tipo: 'lista', ok: 'Importar',
+        opcoes: abertas.map(x => ({ valor: x.id, texto: `Nº ${x.numero} · ${fmtData(x.data)}${x.titulo ? ' · ' + x.titulo : ''} · ${x.itens.length} itens` })),
+      });
+      if (!id) return;
+      c = db.cotacoes.find(x => x.id === id);
+    }
 
     let fi = fiSugerido;
     if (meta) {
@@ -745,10 +796,16 @@ async function importarResposta(file, cotId, fiSugerido) {
       }
       if (idx >= 0) fi = idx;
     }
-    if ((fi == null || !c.fornecedores[fi]) && meta && !meta.fornecedorId) {
-      // planilha geral da cotação: o fornecedor escreveu o nome dele no campo "Fornecedor"
-      const nome = cellTexto(ws.getCell('C7'));
-      if (!nome) throw new Error('A planilha não tem o nome do fornecedor. Peça para ele preencher o campo "Fornecedor", ou adicione o fornecedor na cotação e use o botão "Importar" na linha dele.');
+    if (fi == null || !c.fornecedores[fi]) {
+      // planilha geral da cotação: usa o nome escrito no campo "Fornecedor"; se estiver vazio, pergunta
+      let nome = /forneced/i.test(cellTexto(ws.getCell('A7'))) ? cellTexto(ws.getCell('C7')) : '';
+      if (!nome) {
+        nome = await pedirValor(`De qual fornecedor é esta planilha (${file.name})?\nO campo "Fornecedor" veio em branco. Escolha um da lista ou digite um nome novo.`, {
+          ok: 'Importar',
+          opcoes: [...new Set([...c.fornecedores.map(x => x.nome), ...db.fornecedores.map(x => x.nome)])].sort(COLLATOR.compare),
+        });
+        if (!nome) return;
+      }
       let fz = db.fornecedores.find(x => semAcento(x.nome) === semAcento(nome));
       if (!fz) { fz = { id: uid(), nome, contato: '', email: '', telefone: '', obs: '' }; db.fornecedores.push(fz); }
       fi = c.fornecedores.findIndex(x => x.fornecedorId === fz.id);
@@ -1744,7 +1801,7 @@ function renderCotacoes() {
     <div class="row-between">
       <h2>Cotações</h2>
       <div class="row">
-        <label class="btn" style="margin:0">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx" data-import-geral></label>
+        <label class="btn" style="margin:0">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx,.xls" data-import-geral></label>
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
       </div>
     </div>
@@ -1787,7 +1844,7 @@ function renderCotacao(id) {
       <td class="actions-cell">
         <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="Baixar a planilha Excel deste fornecedor">⬇ Excel</button>
         <button class="sm" data-act="enviar" data-f="${fi}" title="Preparar o e-mail para este fornecedor">✉ Enviar</button>
-        <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥 Importar<input type="file" class="hidden" accept=".xlsx" data-import="${fi}"></label>
+        <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥 Importar<input type="file" class="hidden" accept=".xlsx,.xls" data-import="${fi}"></label>
         <button class="sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎ Digitar</button>
         <button class="sm danger" data-act="removerFornCot" data-f="${fi}" title="Remover da cotação">✕</button>
       </td>
@@ -1917,7 +1974,7 @@ function renderCotacao(id) {
       ${disponiveis.length ? `<select id="addFornCot" style="width:auto;max-width:280px">${disponiveis.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select>
       <button class="sm" data-act="addFornCot">+ Adicionar fornecedor</button>` : ''}
       <button class="sm" data-act="baixarGeral" title="Planilha da cotação sem nome de fornecedor">⬇ Planilha da cotação</button>
-      <label class="btn sm" style="margin:0" title="Importar uma planilha preenchida pelo fornecedor">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx" data-import-cot></label>
+      <label class="btn sm" style="margin:0" title="Importar uma planilha preenchida pelo fornecedor">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx,.xls" data-import-cot></label>
       ${nf > 1 ? '<button class="sm" data-act="baixarTodas">⬇ Baixar todas as planilhas</button>' : ''}
     </div>
     <p class="tip"><b>Como enviar:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
