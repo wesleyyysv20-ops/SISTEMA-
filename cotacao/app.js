@@ -1018,13 +1018,12 @@ function chaveOrdemDataCar(l, campo) {
   return '';
 }
 
-/** Ordena as linhas do arquivo: 1º clique crescente, 2º decrescente, 3º volta à ordem do arquivo. */
+/** Ordena as linhas do arquivo: clicar numa coluna ordena de A a Z; clicar de novo inverte (Z a A). */
 function ordenarDataCar(campo) {
   const d = ui.datacar;
   const atual = d.linhas[d.cursor];
   if (d.ordem.campo !== campo) d.ordem = { campo, dir: 1 };
-  else if (d.ordem.dir === 1) d.ordem.dir = -1;
-  else d.ordem = { campo: null, dir: 1 };
+  else d.ordem.dir = -d.ordem.dir;
   aplicarOrdemDataCar();
   d.cursor = Math.max(0, d.linhas.indexOf(atual));
 }
@@ -1034,7 +1033,8 @@ function aplicarOrdemDataCar() {
   const { campo: c, dir } = d.ordem;
   d.linhas.sort((a, b) => {
     if (!c) return a.orig - b.orig;
-    const ka = chaveOrdemDataCar(a, c), kb = chaveOrdemDataCar(b, c);
+    const norm = v => semAcento(v).replace(/\s+/g, ' ');
+    const ka = norm(chaveOrdemDataCar(a, c)), kb = norm(chaveOrdemDataCar(b, c));
     if (!ka !== !kb) return ka ? -1 : 1; // vazios sempre no fim
     return (ka.localeCompare(kb, 'pt-BR', { numeric: true, sensitivity: 'base' }) * dir) || a.orig - b.orig;
   });
@@ -1073,7 +1073,7 @@ function renderDataCar() {
       <div class="table-wrap dc-lista"><table>
         <thead><tr><th></th>${Object.entries(ORDEM_DC).map(([campo, rotulo]) => {
           const ativo = d.ordem.campo === campo;
-          const seta = ativo ? (d.ordem.dir === 1 ? ' ▲' : ' ▼') : '';
+          const seta = ativo ? (d.ordem.dir === 1 ? ' A→Z' : ' Z→A') : '';
           return `<th aria-sort="${ativo ? (d.ordem.dir === 1 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-ordem ${ativo ? 'ativo' : ''}" data-act="dcOrdenar" data-campo="${campo}" title="Ordenar por ${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}">${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}${seta}</button></th>`;
         }).join('')}</tr></thead>
         <tbody>${d.linhas.map((l, i) => {
@@ -1092,7 +1092,8 @@ function renderDataCar() {
           </tr>`;
         }).join('')}</tbody>
       </table></div>
-      <p class="small muted" style="margin:10px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
+      <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
+      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
       <div class="row-between" style="margin-top:8px">
         <span class="small muted" id="dcResumo">${sel} selecionado(s)${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}</span>
         <div class="row">
