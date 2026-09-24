@@ -492,7 +492,7 @@ const XL = {
 };
 
 /**
- * Planilha da cotação (layout v2): Item, Código, Similar, Descrição, Marca e,
+ * Planilha da cotação (layout v2): Item, Código, Similar, Marca, Descrição e,
  * no final, as colunas VALOR e MARCA para o fornecedor preencher.
  * `f` pode ser nulo: planilha genérica, sem nome de fornecedor.
  */
@@ -507,7 +507,7 @@ async function gerarPlanilha(c, f) {
   });
   const COLS = 7; // A..G
   const ULT = 'G';
-  ws.columns = [6, 18, 20, 48, 18, 16, 20].map(width => ({ width }));
+  ws.columns = [6, 18, 20, 18, 48, 16, 20].map(width => ({ width }));
 
   ws.mergeCells(`A1:${ULT}1`);
   const titulo = ws.getCell('A1');
@@ -565,7 +565,7 @@ async function gerarPlanilha(c, f) {
 
   const HEADER = 11;
   const FIRST = HEADER + 1;
-  const cab = ['Item', 'Código', 'Similar', 'Descrição', 'Marca', 'VALOR', 'MARCA'];
+  const cab = ['Item', 'Código', 'Similar', 'Marca', 'Descrição', 'VALOR', 'MARCA'];
   const hr = ws.getRow(HEADER);
   cab.forEach((txt, i) => {
     const cell = hr.getCell(i + 1);
@@ -580,11 +580,11 @@ async function gerarPlanilha(c, f) {
   c.itens.forEach((it, i) => {
     const r = FIRST + i;
     const row = ws.getRow(r);
-    row.values = [i + 1, it.codigo || '', it.similar || '', it.descricao, it.marca || ''];
+    row.values = [i + 1, it.codigo || '', it.similar || '', it.marca || '', it.descricao];
     for (let col = 1; col <= COLS; col++) {
       const cell = row.getCell(col);
       cell.border = XL.borda;
-      cell.alignment = { vertical: 'middle', wrapText: col >= 2 && col <= 4 };
+      cell.alignment = { vertical: 'middle', wrapText: col >= 2 && col <= 5 };
     }
     row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
     const valor = row.getCell(6);
@@ -1400,8 +1400,8 @@ function renderNova() {
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}">${origemObs}: <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
-      <td>${esc(p.descricao)}</td>
       <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação.` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
+      <td>${esc(p.descricao)}</td>
       <td class="c" style="white-space:nowrap">${dup ? `<button class="sm" data-act="manterItem" data-i="${i}" title="Manter na cotação e tirar o destaque">✓ Manter</button> ` : ''}<button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
   }).join('');
@@ -1445,7 +1445,7 @@ function renderNova() {
     </details>
     ${nRepetidos ? `<p class="aviso-dup">⚠ <b>${nRepetidos} item(ns) com código repetido</b>, destacados em laranja. Veja a OBS da planilha em cada um: clique em <b>✓ Manter</b> nos que vão e em <b>✕</b> nos que não vão.</p>` : ''}
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
-      <thead><tr><th class="c">#</th><th>Código</th><th>Similar</th><th>Descrição A→Z</th><th>Marca</th><th></th></tr></thead>
+      <thead><tr><th class="c">#</th><th>Código</th><th>Similar</th><th>Marca</th><th>Descrição A→Z</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
       <p class="small muted" style="margin:6px 0 0">Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca · <span class="kbd">Enter</span> salva · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar</p>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
   </section>
