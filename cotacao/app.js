@@ -1056,12 +1056,24 @@ function botoesGruposDataCar() {
   }
   // grupos já marcados por inteiro vão para o final; os que faltam ficam no começo (A-Z)
   const completo = ([k, g]) => (d.ignorados.has(k) ? 2 : g.sel === g.n ? 1 : 0);
-  const lista = [...grupos.entries()].sort((a, b) => (completo(a) - completo(b)) || (!a[0] - !b[0]) || COLLATOR.compare(a[0], b[0]));
-  return `<span class="small muted" title="Clique marca o grupo. Botão direito ignora o grupo (não vai para a cotação).">Marcar por ${esc(d.cab[d.col])} (botão direito ignora):</span> ` + lista.map(([k, g]) => {
+  const modo = (d.filtro && d.filtro.modo) || 'todos';
+  let entradas = [...grupos.entries()];
+  // "Não marcados": só os grupos que ainda têm itens sem marcar (não ignorados), para conferir o que faltou
+  if (modo === 'pendentes') entradas = entradas.filter(([k, g]) => !d.ignorados.has(k) && g.sel < g.n);
+  if (modo === 'marcados') entradas = entradas.filter(([, g]) => g.sel > 0);
+  if (!entradas.length) {
+    return `<span class="small ${modo === 'pendentes' ? '' : 'muted'}">${modo === 'pendentes' ? '✓ Nenhum grupo pendente: todos os grupos foram marcados ou ignorados.' : 'Nenhum grupo com itens marcados.'}</span>`;
+  }
+  const lista = entradas.sort((a, b) => (completo(a) - completo(b)) || (!a[0] - !b[0]) || COLLATOR.compare(a[0], b[0]));
+  return `<span class="small muted" title="Clique marca o grupo. Botão direito ignora o grupo (não vai para a cotação).">${modo === 'pendentes' ? `Grupos de ${esc(d.cab[d.col])} com itens não marcados` : `Marcar por ${esc(d.cab[d.col])}`} (botão direito ignora):</span> ` + lista.map(([k, g]) => {
     if (d.ignorados.has(k)) {
       return `<button type="button" class="dc-chip ignorado" data-act="dcGrupo" data-g="${esc(k)}" title="Ignorado: não vai para a cotação. Clique (ou botão direito) para voltar.">${esc(g.rotulo)} <span>(${g.n}) ignorado</span></button>`;
     }
     const estado = g.sel === g.n ? 'on' : g.sel ? 'parcial' : '';
+    if (modo === 'pendentes') {
+      const faltam = g.n - g.sel;
+      return `<button type="button" class="dc-chip ${estado}" data-act="dcGrupo" data-g="${esc(k)}" title="${faltam} item(ns) deste grupo ainda não marcados. Clique para marcar o grupo; botão direito para ignorar.">${esc(g.rotulo)} <span>(faltam ${faltam}${g.sel ? ' de ' + g.n : ''})</span></button>`;
+    }
     return `<button type="button" class="dc-chip ${estado}" data-act="dcGrupo" data-g="${esc(k)}" aria-pressed="${g.sel === g.n}" title="${g.sel}/${g.n} marcados. Clique para ${g.sel === g.n ? 'desmarcar' : 'marcar'} todos com ${esc(g.rotulo)}.">${esc(g.rotulo)} <span>(${g.sel ? g.sel + '/' : ''}${g.n})</span></button>`;
   }).join('');
 }
@@ -2172,6 +2184,7 @@ const acoes = {
   dcModo: el => {
     const d = ui.datacar;
     d.filtro = { ...(d.filtro || { texto: '' }), modo: el.dataset.modo };
+    atualizarResumoDataCar(); // redesenha os botões de grupo conforme o filtro
     aplicarFiltroDataCar();
     moverCursorDataCar(acharVisivelDataCar(0, 1));
     $('#dcCaixa')?.focus({ preventScroll: true });
