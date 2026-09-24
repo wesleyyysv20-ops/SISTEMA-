@@ -473,3 +473,18 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
   .dc-row { grid-template-columns: 30px 70px 1fr 130px; }
   .dc-row > :nth-child(3) { display: none; }
 }
+
+/* lista de itens da cotação */
+.tab-itens:focus { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+.tab-itens tbody tr { cursor: pointer; }
+.tab-itens tbody tr.item-atual td { background: var(--blue-bg); }
+.tab-itens tbody tr.item-atual td:first-child { box-shadow: inset 3px 0 0 var(--primary-2); }
+.tab-itens input { background: var(--card); border: 1px solid var(--input-line); }
+.tab-itens input.falta { background: var(--field); border-style: dashed; }
+.tab-itens input.so-cotacao { color: var(--primary-2); font-weight: 600; border-color: var(--primary-2); background: var(--card); }
+.tab-itens input:focus {
+  border: 2px solid var(--primary-2);
+  font-weight: 600;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-2) 30%, transparent);
+  outline: none;
+}

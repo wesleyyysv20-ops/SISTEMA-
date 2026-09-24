@@ -45,7 +45,7 @@ const STATUS = {
 };
 
 let db = carregar();
-const ui = { digitando: null, enviando: null, datacar: null, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '' };
+const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '' };
 
 /* ---------------- persistência ---------------- */
 
@@ -1318,7 +1318,7 @@ function renderNova() {
 
   const linhas = r.itens.map((x, i) => {
     const p = prod[x.produtoId];
-    return `<tr>
+    return `<tr data-item-linha="${i}" class="${i === ui.cursorItem ? 'item-atual' : ''}">
       <td class="c">${i + 1}</td>
       <td>${esc(x.codigoArquivo || p.codigo)}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}</td>
       <td>${esc(p.descricao)}</td>
@@ -1365,9 +1365,10 @@ function renderNova() {
         <div class="actions" style="align-self:end"><button class="primary">Salvar e adicionar</button></div>
       </form>
     </details>
-    ${r.itens.length ? `<div class="table-wrap"><table>
+    ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
       <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th>Similar</th><th>Marca</th><th></th></tr></thead>
-      <tbody>${linhas}</tbody></table></div>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
+      <tbody>${linhas}</tbody></table></div>
+      <p class="small muted" style="margin:6px 0 0">Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca · <span class="kbd">Enter</span> salva · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar</p>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
   </section>
 
   <section class="card">
@@ -1838,6 +1839,12 @@ function render() {
 }
 
 document.addEventListener('click', e => {
+  const linhaItem = e.target.closest('[data-item-linha]');
+  if (linhaItem) {
+    const campo = e.target.closest('[data-marca-item], [data-similar-prod]');
+    if (campo) { ui.cursorItem = +linhaItem.dataset.itemLinha; moverCursorItem(ui.cursorItem, false); campo.dataset.original = campo.value; }
+    else if (!e.target.closest('button')) moverCursorItem(+linhaItem.dataset.itemLinha);
+  }
   const linhaDc = e.target.closest('[data-dc-linha]');
   if (linhaDc && ui.datacar) {
     const i = +linhaDc.dataset.dcLinha;
@@ -2258,7 +2265,83 @@ document.addEventListener('focusout', e => {
   if (t.dataset && t.dataset.dcMarca != null && t.isConnected) fecharMarcaDataCar(t, true);
 });
 
+/* ---------------- lista de itens da cotação: setas + digitar direto na marca ---------------- */
+
+function moverCursorItem(i, focarTabela = true) {
+  const linhas = document.querySelectorAll('[data-item-linha]');
+  if (!linhas.length) return;
+  ui.cursorItem = Math.max(0, Math.min(linhas.length - 1, i));
+  linhas.forEach(tr => tr.classList.toggle('item-atual', +tr.dataset.itemLinha === ui.cursorItem));
+  linhas[ui.cursorItem].scrollIntoView({ block: 'nearest' });
+  if (focarTabela) $('#tabItens')?.focus({ preventScroll: true });
+}
+
+/** Põe o foco num campo (marca ou similar) da linha i. modo: 'fim' | 'tudo' | texto inicial. */
+function focarCampoItem(i, campo, modo) {
+  const attr = campo === 'similar' ? 'data-similar-prod' : 'data-marca-item';
+  const tr = document.querySelector(`[data-item-linha="${i}"]`);
+  const inp = tr && tr.querySelector(`[${attr}]`);
+  if (!inp) return;
+  moverCursorItem(i, false);
+  inp.dataset.original = inp.value;
+  inp.focus();
+  if (modo === 'tudo') inp.select();
+  else {
+    if (modo !== 'fim' && modo != null) inp.value = modo;
+    inp.setSelectionRange(inp.value.length, inp.value.length);
+  }
+}
+
+function teclaItens(e) {
+  const t = e.target;
+  const tab = $('#tabItens');
+  const noCampo = t.matches('[data-marca-item], [data-similar-prod]');
+  const linha = t.closest('[data-item-linha]');
+  const atual = linha ? +linha.dataset.itemLinha : ui.cursorItem;
+  if (noCampo) {
+    const campo = t.matches('[data-similar-prod]') ? 'similar' : 'marca';
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prox = atual + (e.key === 'ArrowDown' ? 1 : -1);
+      t.blur(); // salva (dispara "change") e redesenha
+      focarCampoItem(Math.max(0, Math.min(rascunho().itens.length - 1, prox)), campo, 'tudo');
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      t.blur();
+      moverCursorItem(atual);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      if (t.dataset.original != null) t.value = t.dataset.original;
+      t.blur();
+      moverCursorItem(atual);
+    }
+    return;
+  }
+  if (t !== tab) return;
+  const letra = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    moverCursorItem(ui.cursorItem + (e.key === 'ArrowDown' ? 1 : -1));
+  } else if (e.key === 'Home' || e.key === 'End') {
+    e.preventDefault();
+    moverCursorItem(e.key === 'Home' ? 0 : rascunho().itens.length - 1);
+  } else if (e.key === 'F2' || e.key === 'Enter') {
+    e.preventDefault();
+    focarCampoItem(ui.cursorItem, 'marca', 'fim');
+  } else if (letra && e.key !== ' ') {
+    e.preventDefault();
+    focarCampoItem(ui.cursorItem, 'marca', e.key);
+  } else if (e.key === 'Backspace' || e.key === 'Delete') {
+    e.preventDefault();
+    focarCampoItem(ui.cursorItem, 'marca', '');
+  }
+}
+
 document.addEventListener('keydown', e => {
+  if (!ui.datacar && e.target.closest && e.target.closest('#tabItens')) {
+    teclaItens(e);
+    return;
+  }
   if (ui.datacar && $('#dlgDataCar') && !document.querySelector('.dlg-fundo:not(#dlgDataCar)')) {
     teclaDataCar(e);
     return;
