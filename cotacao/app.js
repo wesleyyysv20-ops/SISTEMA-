@@ -1054,9 +1054,18 @@ function focarDataCar() {
   moverCursorDataCar(ui.datacar.cursor);
 }
 
+function desarmarEnterDataCar() {
+  const d = ui.datacar;
+  if (!d || !d.enterArmado) return;
+  d.enterArmado = 0;
+  const btn = document.querySelector('#dlgDataCar [data-act="dcAdicionar"]');
+  if (btn) { btn.textContent = 'Adicionar à cotação'; btn.classList.remove('armado'); }
+}
+
 function teclaDataCar(e) {
   const d = ui.datacar;
   const t = e.target;
+  if (e.key !== 'Enter') desarmarEnterDataCar();
   const campoTexto = t.matches('input:not([type=checkbox]), select, textarea');
   // Editando a marca: Enter/Tab salva, Esc desiste, setas salvam e passam para a linha de cima/baixo.
   if (t.dataset && t.dataset.dcMarca != null) {
@@ -1098,8 +1107,18 @@ function teclaDataCar(e) {
     e.preventDefault();
     marcarLinhaDataCar(d.cursor, !d.linhas[d.cursor].sel);
   } else if (e.key === 'Enter' && t.tagName !== 'BUTTON' && t.tagName !== 'SELECT') {
+    // Adicionar à cotação exige Enter duas vezes seguidas
     e.preventDefault();
-    acoes.dcAdicionar();
+    const sel = d.linhas.filter(l => l.sel).length;
+    if (d.enterArmado && Date.now() - d.enterArmado < 5000) {
+      d.enterArmado = 0;
+      acoes.dcAdicionar();
+    } else {
+      d.enterArmado = Date.now();
+      const btn = document.querySelector('#dlgDataCar [data-act="dcAdicionar"]');
+      if (btn) { btn.textContent = 'Enter de novo para adicionar'; btn.classList.add('armado'); }
+      toast(sel ? `Pressione Enter de novo para adicionar ${sel} item(ns) à cotação.` : 'Nenhum item marcado. Marque com Espaço antes de adicionar.', 4000);
+    }
   } else if (e.key === 'Escape') {
     e.preventDefault();
     acoes.dcCancelar();
@@ -1252,7 +1271,7 @@ function renderDataCar() {
         }).join('')}
       </div>
       <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
-      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · digite para preencher a marca (<span class="kbd">F2</span> edita sem apagar) · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
+      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · digite para preencher a marca (<span class="kbd">F2</span> edita sem apagar) · <span class="kbd">Enter</span> confirma a marca · <span class="kbd">Enter</span> <span class="kbd">Enter</span> adiciona à cotação · <span class="kbd">Esc</span> cancelar</p>
       <div class="row-between" style="margin-top:8px">
         <span class="small muted" id="dcResumo"></span>
         <div class="row">

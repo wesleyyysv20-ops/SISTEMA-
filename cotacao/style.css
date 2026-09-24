@@ -504,3 +504,5 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
   border-left: 3px solid var(--warn);
   font-size: 13px;
 }
+
+#dlgDataCar button.armado { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-2) 45%, transparent); }
