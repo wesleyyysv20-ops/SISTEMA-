@@ -488,3 +488,18 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-2) 30%, transparent);
   outline: none;
 }
+
+/* itens com código repetido */
+.tab-itens tbody tr.item-dup td { background: var(--warn-bg); }
+.tab-itens tbody tr.item-dup td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
+.tab-itens tbody tr.item-dup.item-atual td { background: color-mix(in srgb, var(--warn-bg) 55%, var(--blue-bg)); }
+.obs-dup { display: inline-block; margin-top: 3px; font-size: 12px; color: var(--warn); }
+.aviso-dup {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-left: 3px solid var(--warn);
+  font-size: 13px;
+}

@@ -965,6 +965,7 @@ function atualizarResumoDataCar() {
 }
 
 const grupoDc = v => semAcento(v).replace(/\s+/g, ' ');
+const chaveCodigo = v => semAcento(v).replace(/\s+/g, '');
 
 /** Marca/desmarca a linha i — e, com "agrupar" ligado, todas as linhas com a mesma OBS. */
 function marcarLinhaDataCar(i, valor) {
@@ -1153,6 +1154,8 @@ function renderDataCar() {
   const prod = byId(db.produtos);
   const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
   const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
+  const contaCodArq = {};
+  d.linhas.forEach(l => { const k = chaveCodigo(l.codigo); if (k) contaCodArq[k] = (contaCodArq[k] || 0) + 1; });
   const tamGrupo = {};
   d.linhas.forEach(l => { if (l.chave) tamGrupo[grupoDc(l.chave)] = (tamGrupo[grupoDc(l.chave)] || 0) + 1; });
   return `
@@ -1192,7 +1195,7 @@ function renderDataCar() {
           return `<div role="row" class="dc-row ${l.sel ? 'dc-on' : ''} ${ok ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
             <div class="c"><span class="dc-check" role="checkbox" aria-checked="${l.sel ? 'true' : 'false'}" aria-label="Selecionar linha ${i + 1}"></span></div>
             <div><b>${esc(l.chave || '—')}</b>${n > 1 ? ` <span class="small muted">(${n})</span>` : ''}</div>
-            <div class="small">${esc(resumo)}</div>
+            <div class="small">${esc(resumo)}${l.codigo && contaCodArq[chaveCodigo(l.codigo)] > 1 ? ` <span class="badge warn" title="Este código aparece ${contaCodArq[chaveCodigo(l.codigo)]} vezes no arquivo">código repetido</span>` : ''}</div>
             <div class="small">${p
               ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
               : ok ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem código</span>'}</div>
@@ -1323,15 +1326,27 @@ function renderNova() {
   const forn = byId(db.fornecedores);
   r.fornecedorIds = r.fornecedorIds.filter(id => forn[id]);
 
+  // Códigos repetidos: o mesmo código em mais de um item, ou várias linhas do arquivo no mesmo item.
+  const contaCod = {};
+  r.itens.forEach(x => { const k = chaveCodigo(x.codigoArquivo || prod[x.produtoId].codigo); if (k) contaCod[k] = (contaCod[k] || 0) + 1; });
+  const repetido = x => {
+    if (x.dupVisto) return false;
+    const k = chaveCodigo(x.codigoArquivo || prod[x.produtoId].codigo);
+    return (k && contaCod[k] > 1) || (x.obsArquivo || []).length > 1;
+  };
+  const nRepetidos = r.itens.filter(repetido).length;
+
   const linhas = r.itens.map((x, i) => {
     const p = prod[x.produtoId];
-    return `<tr data-item-linha="${i}" class="${i === ui.cursorItem ? 'item-atual' : ''}">
+    const dup = repetido(x);
+    const obs = (x.obsArquivo || []).map(o => o || 'sem OBS');
+    return `<tr data-item-linha="${i}" class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
       <td class="c">${i + 1}</td>
-      <td>${esc(x.codigoArquivo || p.codigo)}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}</td>
+      <td>${esc(x.codigoArquivo || p.codigo)}${dup ? ' <span class="badge warn">repetido</span>' : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${dup && obs.length ? `<br><span class="obs-dup">OBS na planilha: <b>${obs.map(esc).join(' · ')}</b></span>` : ''}</td>
       <td>${esc(p.descricao)}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
       <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação.` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
-      <td class="c"><button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
+      <td class="c" style="white-space:nowrap">${dup ? `<button class="sm" data-act="manterItem" data-i="${i}" title="Manter na cotação e tirar o destaque">✓ Manter</button> ` : ''}<button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
   }).join('');
 
@@ -1355,7 +1370,7 @@ function renderNova() {
     <h3>1. Itens da cotação (${r.itens.length})</h3>
     <div class="datacar-box">
       <label class="btn btn-primary" style="margin:0">📂 Abrir arquivo do DataCar<input type="file" class="hidden" accept=".xlsx,.xls,.csv,.txt,.htm,.html" data-import-datacar></label>
-      <span class="small muted">Escolha o arquivo gerado pelo DataCar e marque os itens que vão para a cotação. Os itens são reconhecidos pelo campo <b>OBS</b>.</span>
+      <span class="small muted">Escolha o arquivo gerado pelo DataCar e marque os itens que vão para a cotação. Os itens são reconhecidos pelo <b>código</b>; a <b>OBS</b> serve para ordenar e agrupar.</span>
     </div>
     <p class="small muted" style="margin:10px 0 6px">Ou busque um produto cadastrado:</p>
     <div class="search">
@@ -1372,6 +1387,7 @@ function renderNova() {
         <div class="actions" style="align-self:end"><button class="primary">Salvar e adicionar</button></div>
       </form>
     </details>
+    ${nRepetidos ? `<p class="aviso-dup">⚠ <b>${nRepetidos} item(ns) com código repetido</b>, destacados em laranja. Veja a OBS da planilha em cada um: clique em <b>✓ Manter</b> nos que vão e em <b>✕</b> nos que não vão.</p>` : ''}
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
       <thead><tr><th class="c">#</th><th>Código</th><th>Descrição A→Z</th><th>Similar</th><th>Marca</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
@@ -1951,17 +1967,32 @@ const acoes = {
       const codigoArquivo = codArq;
       if (ja) {
         ja.quantidade = qtd;
+        ja.obsArquivo = [...(ja.obsArquivo || []), l.chave || ''];
         if (!ja.codigoArquivo) ja.codigoArquivo = codigoArquivo;
         if (l.marca !== undefined) ja.marca = marcaCotacao;
         somados++;
       } else {
-        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao });
+        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao, obsArquivo: [l.chave || ''] });
       }
     }
     ui.datacar = null;
     salvar();
     render();
     toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação` : ''}.`, 6000);
+  },
+
+  manterItem: el => {
+    const r = rascunho();
+    const x = r.itens[+el.dataset.i];
+    if (!x) return;
+    const prod = byId(db.produtos);
+    const k = chaveCodigo(x.codigoArquivo || prod[x.produtoId]?.codigo);
+    // os outros itens com o mesmo código deixam de ser "repetidos" se sobrar só um sem decisão
+    x.dupVisto = true;
+    const iguais = r.itens.filter(y => !y.dupVisto && chaveCodigo(y.codigoArquivo || prod[y.produtoId]?.codigo) === k);
+    if (iguais.length === 1 && (iguais[0].obsArquivo || []).length <= 1) iguais[0].dupVisto = true;
+    salvar();
+    render();
   },
 
   removerItem: el => {
