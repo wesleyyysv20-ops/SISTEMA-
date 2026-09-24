@@ -265,7 +265,7 @@ tbody tr:hover { background: var(--hover); }
   color: var(--text);
   cursor: pointer;
 }
-.checklist label:has(input:checked) { border-color: var(--primary-2); background: var(--blue-bg); }
+.checklist label.on { border-color: var(--primary-2); background: var(--blue-bg); }
 
 details { margin: 8px 0; }
 details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; margin-bottom: 8px; }
@@ -326,6 +326,27 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
 .dc-lista { overflow: auto; flex: 1; min-height: 120px; border: 1px solid var(--line); border-radius: 7px; }
 .dc-lista thead th { position: sticky; top: 0; z-index: 1; }
 tr.dc-vazia td { opacity: .5; }
+.dc-lista table { table-layout: fixed; }
+.dc-lista th:nth-child(1) { width: 40px; }
+.dc-lista th:nth-child(2) { width: 16%; }
+.dc-lista th:nth-child(5) { width: 170px; }
+.dc-lista td { overflow-wrap: anywhere; }
+.dc-check {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--input-line);
+  border-radius: 3px;
+  background: var(--card);
+  vertical-align: middle;
+}
+tr.dc-on .dc-check { background: var(--primary-2); border-color: var(--primary-2); }
+tr.dc-on .dc-check::after { content: "✓"; display: block; color: #fff; font-size: 12px; line-height: 13px; text-align: center; }
+td.dc-marca { cursor: text; font-size: 13px; }
+td.dc-marca:hover { outline: 1px dashed var(--input-line); outline-offset: -3px; }
+td.dc-marca.falta { background: var(--field); }
+td.dc-marca.so-cotacao { color: var(--primary-2); font-weight: 600; }
+td.dc-marca input { padding: 4px 6px; }
 .dc-lista tbody tr.dc-on td { background: var(--ok-bg); }
 .dc-lista tbody tr.dc-on td:nth-child(2) { color: var(--ok); }
 .th-ordem {

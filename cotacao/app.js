@@ -961,8 +961,8 @@ function marcarLinhaDataCar(i, valor) {
     const tr = document.querySelector(`[data-dc-linha="${j}"]`);
     if (tr) {
       tr.classList.toggle('dc-on', valor);
-      const cb = tr.querySelector('[data-dc-sel]');
-      if (cb) cb.checked = valor;
+      const cb = tr.querySelector('.dc-check');
+      if (cb) cb.setAttribute('aria-checked', valor ? 'true' : 'false');
     }
   });
   atualizarResumoDataCar();
@@ -991,16 +991,28 @@ function teclaDataCar(e) {
   const d = ui.datacar;
   const t = e.target;
   const campoTexto = t.matches('input:not([type=checkbox]), select, textarea');
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+  // Editando a marca: Enter/Tab salva, Esc desiste, setas salvam e passam para a linha de cima/baixo.
+  if (t.dataset && t.dataset.dcMarca != null) {
+    if (e.key === 'Enter' || e.key === 'Escape' || e.key === 'Tab') {
+      e.preventDefault();
+      fecharMarcaDataCar(t, e.key !== 'Escape');
+      $('#dcCaixa').focus({ preventScroll: true });
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      fecharMarcaDataCar(t, true);
+      moverCursorDataCar(d.cursor + (e.key === 'ArrowDown' ? 1 : -1));
+      editarMarcaDataCar(d.cursor);
+    }
+    return;
+  }
+  if (e.key === 'F2') {
+    e.preventDefault();
+    editarMarcaDataCar(d.cursor);
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     if (t.tagName === 'SELECT') return;
     e.preventDefault();
     moverCursorDataCar(d.cursor + (e.key === 'ArrowDown' ? 1 : -1));
-    if (campoTexto) {
-      const q = document.querySelector(`[data-dc-marca="${d.cursor}"]`);
-      if (q) { q.focus(); q.select(); } else $('#dcCaixa').focus({ preventScroll: true });
-    } else {
-      $('#dcCaixa').focus({ preventScroll: true });
-    }
+    $('#dcCaixa').focus({ preventScroll: true });
   } else if ((e.key === 'PageDown' || e.key === 'PageUp') && !campoTexto) {
     e.preventDefault();
     moverCursorDataCar(d.cursor + (e.key === 'PageDown' ? 10 : -10));
@@ -1009,9 +1021,7 @@ function teclaDataCar(e) {
     moverCursorDataCar(e.key === 'Home' ? 0 : d.linhas.length - 1);
   } else if (e.key === ' ' && !campoTexto) {
     e.preventDefault();
-    const idx = t.dataset && t.dataset.dcSel != null ? +t.dataset.dcSel : d.cursor;
-    moverCursorDataCar(idx);
-    marcarLinhaDataCar(idx, !d.linhas[idx].sel);
+    marcarLinhaDataCar(d.cursor, !d.linhas[d.cursor].sel);
   } else if (e.key === 'Enter' && t.tagName !== 'BUTTON' && t.tagName !== 'SELECT') {
     e.preventDefault();
     acoes.dcAdicionar();
@@ -1030,6 +1040,7 @@ function chaveOrdemDataCar(l, campo) {
   if (campo === 'chave') return l.chave || '';
   if (campo === 'arquivo') return [d.colCod >= 0 && d.colCod !== d.col ? txt(d.colCod) : '', txt(d.colDesc)].filter(Boolean).join(' ') || l.cels.join(' ');
   if (campo === 'produto') return p ? `${p.codigo} ${p.descricao}` : '';
+  if (campo === 'marca') return marcaAtualDataCar(l, p) || '';
   if (campo === 'marca') return (p && p.marca) || l.marca || txt(d.colMarca) || '';
   return '';
 }
@@ -1047,13 +1058,63 @@ function ordenarDataCar(campo) {
 function aplicarOrdemDataCar() {
   const d = ui.datacar;
   const { campo: c, dir } = d.ordem;
+  if (!c) { d.linhas.sort((a, b) => a.orig - b.orig); return; }
+  const col = new Intl.Collator('pt-BR', { numeric: true, sensitivity: 'base' });
+  const chaves = new Map(d.linhas.map(l => [l, semAcento(chaveOrdemDataCar(l, c)).replace(/\s+/g, ' ')]));
   d.linhas.sort((a, b) => {
-    if (!c) return a.orig - b.orig;
-    const norm = v => semAcento(v).replace(/\s+/g, ' ');
-    const ka = norm(chaveOrdemDataCar(a, c)), kb = norm(chaveOrdemDataCar(b, c));
+    const ka = chaves.get(a), kb = chaves.get(b);
     if (!ka !== !kb) return ka ? -1 : 1; // vazios sempre no fim
-    return (ka.localeCompare(kb, 'pt-BR', { numeric: true, sensitivity: 'base' }) * dir) || a.orig - b.orig;
+    return (col.compare(ka, kb) * dir) || a.orig - b.orig;
   });
+}
+
+function marcaAtualDataCar(l, p) {
+  const d = ui.datacar;
+  return l.marca ?? (p ? p.marca : (d.colMarca >= 0 ? l.cels[d.colMarca] : '')) ?? '';
+}
+
+function celulaMarcaDataCar(l, i, p) {
+  const m = marcaAtualDataCar(l, p);
+  const dica = p && p.marca ? `Cadastro: ${p.marca}. Alterar aqui muda só nesta cotação.` : 'A marca informada fica salva no cadastro.';
+  return `<td class="dc-marca ${m ? '' : 'falta'} ${p && p.marca && m !== p.marca ? 'so-cotacao' : ''}" data-dc-marca-cel="${i}" title="${esc(dica)} Clique ou F2 para editar.">${m ? esc(m) : '<span class="muted">Informar marca</span>'}</td>`;
+}
+
+/** Abre um único campo de edição na célula de marca da linha i. */
+function editarMarcaDataCar(i) {
+  const td = document.querySelector(`[data-dc-marca-cel="${i}"]`);
+  if (!td || td.querySelector('input')) return;
+  const l = ui.datacar.linhas[i];
+  const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
+  td.innerHTML = `<input data-dc-marca="${i}" value="${esc(marcaAtualDataCar(l, p))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">`;
+  const inp = td.firstChild;
+  inp.focus();
+  inp.select();
+}
+
+/** Fecha o campo de edição: salva (ou descarta) e volta a mostrar o texto. */
+function fecharMarcaDataCar(inp, salvarValor) {
+  if (inp.dataset.fechando) return; // remover o campo dispara "focusout": evita fechar duas vezes
+  inp.dataset.fechando = '1';
+  const i = +inp.dataset.dcMarca;
+  const l = ui.datacar && ui.datacar.linhas[i];
+  const td = inp.closest('td');
+  if (!l || !td) return;
+  if (salvarValor) l.marca = inp.value.trim();
+  const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
+  td.outerHTML = celulaMarcaDataCar(l, i, p);
+}
+
+/** Redesenha só a caixa de seleção (sem refazer a tela inteira). */
+function renderSoDataCar() {
+  const atual = $('#dlgDataCar');
+  if (!atual) return render();
+  const tmp = document.createElement('div');
+  tmp.innerHTML = renderDataCar();
+  const lista = atual.querySelector('.dc-lista');
+  const topo = lista ? lista.scrollTop : 0;
+  atual.replaceWith(tmp.firstElementChild);
+  const nova = $('#dlgDataCar .dc-lista');
+  if (nova) nova.scrollTop = topo;
 }
 
 function renderDataCar() {
@@ -1099,20 +1160,18 @@ function renderDataCar() {
           const ok = !!(l.codigo || l.chave);
           const n = l.chave ? tamGrupo[grupoDc(l.chave)] : 0;
           return `<tr class="${l.sel ? 'dc-on' : ''} ${ok ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
-            <td><input type="checkbox" data-dc-sel="${i}" ${l.sel ? 'checked' : ''} ${ok ? '' : 'disabled'} aria-label="Selecionar linha ${i + 1}"></td>
+            <td class="c"><span class="dc-check" role="checkbox" aria-checked="${l.sel ? 'true' : 'false'}" aria-label="Selecionar linha ${i + 1}"></span></td>
             <td><b>${esc(l.chave || '—')}</b>${n > 1 ? ` <span class="small muted">(${n})</span>` : ''}</td>
             <td class="small">${esc(resumo)}</td>
             <td class="small">${p
               ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
               : ok ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem código</span>'}</td>
-            <td style="width:150px">${p
-              ? `<input class="${(l.marca ?? p.marca) ? '' : 'falta'}" data-dc-marca="${i}" value="${esc(l.marca ?? p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação.` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca do item ${i + 1}">`
-              : ok ? `<input data-dc-marca="${i}" value="${esc(l.marca ?? txt(l, d.colMarca))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">` : ''}</td>
+            ${ok ? celulaMarcaDataCar(l, i, p) : '<td></td>'}
           </tr>`;
         }).join('')}</tbody>
       </table></div>
       <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
-      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
+      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · <span class="kbd">F2</span> editar marca · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
       <div class="row-between" style="margin-top:8px">
         <span class="small muted" id="dcResumo"></span>
         <div class="row">
@@ -1241,7 +1300,7 @@ function renderNova() {
 
   const fornList = db.fornecedores.length
     ? `<div class="checklist">${[...db.fornecedores].sort((a, b) => a.nome.localeCompare(b.nome)).map(f => `
-        <label><input type="checkbox" data-forn="${f.id}" ${r.fornecedorIds.includes(f.id) ? 'checked' : ''}>
+        <label class="${r.fornecedorIds.includes(f.id) ? 'on' : ''}"><input type="checkbox" data-forn="${f.id}" ${r.fornecedorIds.includes(f.id) ? 'checked' : ''}>
         <span><b>${esc(f.nome)}</b><br><span class="small muted">${esc(f.email || 'sem e-mail')}</span></span></label>`).join('')}</div>`
     : '<p class="muted">Nenhum fornecedor cadastrado ainda.</p>';
 
@@ -1741,9 +1800,14 @@ function render() {
 document.addEventListener('click', e => {
   const linhaDc = e.target.closest('[data-dc-linha]');
   if (linhaDc && ui.datacar) {
-    moverCursorDataCar(+linhaDc.dataset.dcLinha);
-    if (!e.target.closest('input, button, select, label')) marcarLinhaDataCar(+linhaDc.dataset.dcLinha, !ui.datacar.linhas[+linhaDc.dataset.dcLinha].sel);
-    if (!e.target.closest('input, select')) $('#dcCaixa')?.focus({ preventScroll: true });
+    const i = +linhaDc.dataset.dcLinha;
+    moverCursorDataCar(i);
+    if (e.target.closest('[data-dc-marca-cel]')) {
+      if (!e.target.closest('input')) editarMarcaDataCar(i);
+    } else if (!e.target.closest('input, button, select, label')) {
+      marcarLinhaDataCar(i, !ui.datacar.linhas[i].sel);
+      $('#dcCaixa')?.focus({ preventScroll: true });
+    }
   }
   const link = e.target.closest('[data-route]');
   if (link) {
@@ -1782,9 +1846,9 @@ function adicionarItem(produtoId, quantidade = 1) {
 const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
-  dcOrdenar: el => { ordenarDataCar(el.dataset.campo); render(); focarDataCar(); },
-  dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.codigo || l.chave) l.sel = true; }); render(); focarDataCar(); },
-  dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); render(); focarDataCar(); },
+  dcOrdenar: el => { ordenarDataCar(el.dataset.campo); renderSoDataCar(); focarDataCar(); },
+  dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.codigo || l.chave) l.sel = true; }); renderSoDataCar(); focarDataCar(); },
+  dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); renderSoDataCar(); focarDataCar(); },
   dcCancelar: () => { ui.datacar = null; render(); },
   dcAdicionar: () => {
     const d = ui.datacar;
@@ -2121,7 +2185,7 @@ document.addEventListener('input', e => {
     rascunho().itens[+t.dataset.qtd].quantidade = parseNum(t.value);
     salvar();
   } else if (t.dataset.dcMarca != null) {
-    ui.datacar.linhas[+t.dataset.dcMarca].marca = t.value.trim();
+    // a marca é gravada ao sair do campo (Enter, Tab, setas ou clique fora)
   } else if (t.id === 'buscaProd') {
     resultadosBusca(t.value);
   } else if (t.id === 'filtroProd') {
@@ -2134,6 +2198,11 @@ document.addEventListener('input', e => {
     ui.filtroCot = t.value;
     $('#tbCot').innerHTML = linhasCotacoes();
   }
+});
+
+document.addEventListener('focusout', e => {
+  const t = e.target;
+  if (t.dataset && t.dataset.dcMarca != null && t.isConnected) fecharMarcaDataCar(t, true);
 });
 
 document.addEventListener('keydown', e => {
@@ -2159,6 +2228,7 @@ document.addEventListener('change', async e => {
     const ids = rascunho().fornecedorIds;
     if (t.checked) { if (!ids.includes(t.dataset.forn)) ids.push(t.dataset.forn); }
     else ids.splice(ids.indexOf(t.dataset.forn), 1);
+    t.closest('label').classList.toggle('on', t.checked);
     salvar();
     const h3 = t.closest('.card').querySelector('h3');
     if (h3) h3.textContent = `2. Fornecedores que vão receber (${ids.length})`;
@@ -2198,9 +2268,6 @@ document.addEventListener('change', async e => {
     aplicarOrdemDataCar();
     render();
     focarDataCar();
-  } else if (t.dataset.dcSel != null) {
-    marcarLinhaDataCar(+t.dataset.dcSel, t.checked);
-    moverCursorDataCar(+t.dataset.dcSel);
   } else if (t.id === 'statusCot') {
     ui.statusCot = t.value;
     $('#tbCot').innerHTML = linhasCotacoes();
