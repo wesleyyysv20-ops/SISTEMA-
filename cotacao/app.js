@@ -918,10 +918,11 @@ async function abrirArquivoDataCar(file) {
         return -1;
       })(),
       linhas: dados.map((cels, orig) => ({ cels, orig })),
-      ordem: { campo: null, dir: 1 },
+      ordem: { campo: 'chave', dir: 1 }, // abre já em ordem A-Z pelo OBS
       cursor: 0,
     };
     casarLinhasDataCar();
+    aplicarOrdemDataCar();
     render();
     focarDataCar();
   } catch (e) {
@@ -1023,6 +1024,12 @@ function ordenarDataCar(campo) {
   if (d.ordem.campo !== campo) d.ordem = { campo, dir: 1 };
   else if (d.ordem.dir === 1) d.ordem.dir = -1;
   else d.ordem = { campo: null, dir: 1 };
+  aplicarOrdemDataCar();
+  d.cursor = Math.max(0, d.linhas.indexOf(atual));
+}
+
+function aplicarOrdemDataCar() {
+  const d = ui.datacar;
   const { campo: c, dir } = d.ordem;
   d.linhas.sort((a, b) => {
     if (!c) return a.orig - b.orig;
@@ -1030,7 +1037,6 @@ function ordenarDataCar(campo) {
     if (!ka !== !kb) return ka ? -1 : 1; // vazios sempre no fim
     return (ka.localeCompare(kb, 'pt-BR', { numeric: true, sensitivity: 'base' }) * dir) || a.orig - b.orig;
   });
-  d.cursor = Math.max(0, d.linhas.indexOf(atual));
 }
 
 function renderDataCar() {
@@ -2148,6 +2154,7 @@ document.addEventListener('change', async e => {
   } else if (t.id === 'dcCol') {
     ui.datacar.col = +t.value;
     casarLinhasDataCar();
+    aplicarOrdemDataCar();
     render();
     focarDataCar();
   } else if (t.dataset.dcSel != null) {
