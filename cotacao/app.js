@@ -909,8 +909,12 @@ async function abrirArquivoDataCar(file) {
       colQtd: acharColuna(cab, [/^qt/, /quant/]),
       colMarca: acharColuna(cab, [/marca/, /fabric/]),
       colCod: (() => {
-        const i = cab.findIndex((h, j) => j !== col && /^(cod|codigo|referencia|ref\b)/.test(semAcento(h)));
-        return i;
+        const padroes = [/^cod/, /codigo/, /^referencia/, /^ref\b/, /peca/, /part ?n/, /^numero|^n[ºo°]/];
+        for (const p of padroes) {
+          const i = cab.findIndex((h, j) => j !== col && p.test(semAcento(h)));
+          if (i >= 0) return i;
+        }
+        return -1;
       })(),
       linhas: dados.map(cels => ({ cels })),
       cursor: 0,
@@ -1019,10 +1023,11 @@ function renderDataCar() {
         </label>
         <label style="margin:0;display:flex;gap:6px;align-items:center">Código do item
           <select id="dcColCod" style="width:auto;margin:0">
-            <option value="-1" ${d.colCod < 0 ? 'selected' : ''}>(mesmo campo: ${esc(d.cab[d.col])})</option>
+            <option value="-1" ${d.colCod < 0 ? 'selected' : ''}>(escolha a coluna)</option>
             ${d.cab.map((c, i) => `<option value="${i}" ${i === d.colCod ? 'selected' : ''}>${esc(c)}</option>`).join('')}
           </select>
         </label>
+        ${d.colCod < 0 ? '<span class="badge warn">Não achei a coluna de código: escolha ao lado</span>' : ''}
         <span class="grow"></span>
         <button class="sm" data-act="dcTodos">Marcar todos</button>
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
@@ -1730,10 +1735,13 @@ const acoes = {
     let novos = 0, somados = 0;
     for (const l of escolhidas) {
       const qtd = l.qtd ?? (parseNum(txt(l, d.colQtd)) || 1);
+      const codArq = d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '';
       let id = l.produtoId;
       if (!id) {
+        // Produto novo: código = coluna de código do arquivo; o valor do OBS fica
+        // no "similar" para o item ser reconhecido nas próximas importações.
         const p = {
-          id: uid(), codigo: l.chave, similar: '', descricao: txt(l, d.colDesc) || l.chave, unidade: 'UN',
+          id: uid(), codigo: codArq || l.chave, similar: codArq && codArq !== l.chave ? l.chave : '', descricao: txt(l, d.colDesc) || l.chave, unidade: 'UN',
           marca: (l.marca ?? txt(l, d.colMarca)).trim(), categoria: '', obs: '', criadoEm: new Date().toISOString(),
         };
         db.produtos.push(p);
@@ -1743,7 +1751,7 @@ const acoes = {
       const existente = db.produtos.find(p => p.id === id);
       if (existente && !existente.marca && l.marca) existente.marca = l.marca;
       const ja = r.itens.find(x => x.produtoId === id);
-      const codigoArquivo = (d.colCod >= 0 ? txt(l, d.colCod) : '') || l.chave;
+      const codigoArquivo = codArq;
       if (ja) {
         ja.quantidade = (ja.quantidade || 0) + qtd;
         if (!ja.codigoArquivo) ja.codigoArquivo = codigoArquivo;
