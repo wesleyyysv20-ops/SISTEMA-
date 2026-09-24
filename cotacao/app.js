@@ -1173,7 +1173,6 @@ function renderNova() {
       <td>${esc(x.codigoArquivo || p.codigo)}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}</td>
       <td>${esc(p.descricao)}${p.similar ? `<br><span class="small muted">Similar: ${esc(p.similar)}</span>` : ''}</td>
       <td style="width:170px"><input class="${p.marca ? '' : 'falta'}" data-marca-prod="${p.id}" value="${esc(p.marca)}" placeholder="Informar marca" aria-label="Marca de ${esc(p.descricao)}"></td>
-      <td class="c">${esc(p.unidade)}</td>
       <td style="width:110px"><input class="num" inputmode="decimal" data-qtd="${i}" value="${esc(fmtNum(x.quantidade))}"></td>
       <td class="c"><button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
@@ -1218,7 +1217,7 @@ function renderNova() {
       </form>
     </details>
     ${r.itens.length ? `<div class="table-wrap"><table>
-      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th>Marca</th><th class="c">Unid.</th><th class="r">Qtd.</th><th></th></tr></thead>
+      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th>Marca</th><th class="r">Qtd.</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
   </section>
 
