@@ -506,3 +506,28 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
 }
 
 #dlgDataCar button.armado { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-2) 45%, transparent); }
+
+/* botões por OBS */
+.dc-grupos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-height: 96px;
+  overflow-y: auto;
+  margin: 0 0 10px;
+  padding: 2px;
+}
+.dc-chip {
+  padding: 3px 10px;
+  font-size: 13px;
+  border-radius: 20px;
+  border: 1px solid var(--input-line);
+  background: var(--card);
+}
+.dc-chip span { color: var(--muted); font-size: 12px; }
+.dc-chip.parcial { border-color: var(--ok); border-style: dashed; }
+.dc-chip.on { background: var(--ok); border-color: var(--ok); color: var(--on-primary); }
+.dc-chip.on span { color: var(--on-primary); opacity: .85; }
+.dlg.dlg-largo > * { flex-shrink: 0; }
+.dlg.dlg-largo > .dc-lista { flex: 1 1 auto; flex-shrink: 1; }

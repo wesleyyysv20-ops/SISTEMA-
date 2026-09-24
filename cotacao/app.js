@@ -1003,7 +1003,28 @@ async function abrirArquivoDataCar(file) {
   }
 }
 
+/** Botões de grupo: um por valor de OBS, com a quantidade de itens; clique marca/desmarca o grupo. */
+function botoesGruposDataCar() {
+  const d = ui.datacar;
+  const grupos = new Map();
+  for (const l of d.linhas) {
+    if (!(l.codigo || l.chave)) continue;
+    const k = grupoDc(l.chave || '');
+    if (!grupos.has(k)) grupos.set(k, { rotulo: l.chave || 'Sem ' + d.cab[d.col], n: 0, sel: 0 });
+    const g = grupos.get(k);
+    g.n++;
+    if (l.sel) g.sel++;
+  }
+  const lista = [...grupos.entries()].sort((a, b) => (!a[0] - !b[0]) || COLLATOR.compare(a[0], b[0]));
+  return `<span class="small muted">Marcar por ${esc(d.cab[d.col])}:</span> ` + lista.map(([k, g]) => {
+    const estado = g.sel === g.n ? 'on' : g.sel ? 'parcial' : '';
+    return `<button type="button" class="dc-chip ${estado}" data-act="dcGrupo" data-g="${esc(k)}" aria-pressed="${g.sel === g.n}" title="${g.sel}/${g.n} marcados. Clique para ${g.sel === g.n ? 'desmarcar' : 'marcar'} todos com ${esc(g.rotulo)}.">${esc(g.rotulo)} <span>(${g.sel ? g.sel + '/' : ''}${g.n})</span></button>`;
+  }).join('');
+}
+
 function atualizarResumoDataCar() {
+  const caixaGrupos = $('#dcGrupos');
+  if (caixaGrupos) caixaGrupos.innerHTML = botoesGruposDataCar();
   const d = ui.datacar;
   const sel = d.linhas.filter(l => l.sel).length;
   const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
@@ -1106,6 +1127,7 @@ function teclaDataCar(e) {
   } else if (e.key === ' ' && !campoTexto) {
     e.preventDefault();
     marcarLinhaDataCar(d.cursor, !d.linhas[d.cursor].sel);
+    moverCursorDataCar(d.cursor + 1); // já desce para o próximo item
   } else if (e.key === 'Enter' && t.tagName !== 'BUTTON' && t.tagName !== 'SELECT') {
     // Adicionar à cotação exige Enter duas vezes seguidas
     e.preventDefault();
@@ -1248,6 +1270,7 @@ function renderDataCar() {
         <button class="sm" data-act="dcTodos">Marcar todos</button>
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
       </div>
+      <div class="dc-grupos" id="dcGrupos" aria-label="Marcar por ${esc(d.cab[d.col])}">${botoesGruposDataCar()}</div>
       <div class="dc-lista" role="grid">
         <div class="dc-row dc-cab" role="row"><div role="columnheader"></div>${Object.entries(ORDEM_DC).map(([campo, rotulo]) => {
           const ativo = d.ordem.campo === campo;
@@ -1271,7 +1294,7 @@ function renderDataCar() {
         }).join('')}
       </div>
       <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
-      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · digite para preencher a marca (<span class="kbd">F2</span> edita sem apagar) · <span class="kbd">Enter</span> confirma a marca · <span class="kbd">Enter</span> <span class="kbd">Enter</span> adiciona à cotação · <span class="kbd">Esc</span> cancelar</p>
+      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marca e desce · digite para preencher a marca (<span class="kbd">F2</span> edita sem apagar) · <span class="kbd">Enter</span> confirma a marca · <span class="kbd">Enter</span> <span class="kbd">Enter</span> adiciona à cotação · <span class="kbd">Esc</span> cancelar</p>
       <div class="row-between" style="margin-top:8px">
         <span class="small muted" id="dcResumo"></span>
         <div class="row">
@@ -1994,6 +2017,25 @@ const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
   dcOrdenar: el => { ordenarDataCar(el.dataset.campo); renderSoDataCar(); focarDataCar(); },
+  dcGrupo: el => {
+    const d = ui.datacar;
+    const k = el.dataset.g;
+    const idx = [];
+    d.linhas.forEach((l, i) => { if ((l.codigo || l.chave) && grupoDc(l.chave || '') === k) idx.push(i); });
+    const todos = idx.every(i => d.linhas[i].sel);
+    for (const i of idx) {
+      d.linhas[i].sel = !todos;
+      const tr = document.querySelector(`[data-dc-linha="${i}"]`);
+      if (tr) {
+        tr.classList.toggle('dc-on', !todos);
+        tr.querySelector('.dc-check')?.setAttribute('aria-checked', String(!todos));
+      }
+    }
+    if (idx.length) moverCursorDataCar(idx[0]);
+    atualizarResumoDataCar();
+    $('#dcCaixa')?.focus({ preventScroll: true });
+  },
+
   dcTodos: () => { ui.datacar.linhas.forEach(l => { if (l.codigo || l.chave) l.sel = true; }); renderSoDataCar(); focarDataCar(); },
   dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); renderSoDataCar(); focarDataCar(); },
   dcCancelar: async () => {
