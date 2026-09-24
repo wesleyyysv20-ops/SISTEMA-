@@ -1106,7 +1106,7 @@ function renderDataCar() {
               ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
               : ok ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem código</span>'}</td>
             <td style="width:150px">${p
-              ? (p.marca ? `<span class="small">${esc(p.marca)}</span>` : `<input data-dc-marca="${i}" value="${esc(l.marca ?? '')}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">`)
+              ? `<input class="${(l.marca ?? p.marca) ? '' : 'falta'}" data-dc-marca="${i}" value="${esc(l.marca ?? p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação.` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca do item ${i + 1}">`
               : ok ? `<input data-dc-marca="${i}" value="${esc(l.marca ?? txt(l, d.colMarca))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">` : ''}</td>
           </tr>`;
         }).join('')}</tbody>
@@ -1234,7 +1234,7 @@ function renderNova() {
       <td>${esc(x.codigoArquivo || p.codigo)}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}</td>
       <td>${esc(p.descricao)}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
-      <td style="width:170px"><input class="${p.marca ? '' : 'falta'}" data-marca-prod="${p.id}" value="${esc(p.marca)}" placeholder="Informar marca" aria-label="Marca de ${esc(p.descricao)}"></td>
+      <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação.` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
       <td class="c"><button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
   }).join('');
@@ -1807,16 +1807,24 @@ const acoes = {
         id = p.id;
         novos++;
       }
+      // Marca: produto sem marca no cadastro recebe a marca informada (fica salva);
+      // produto que já tem marca mantém a do cadastro e a informada vale só nesta cotação.
       const existente = db.produtos.find(p => p.id === id);
-      if (existente && !existente.marca && l.marca) existente.marca = l.marca;
+      const informada = (l.marca ?? '').trim();
+      let marcaCotacao = '';
+      if (existente && informada) {
+        if (!existente.marca) existente.marca = informada;
+        else if (informada !== existente.marca) marcaCotacao = informada;
+      }
       const ja = r.itens.find(x => x.produtoId === id);
       const codigoArquivo = codArq;
       if (ja) {
         ja.quantidade = qtd;
         if (!ja.codigoArquivo) ja.codigoArquivo = codigoArquivo;
+        if (l.marca !== undefined) ja.marca = marcaCotacao;
         somados++;
       } else {
-        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo });
+        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao });
       }
     }
     ui.datacar = null;
@@ -1861,7 +1869,7 @@ const acoes = {
       criadoEm: new Date().toISOString(),
       itens: itens.map(x => {
         const p = prod[x.produtoId];
-        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: p.marca, quantidade: 1 };
+        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: x.marca || p.marca, marcaCotacao: x.marca || '', quantidade: 1 };
       }),
       fornecedores: fornecedores.map(novoFornCot),
     };
@@ -1943,7 +1951,7 @@ const acoes = {
       titulo: c.titulo,
       prazoResposta: '',
       obs: c.obs,
-      itens: c.itens.filter(i => prod[i.produtoId]).map(i => ({ produtoId: i.produtoId, quantidade: i.quantidade, codigoArquivo: i.codigoArquivo || '' })),
+      itens: c.itens.filter(i => prod[i.produtoId]).map(i => ({ produtoId: i.produtoId, quantidade: i.quantidade, codigoArquivo: i.codigoArquivo || '', marca: i.marcaCotacao || '' })),
       fornecedorIds: c.fornecedores.map(f => f.fornecedorId).filter(id => forn[id]),
     };
     salvar();
@@ -2160,13 +2168,21 @@ document.addEventListener('change', async e => {
     p.similar = t.value.trim();
     salvar();
     toast(p.similar ? `Similar salvo no cadastro de ${p.codigo || p.descricao}.` : 'Similar removido do cadastro.');
-  } else if (t.dataset.marcaProd) {
-    const p = db.produtos.find(x => x.id === t.dataset.marcaProd);
+  } else if (t.dataset.marcaItem != null) {
+    const item = rascunho().itens[+t.dataset.marcaItem];
+    const p = item && db.produtos.find(x => x.id === item.produtoId);
     if (!p) return;
-    p.marca = t.value.trim();
-    t.classList.toggle('falta', !p.marca);
+    const valor = t.value.trim();
+    if (!p.marca) {
+      p.marca = valor;
+      item.marca = '';
+      toast(valor ? `Marca "${valor}" salva no cadastro de ${p.codigo || p.descricao}.` : 'Marca removida.');
+    } else {
+      item.marca = valor && valor !== p.marca ? valor : '';
+      toast(item.marca ? `Marca "${valor}" vale só nesta cotação. O cadastro continua "${p.marca}".` : `Voltou para a marca do cadastro: "${p.marca}".`);
+    }
     salvar();
-    toast(p.marca ? `Marca "${p.marca}" salva no cadastro de ${p.codigo || p.descricao}.` : 'Marca removida do cadastro.');
+    render();
   } else if (t.id === 'dcAgrupar') {
     ui.datacar.agrupar = t.checked;
     focarDataCar();
