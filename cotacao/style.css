@@ -493,7 +493,8 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
 .tab-itens tbody tr.item-dup td { background: var(--warn-bg); }
 .tab-itens tbody tr.item-dup td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
 .tab-itens tbody tr.item-dup.item-atual td { background: color-mix(in srgb, var(--warn-bg) 55%, var(--blue-bg)); }
-.obs-dup { display: inline-block; margin-top: 3px; font-size: 12px; color: var(--warn); }
+.obs-dup { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 5px; font-size: 13px; color: var(--warn); background: var(--card); border: 1px solid var(--warn); }
+.obs-item { display: inline-block; margin-top: 3px; font-size: 12px; color: var(--muted); }
 .aviso-dup {
   margin: 8px 0;
   padding: 8px 12px;

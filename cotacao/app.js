@@ -1339,12 +1339,19 @@ function renderNova() {
   const linhas = r.itens.map((x, i) => {
     const p = prod[x.produtoId];
     const dup = repetido(x);
-    const obs = (x.obsArquivo || []).map(o => o || 'sem OBS');
+    // OBS da planilha original: todas as linhas do arquivo com este código; senão as linhas usadas; senão a OBS do cadastro
+    const k = chaveCodigo(x.codigoArquivo || p.codigo);
+    const daPlanilha = (r.obsPorCodigo && r.obsPorCodigo[k]) || x.obsArquivo || [];
+    const obs = daPlanilha.map(o => o || 'sem OBS');
+    const origemObs = daPlanilha.length ? 'OBS na planilha' : p.obs ? 'OBS no cadastro' : '';
+    const textoObs = daPlanilha.length ? obs : p.obs ? [p.obs] : [];
     return `<tr data-item-linha="${i}" class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
       <td class="c">${i + 1}</td>
-      <td>${esc(x.codigoArquivo || p.codigo)}${dup ? ' <span class="badge warn">repetido</span>' : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${dup && obs.length ? `<br><span class="obs-dup">OBS na planilha: <b>${obs.map(esc).join(' · ')}</b></span>` : ''}</td>
-      <td>${esc(p.descricao)}</td>
+      <td>${esc(x.codigoArquivo || p.codigo)}${dup ? ' <span class="badge warn">repetido</span>' : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
+        ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}">${origemObs}: <b>${textoObs.map(esc).join(' · ')}</b></span>`
+        : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
+      <td>${esc(p.descricao)}</td>
       <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação.` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
       <td class="c" style="white-space:nowrap">${dup ? `<button class="sm" data-act="manterItem" data-i="${i}" title="Manter na cotação e tirar o destaque">✓ Manter</button> ` : ''}<button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
@@ -1389,7 +1396,7 @@ function renderNova() {
     </details>
     ${nRepetidos ? `<p class="aviso-dup">⚠ <b>${nRepetidos} item(ns) com código repetido</b>, destacados em laranja. Veja a OBS da planilha em cada um: clique em <b>✓ Manter</b> nos que vão e em <b>✕</b> nos que não vão.</p>` : ''}
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
-      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição A→Z</th><th>Similar</th><th>Marca</th><th></th></tr></thead>
+      <thead><tr><th class="c">#</th><th>Código</th><th>Similar</th><th>Descrição A→Z</th><th>Marca</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
       <p class="small muted" style="margin:6px 0 0">Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca · <span class="kbd">Enter</span> salva · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar</p>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
   </section>
@@ -1936,6 +1943,16 @@ const acoes = {
   dcAdicionar: () => {
     const d = ui.datacar;
     const escolhidas = d.linhas.filter(l => l.sel && (l.codigo || l.chave));
+    const rr = rascunho();
+    const mapaObs = { ...(rr.obsPorCodigo || {}) };
+    const vistos = {};
+    for (const l of d.linhas) {
+      const k = chaveCodigo(l.codigo || '');
+      if (!k) continue;
+      if (!vistos[k]) { vistos[k] = true; mapaObs[k] = []; } // este arquivo substitui o anterior para o código
+      mapaObs[k].push(l.chave || '');
+    }
+    rr.obsPorCodigo = mapaObs;
     if (!escolhidas.length) return avisar('Marque pelo menos um item.');
     const r = rascunho();
     const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
