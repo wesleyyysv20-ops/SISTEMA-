@@ -339,9 +339,39 @@ function avisar(msg) {
   return abrirDialogo(msg, [{ txt: 'OK', valor: undefined, cls: 'primary' }]);
 }
 
+const TIPO_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/**
+ * Salva um arquivo perguntando onde: no Chrome/Edge (arquivo aberto no computador) abre a janela
+ * "Salvar como"; na página publicada, o próprio Claude pede a confirmação do download.
+ * gerar() devolve o Blob. Retorna false se a pessoa cancelou.
+ */
+async function salvarComo(nome, gerar) {
+  if (!nuvem.downloads && typeof window.showSaveFilePicker === 'function') {
+    let handle = null;
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName: nome,
+        types: [{ description: 'Planilha do Excel', accept: { [TIPO_XLSX]: ['.xlsx'] } }],
+      });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return false; // cancelou a janela
+      handle = null; // navegador bloqueou a janela: baixa do jeito normal
+    }
+    if (handle) {
+      const blob = await gerar();
+      const w = await handle.createWritable();
+      await w.write(blob);
+      await w.close();
+      toast(`Arquivo salvo: ${handle.name}`);
+      return true;
+    }
+  }
+  return baixarBlob(await gerar(), nome);
+}
+
 async function baixarWorkbook(wb, nome) {
-  const buf = await wb.xlsx.writeBuffer();
-  return baixarBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), nome);
+  return salvarComo(nome, async () => new Blob([await wb.xlsx.writeBuffer()], { type: TIPO_XLSX }));
 }
 
 function cellValue(cell) {
@@ -461,6 +491,11 @@ const XL = {
   moeda: '"R$" #,##0.00',
 };
 
+/**
+ * Planilha da cotação (layout v2): Item, Código, Similar, Descrição, Marca e,
+ * no final, as colunas VALOR e MARCA para o fornecedor preencher.
+ * `f` pode ser nulo: planilha genérica, sem nome de fornecedor.
+ */
 async function gerarPlanilha(c, f) {
   const cfg = db.config;
   const wb = new ExcelJS.Workbook();
@@ -470,9 +505,11 @@ async function gerarPlanilha(c, f) {
   const ws = wb.addWorksheet('Cotação', {
     pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });
-  ws.columns = [6, 14, 44, 18, 8, 10, 17, 17, 16, 32].map(width => ({ width }));
+  const COLS = 7; // A..G
+  const ULT = 'G';
+  ws.columns = [6, 18, 20, 48, 18, 16, 20].map(width => ({ width }));
 
-  ws.mergeCells('A1:J1');
+  ws.mergeCells(`A1:${ULT}1`);
   const titulo = ws.getCell('A1');
   titulo.value = 'SOLICITAÇÃO DE COTAÇÃO';
   titulo.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
@@ -484,14 +521,14 @@ async function gerarPlanilha(c, f) {
     ws.mergeCells(`A${row}:B${row}`);
     ws.getCell(`A${row}`).value = label;
     ws.getCell(`A${row}`).font = { bold: true };
-    ws.mergeCells(`C${row}:F${row}`);
+    ws.mergeCells(`C${row}:D${row}`);
     ws.getCell(`C${row}`).value = value || '';
     if (label2) {
-      ws.getCell(`G${row}`).value = label2;
-      ws.getCell(`G${row}`).font = { bold: true };
-      ws.mergeCells(`H${row}:J${row}`);
-      ws.getCell(`H${row}`).value = value2 || '';
-      ws.getCell(`H${row}`).alignment = { horizontal: 'left' };
+      ws.getCell(`E${row}`).value = label2;
+      ws.getCell(`E${row}`).font = { bold: true };
+      ws.mergeCells(`F${row}:G${row}`);
+      ws.getCell(`F${row}`).value = value2 || '';
+      ws.getCell(`F${row}`).alignment = { horizontal: 'left' };
     }
   };
   info(2, 'Solicitante:', cfg.loja, 'Cotação nº:', c.numero);
@@ -503,22 +540,24 @@ async function gerarPlanilha(c, f) {
   ws.mergeCells('A7:B7');
   ws.getCell('A7').value = 'Fornecedor:';
   ws.getCell('A7').font = { bold: true };
-  ws.mergeCells('C7:J7');
-  ws.getCell('C7').value = f.nome;
-  ws.getCell('C7').font = { bold: true, size: 12 };
+  ws.mergeCells(`C7:${ULT}7`);
+  const cf = ws.getCell('C7');
+  cf.value = f ? f.nome : '';
+  cf.font = { bold: true, size: 12 };
+  if (!f) { cf.fill = XL.amarelo; cf.protection = { locked: false }; }
 
   ws.mergeCells('A8:B8');
   ws.getCell('A8').value = 'Observações:';
   ws.getCell('A8').font = { bold: true };
   ws.getCell('A8').alignment = { vertical: 'top' };
-  ws.mergeCells('C8:J8');
+  ws.mergeCells(`C8:${ULT}8`);
   ws.getCell('C8').value = c.obs || '';
   ws.getCell('C8').alignment = { wrapText: true, vertical: 'top' };
-  if (c.obs) ws.getRow(8).height = Math.min(120, 15 * Math.ceil(c.obs.length / 110 + (c.obs.match(/\n/g) || []).length));
+  if (c.obs) ws.getRow(8).height = Math.min(120, 15 * Math.ceil(c.obs.length / 100 + (c.obs.match(/\n/g) || []).length));
 
-  ws.mergeCells('A9:J9');
+  ws.mergeCells(`A9:${ULT}9`);
   const instr = ws.getCell('A9');
-  instr.value = 'Preencha somente os campos em AMARELO (preço unitário, prazo, observações e condições) e devolva esta planilha por e-mail. Não altere as demais colunas.';
+  instr.value = 'Preencha as colunas em AMARELO: VALOR (preço unitário) e MARCA (marca que você vai fornecer). Depois devolva esta planilha por e-mail.';
   instr.font = { italic: true, color: { argb: 'FF7F6000' } };
   instr.fill = XL.amarelo;
   instr.alignment = { wrapText: true, vertical: 'middle' };
@@ -526,7 +565,7 @@ async function gerarPlanilha(c, f) {
 
   const HEADER = 11;
   const FIRST = HEADER + 1;
-  const cab = ['Item', 'Código', 'Descrição', 'Marca/Ref.', 'Unid.', 'Qtd.', 'Preço Unit. (R$)', 'Total (R$)', 'Prazo Entrega', 'Observação do fornecedor'];
+  const cab = ['Item', 'Código', 'Similar', 'Descrição', 'Marca', 'VALOR', 'MARCA'];
   const hr = ws.getRow(HEADER);
   cab.forEach((txt, i) => {
     const cell = hr.getCell(i + 1);
@@ -536,34 +575,30 @@ async function gerarPlanilha(c, f) {
     cell.border = XL.borda;
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
   });
-  hr.height = 30;
+  hr.height = 26;
 
   c.itens.forEach((it, i) => {
     const r = FIRST + i;
     const row = ws.getRow(r);
-    row.values = [i + 1, it.codigo || '', it.similar ? `${it.descricao}\nSimilar: ${it.similar}` : it.descricao, it.marca || '', it.unidade || '', it.quantidade];
-    row.getCell(8).value = { formula: `IF(G${r}="","",F${r}*G${r})` };
-    for (let col = 1; col <= 10; col++) {
+    row.values = [i + 1, it.codigo || '', it.similar || '', it.descricao, it.marca || ''];
+    for (let col = 1; col <= COLS; col++) {
       const cell = row.getCell(col);
       cell.border = XL.borda;
-      cell.alignment = { vertical: 'middle', wrapText: col === 2 || col === 3 || col === 10 };
+      cell.alignment = { vertical: 'middle', wrapText: col >= 2 && col <= 4 };
     }
     row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
-    row.getCell(5).alignment = { horizontal: 'center', vertical: 'middle' };
-    row.getCell(6).numFmt = '#,##0.###';
-    row.getCell(8).numFmt = XL.moeda;
-    const preco = row.getCell(7);
-    preco.numFmt = XL.moeda;
-    preco.dataValidation = {
+    const valor = row.getCell(6);
+    valor.numFmt = XL.moeda;
+    valor.dataValidation = {
       type: 'decimal',
       operator: 'greaterThanOrEqual',
       formulae: [0],
       allowBlank: true,
       showErrorMessage: true,
       errorTitle: 'Valor inválido',
-      error: 'Digite apenas o preço unitário (número).',
+      error: 'Digite apenas o valor (número).',
     };
-    for (const col of [7, 9, 10]) {
+    for (const col of [6, 7]) {
       row.getCell(col).fill = XL.amarelo;
       row.getCell(col).protection = { locked: false };
     }
@@ -571,12 +606,12 @@ async function gerarPlanilha(c, f) {
 
   const LAST = FIRST + c.itens.length - 1;
   const TOTAL = LAST + 1;
-  ws.mergeCells(`A${TOTAL}:G${TOTAL}`);
-  ws.getCell(`A${TOTAL}`).value = 'TOTAL GERAL';
+  ws.mergeCells(`A${TOTAL}:E${TOTAL}`);
+  ws.getCell(`A${TOTAL}`).value = 'TOTAL';
   ws.getCell(`A${TOTAL}`).alignment = { horizontal: 'right' };
-  ws.getCell(`H${TOTAL}`).value = { formula: `SUM(H${FIRST}:H${LAST})` };
-  ws.getCell(`H${TOTAL}`).numFmt = XL.moeda;
-  for (const col of ['A', 'H', 'I', 'J']) {
+  ws.getCell(`F${TOTAL}`).value = { formula: `SUM(F${FIRST}:F${LAST})` };
+  ws.getCell(`F${TOTAL}`).numFmt = XL.moeda;
+  for (const col of ['A', 'F', 'G']) {
     ws.getCell(`${col}${TOTAL}`).font = { bold: true };
     ws.getCell(`${col}${TOTAL}`).fill = XL.cinza;
     ws.getCell(`${col}${TOTAL}`).border = XL.borda;
@@ -589,7 +624,7 @@ async function gerarPlanilha(c, f) {
     ws.getCell(`A${r}`).value = label + ':';
     ws.getCell(`A${r}`).font = { bold: true };
     ws.getCell(`A${r}`).alignment = { horizontal: 'right' };
-    ws.mergeCells(`D${r}:J${r}`);
+    ws.mergeCells(`D${r}:${ULT}${r}`);
     const cell = ws.getCell(`D${r}`);
     cell.fill = XL.amarelo;
     cell.border = XL.borda;
@@ -604,14 +639,14 @@ async function gerarPlanilha(c, f) {
   // Aba oculta usada para reconhecer a planilha quando o fornecedor devolver.
   const meta = wb.addWorksheet('_dados', { state: 'veryHidden' });
   [
-    'sistema-cotacao', c.id, f.fornecedorId, HEADER, FIRST, c.itens.length, COND, c.numero, 1,
+    'sistema-cotacao', c.id, f ? f.fornecedorId : '', HEADER, FIRST, c.itens.length, COND, c.numero, 2,
   ].forEach((v, i) => { meta.getCell(`A${i + 1}`).value = v; });
 
   return wb;
 }
 
 function nomePlanilha(c, f) {
-  return `Cotacao_${c.numero}_${slug(f.nome)}.xlsx`;
+  return f ? `Cotacao_${c.numero}_${slug(f.nome)}.xlsx` : `Cotacao_${c.numero}.xlsx`;
 }
 
 async function baixarPlanilha(c, fi) {
@@ -636,6 +671,7 @@ async function lerPlanilha(file) {
       n: Number(cellValue(m.getCell('A6'))),
       cond: Number(cellValue(m.getCell('A7'))),
       numero: cellTexto(m.getCell('A8')),
+      versao: Number(cellValue(m.getCell('A9'))) || 1,
     };
   }
   const ws = wb.getWorksheet('Cotação') || wb.worksheets.find(w => w.name !== '_dados');
@@ -646,13 +682,16 @@ async function lerPlanilha(file) {
 function aplicarResposta(c, fi, ws, meta) {
   let first = meta?.first;
   let cond = meta?.cond;
+  let versao = meta?.versao || 0;
   if (!first) {
-    // Planilha sem aba de controle: procura o cabeçalho "Preço Unit." na coluna G.
-    for (let r = 1; r <= 60; r++) {
-      if (/pre[çc]o/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; break; }
+    // Planilha sem aba de controle: procura o cabeçalho "VALOR" (v2) ou "Preço Unit." (v1).
+    for (let r = 1; r <= 60 && !first; r++) {
+      if (/^valor/i.test(cellTexto(ws.getCell(`F${r}`)))) { first = r + 1; versao = 2; }
+      else if (/pre[çc]o/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 1; }
     }
-    if (!first) throw new Error('Não encontrei a coluna de preços nesta planilha.');
+    if (!first) throw new Error('Não encontrei a coluna VALOR nesta planilha.');
   }
+  const colPreco = versao >= 2 ? 'F' : 'G';
   const respostas = {};
   let qtd = 0;
   const limite = meta?.n || c.itens.length;
@@ -661,10 +700,11 @@ function aplicarResposta(c, fi, ws, meta) {
     const idx = parseInt(cellTexto(ws.getCell(`A${r}`)), 10);
     const i = Number.isInteger(idx) && idx >= 1 && idx <= c.itens.length ? idx - 1 : k;
     if (i >= c.itens.length) break;
-    const preco = parseNum(cellValue(ws.getCell(`G${r}`)));
-    const prazo = cellTexto(ws.getCell(`I${r}`));
-    const obs = cellTexto(ws.getCell(`J${r}`));
-    if (preco != null || prazo || obs) respostas[i] = { preco, prazo, obs };
+    const preco = parseNum(cellValue(ws.getCell(`${colPreco}${r}`)));
+    const marca = versao >= 2 ? cellTexto(ws.getCell(`G${r}`)) : '';
+    const prazo = versao >= 2 ? '' : cellTexto(ws.getCell(`I${r}`));
+    const obs = versao >= 2 ? '' : cellTexto(ws.getCell(`J${r}`));
+    if (preco != null || marca || prazo || obs) respostas[i] = { preco, marca, prazo, obs };
     if (preco != null && preco > 0) qtd++;
   }
   if (!cond) {
@@ -705,6 +745,15 @@ async function importarResposta(file, cotId, fiSugerido) {
         if (!(await confirmar(`Esta planilha foi gerada para "${c.fornecedores[idx].nome}". Importar os preços para "${c.fornecedores[idx].nome}"?`))) return;
       }
       if (idx >= 0) fi = idx;
+    }
+    if ((fi == null || !c.fornecedores[fi]) && meta && !meta.fornecedorId) {
+      // planilha geral da cotação: o fornecedor escreveu o nome dele no campo "Fornecedor"
+      const nome = cellTexto(ws.getCell('C7'));
+      if (!nome) throw new Error('A planilha não tem o nome do fornecedor. Peça para ele preencher o campo "Fornecedor", ou adicione o fornecedor na cotação e use o botão "Importar" na linha dele.');
+      let fz = db.fornecedores.find(x => semAcento(x.nome) === semAcento(nome));
+      if (!fz) { fz = { id: uid(), nome, contato: '', email: '', telefone: '', obs: '' }; db.fornecedores.push(fz); }
+      fi = c.fornecedores.findIndex(x => x.fornecedorId === fz.id);
+      if (fi < 0) { c.fornecedores.push(novoFornCot(fz)); fi = c.fornecedores.length - 1; }
     }
     if (fi == null || !c.fornecedores[fi]) throw new Error('Não consegui identificar o fornecedor. Abra a cotação e use o botão "Importar" na linha do fornecedor.');
 
@@ -1403,6 +1452,7 @@ function renderNova() {
 
   <section class="card">
     <h3>2. Fornecedores que vão receber (${r.fornecedorIds.length})</h3>
+    <p class="small muted" style="margin:-6px 0 10px">Opcional. Você pode criar a cotação sem fornecedor e enviar a planilha para quem quiser; ao importar a resposta, o fornecedor é identificado pelo nome escrito na planilha.</p>
     ${fornList}
     <details>
       <summary>+ Cadastrar fornecedor novo</summary>
@@ -1417,7 +1467,7 @@ function renderNova() {
 
   <div class="actions">
     <button data-act="limparRascunho">Limpar tudo</button>
-    <button class="primary" data-act="criarCotacao">Criar cotação →</button>
+    <button class="primary" data-act="criarCotacao" title="Cria a cotação e salva a planilha em Excel">Criar cotação e salvar planilha →</button>
   </div>
   ${renderDataCar()}`;
 }
@@ -1608,7 +1658,7 @@ function renderCotacao(id) {
           <td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>
           ${l.precos.map((p, j) => {
             const o = c.fornecedores[j].respostas?.[l.i];
-            const extra = [o?.prazo, o?.obs].filter(Boolean).join(' · ');
+            const extra = [o?.marca && `Marca: ${o.marca}`, o?.prazo, o?.obs].filter(Boolean).join(' · ');
             return `<td class="r ${p != null && p === l.min && nf > 1 ? 'best' : ''}" title="${esc(extra)}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}</td>`;
           }).join('')}
           ${temResposta ? `<td class="r"><b>${fmtMoeda(l.min)}</b></td>
@@ -1651,6 +1701,8 @@ function renderCotacao(id) {
     <div class="row" style="margin-top:10px">
       ${disponiveis.length ? `<select id="addFornCot" style="width:auto;max-width:280px">${disponiveis.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select>
       <button class="sm" data-act="addFornCot">+ Adicionar fornecedor</button>` : ''}
+      <button class="sm" data-act="baixarGeral" title="Planilha da cotação sem nome de fornecedor">⬇ Planilha da cotação</button>
+      <label class="btn sm" style="margin:0" title="Importar uma planilha preenchida pelo fornecedor">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx" data-import-cot></label>
       ${nf > 1 ? '<button class="sm" data-act="baixarTodas">⬇ Baixar todas as planilhas</button>' : ''}
     </div>
     <p class="tip"><b>Como enviar:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
@@ -2025,7 +2077,7 @@ const acoes = {
     render();
   },
 
-  criarCotacao: () => {
+  criarCotacao: async () => {
     const r = rascunho();
     const prod = byId(db.produtos);
     const forn = byId(db.fornecedores);
@@ -2033,11 +2085,9 @@ const acoes = {
     ordenarItensRascunho({ itens }, prod);
     if (!itens.length) return avisar('Adicione pelo menos um item.');
     const fornecedores = r.fornecedorIds.map(id => forn[id]).filter(Boolean);
-    if (!fornecedores.length) return avisar('Selecione pelo menos um fornecedor.');
 
     const cfg = db.config;
     const numero = String(cfg.proxNumero).padStart(4, '0');
-    cfg.proxNumero = Number(cfg.proxNumero) + 1;
     const c = {
       id: uid(),
       numero,
@@ -2053,16 +2103,34 @@ const acoes = {
       }),
       fornecedores: fornecedores.map(novoFornCot),
     };
+    // Pergunta onde salvar e grava a planilha em Excel (com as colunas VALOR e MARCA no final).
+    let salvo;
+    try {
+      salvo = await salvarComo(nomePlanilha(c, null), async () => new Blob([await (await gerarPlanilha(c, null)).xlsx.writeBuffer()], { type: TIPO_XLSX }));
+    } catch (e) {
+      console.error(e);
+      return avisar('Não foi possível salvar a planilha: ' + e.message);
+    }
+    if (salvo === false) {
+      toast('Cotação não criada: o salvamento foi cancelado.');
+      return;
+    }
+    cfg.proxNumero = Number(cfg.proxNumero) + 1;
     db.cotacoes.push(c);
     db.rascunho = null;
     salvar();
     ir('cotacao', c.id);
-    toast(`Cotação nº ${numero} criada. Agora envie para os fornecedores.`);
+    toast(`Cotação nº ${numero} criada e planilha salva.`, 5000);
   },
 
   baixarPlanilha: async el => {
     const c = cotAtual();
     await baixarPlanilha(c, +el.dataset.f);
+  },
+
+  baixarGeral: async () => {
+    const c = cotAtual();
+    await baixarWorkbook(await gerarPlanilha(c, null), nomePlanilha(c, null));
   },
 
   baixarTodas: async () => {
@@ -2472,6 +2540,7 @@ document.addEventListener('change', async e => {
     t.value = '';
     if (t.dataset.import != null) await importarResposta(file, cotAtual()?.id, +t.dataset.import);
     else if (t.hasAttribute('data-import-geral')) await importarResposta(file, null, null);
+    else if (t.hasAttribute('data-import-cot')) await importarResposta(file, cotAtual()?.id, null);
     else if (t.hasAttribute('data-import-produtos')) await importarProdutos(file);
     else if (t.hasAttribute('data-import-datacar')) await abrirArquivoDataCar(file);
     else if (t.hasAttribute('data-restaurar')) {
