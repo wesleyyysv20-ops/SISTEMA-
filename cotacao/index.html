@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sistema de Cotação</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" id="brand">Cotações</div>
+    <nav id="nav">
+      <a href="#/nova" data-route="nova">Nova cotação</a>
+      <a href="#/cotacoes" data-route="cotacoes">Cotações</a>
+      <a href="#/produtos" data-route="produtos">Produtos</a>
+      <a href="#/fornecedores" data-route="fornecedores">Fornecedores</a>
+      <a href="#/config" data-route="config">Configurações</a>
+    </nav>
+  </header>
+  <main id="app"></main>
+  <div id="toast" role="status"></div>
+  <script src="vendor/exceljs.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
