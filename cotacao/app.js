@@ -1552,6 +1552,53 @@ function renderNova() {
   });
   const repetido = (x, i = r.itens.indexOf(x)) => !x.dupVisto && (parceiros[i].length > 0 || (x.obsArquivo || []).length > 1);
   const nRepetidos = r.itens.filter(repetido).length;
+  const gruposRep = [];
+  {
+    const visto = new Set();
+    r.itens.forEach((x, i) => {
+      if (visto.has(i) || !parceiros[i].length) return;
+      const comp = [];
+      const pilha = [i];
+      while (pilha.length) {
+        const j = pilha.pop();
+        if (visto.has(j)) continue;
+        visto.add(j);
+        comp.push(j);
+        parceiros[j].forEach(k => { if (!visto.has(k)) pilha.push(k); });
+      }
+      if (comp.some(j => repetido(r.itens[j], j))) {
+        comp.sort((a, b) => a - b);
+        const comuns = tokensDe[comp[0]].filter(t => comp.some(j => j !== comp[0] && tokensDe[j].includes(t)));
+        gruposRep.push({ itens: comp, comum: comuns.sort((a, b) => a.length - b.length)[0] || '' });
+      }
+    });
+  }
+  const obsDe = x => {
+    const k2 = chaveCodigo(codDe(x));
+    const o = (r.obsPorCodigo && r.obsPorCodigo[k2]) || x.obsArquivo || [];
+    return o.length ? o.map(v => v || 'sem OBS').join(' · ') : (prod[x.produtoId].obs || '—');
+  };
+  const painelRep = gruposRep.length ? `
+    <div class="painel-dup">
+      <div class="painel-dup-titulo">⚠ <b>${gruposRep.length} caso(s) de código repetido</b> · compare os itens lado a lado e decida: <b>✓ Manter</b> ou <b>✕ Tirar</b></div>
+      ${gruposRep.map(g => `
+        <div class="dup-grupo">
+          <div class="dup-comum">Código em comum: <b>${esc(g.comum.toUpperCase())}</b> · ${g.itens.length} itens</div>
+          ${g.itens.map(j => {
+            const x = r.itens[j];
+            const px = prod[x.produtoId];
+            return `<div class="dup-item ${x.dupVisto ? 'visto' : ''}">
+              <button type="button" class="link dup-num" data-act="irItem" data-i="${j}" title="Ver na lista">#${j + 1}</button>
+              <span class="dup-cod">${esc(codDe(x))}</span>
+              <span class="dup-desc">${esc(px.descricao)}</span>
+              <span class="dup-obs">OBS: <b>${esc(obsDe(x))}</b></span>
+              <span class="dup-marca">${esc(x.marca || px.marca || '')}</span>
+              <span class="dup-acoes">${x.dupVisto ? '<span class="badge ok">mantido</span>' : `<button class="sm" data-act="manterItem" data-i="${j}">✓ Manter</button>`}
+                <button class="sm danger" data-act="removerItem" data-i="${j}" title="Tirar da cotação">✕ Tirar</button></span>
+            </div>`;
+          }).join('')}
+        </div>`).join('')}
+    </div>` : '';
 
   const linhas = r.itens.map((x, i) => {
     const p = prod[x.produtoId];
@@ -1564,7 +1611,7 @@ function renderNova() {
     const textoObs = daPlanilha.length ? obs : p.obs ? [p.obs] : [];
     return `<tr data-item-linha="${i}" class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
       <td class="c">${i + 1}</td>
-      <td>${esc(x.codigoArquivo || p.codigo)}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: <b>${parceiros[i].slice(0, 4).map(j => esc(codDe(r.itens[j]))).join(' · ')}</b>${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
+      <td>${esc(x.codigoArquivo || p.codigo)}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}">${origemObs}: <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
@@ -1611,7 +1658,7 @@ function renderNova() {
         <div class="actions" style="align-self:end"><button class="primary">Salvar e adicionar</button></div>
       </form>
     </details>
-    ${nRepetidos ? `<p class="aviso-dup">⚠ <b>${nRepetidos} item(ns) com código repetido</b>, destacados em laranja. Veja a OBS da planilha em cada um: clique em <b>✓ Manter</b> nos que vão e em <b>✕</b> nos que não vão.</p>` : ''}
+    ${painelRep}
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
       <thead><tr><th class="c">#</th><th>Código</th><th>Similar</th><th>Marca</th><th>Descrição A→Z</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
@@ -2211,6 +2258,18 @@ const acoes = {
     salvar();
     render();
     toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação` : ''}.`, 6000);
+  },
+
+  irItem: el => {
+    const i = +el.dataset.i;
+    moverCursorItem(i);
+    const tr = document.querySelector(`[data-item-linha="${i}"]`);
+    if (tr) {
+      tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      tr.classList.remove('piscar');
+      void tr.offsetWidth;
+      tr.classList.add('piscar');
+    }
   },
 
   manterItem: el => {
