@@ -1309,10 +1309,17 @@ async function copiar(texto, el) {
  * TELAS
  * ============================================================ */
 
+/** Itens da cotação sempre em ordem alfabética (A-Z) pela descrição. */
+function ordenarItensRascunho(r, prod) {
+  r.itens.sort((a, b) => COLLATOR.compare(prod[a.produtoId]?.descricao || '', prod[b.produtoId]?.descricao || '')
+    || COLLATOR.compare(a.codigoArquivo || prod[a.produtoId]?.codigo || '', b.codigoArquivo || prod[b.produtoId]?.codigo || ''));
+}
+
 function renderNova() {
   const r = rascunho();
   const prod = byId(db.produtos);
   r.itens = r.itens.filter(x => prod[x.produtoId]);
+  ordenarItensRascunho(r, prod);
   const forn = byId(db.fornecedores);
   r.fornecedorIds = r.fornecedorIds.filter(id => forn[id]);
 
@@ -1366,7 +1373,7 @@ function renderNova() {
       </form>
     </details>
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
-      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th>Similar</th><th>Marca</th><th></th></tr></thead>
+      <thead><tr><th class="c">#</th><th>Código</th><th>Descrição A→Z</th><th>Similar</th><th>Marca</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
       <p class="small muted" style="margin:6px 0 0">Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca · <span class="kbd">Enter</span> salva · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar</p>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
   </section>
@@ -1975,6 +1982,7 @@ const acoes = {
     const prod = byId(db.produtos);
     const forn = byId(db.fornecedores);
     const itens = r.itens.filter(x => prod[x.produtoId]);
+    ordenarItensRascunho({ itens }, prod);
     if (!itens.length) return avisar('Adicione pelo menos um item.');
     const fornecedores = r.fornecedorIds.map(id => forn[id]).filter(Boolean);
     if (!fornecedores.length) return avisar('Selecione pelo menos um fornecedor.');
