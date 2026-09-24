@@ -1179,6 +1179,8 @@ function teclaDataCar(e) {
 function desenharConferencia() {
   const alvo = $('#dcConferencia');
   if (!alvo) return;
+  const det = alvo.querySelector('.conf-arquivo');
+  if (det) ui.datacar.verArquivo = det.open;
   alvo.innerHTML = conteudoConferencia();
   focarDataCar();
 }
@@ -1238,6 +1240,14 @@ function conteudoConferencia() {
       <div class="conf-cadastro small">${p
         ? `Cadastro: <b>${esc(p.codigo)}</b> · ${esc(p.descricao)}${p.similar ? ` · sim. ${esc(p.similar)}` : ''}`
         : '<span class="badge warn">não cadastrado · será cadastrado ao adicionar</span>'}</div>
+      <div class="conf-observacoes">
+        <div><span>${esc(d.cab[d.col])} na planilha</span><b>${esc(l.chave || '—')}</b></div>
+        ${p && p.obs ? `<div><span>Observação no cadastro</span><b>${esc(p.obs)}</b></div>` : ''}
+      </div>
+      <details class="conf-arquivo" ${d.verArquivo ? 'open' : ''}>
+        <summary class="small">Todas as colunas desta linha no arquivo</summary>
+        <table>${d.cab.map((c, i) => l.cels[i] ? `<tr><th>${esc(c)}</th><td>${esc(l.cels[i])}</td></tr>` : '').join('')}</table>
+      </details>
       <label class="conf-marca-rotulo">Marca <span class="muted small">(digite para trocar${p && p.marca ? ' · vale só nesta cotação' : ''})</span></label>
       <div id="dcMarcaCampo" class="conf-marca ${m ? '' : 'falta'} ${p && p.marca && m !== p.marca ? 'so-cotacao' : ''}" data-act="dcEditarMarca" title="Clique ou comece a digitar para trocar a marca">${m ? esc(m) : 'Informar marca'}</div>
       <div class="conf-botoes">

@@ -605,3 +605,18 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
   .conf-botoes { grid-template-columns: 1fr; }
   .conf-codigo { font-size: 22px; }
 }
+
+.conf-observacoes { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.conf-observacoes > div {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--warn-bg); border: 1px solid var(--warn);
+  min-width: 140px;
+}
+.conf-observacoes span { font-size: 12px; color: var(--warn); text-transform: uppercase; letter-spacing: .04em; }
+.conf-observacoes b { font-size: 20px; color: var(--text); }
+.conf-arquivo { margin: 0 0 12px; }
+.conf-arquivo summary { color: var(--primary-2); }
+.conf-arquivo table { margin-top: 6px; font-size: 13px; }
+.conf-arquivo th { width: 35%; text-transform: none; letter-spacing: 0; font-size: 12px; }
+.conf-arquivo th, .conf-arquivo td { padding: 4px 8px; }
