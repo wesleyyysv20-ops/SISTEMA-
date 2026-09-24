@@ -1003,6 +1003,42 @@ async function abrirArquivoDataCar(file) {
   }
 }
 
+/** Esconde/mostra linhas conforme o filtro (Todos / Não marcados / Marcados + texto). */
+function aplicarFiltroDataCar() {
+  const d = ui.datacar;
+  if (!d) return;
+  const f = d.filtro || { modo: 'todos', texto: '' };
+  const termos = semAcento(f.texto || '').split(/\s+/).filter(Boolean);
+  d.visivel = d.linhas.map(l => {
+    if (f.modo === 'pendentes' && l.sel) return false;
+    if (f.modo === 'marcados' && !l.sel) return false;
+    if (termos.length) {
+      if (!l._busca) l._busca = semAcento([l.chave, l.codigo, ...l.cels].join(' '));
+      if (!termos.every(w => l._busca.includes(w))) return false;
+    }
+    return true;
+  });
+  document.querySelectorAll('#dlgDataCar [data-dc-linha]').forEach(tr => {
+    tr.classList.toggle('dc-oculta', d.visivel[+tr.dataset.dcLinha] === false);
+  });
+  const sel = d.linhas.filter(l => l.sel).length;
+  const total = d.linhas.filter(l => l.codigo || l.chave).length;
+  const cont = { todos: total, pendentes: total - sel, marcados: sel };
+  document.querySelectorAll('#dlgDataCar [data-act="dcModo"]').forEach(b => {
+    b.classList.toggle('on', b.dataset.modo === f.modo);
+    const c = b.querySelector('span');
+    if (c) c.textContent = `(${cont[b.dataset.modo]})`;
+  });
+  const vazio = $('#dcVazio');
+  if (vazio) {
+    const nada = !d.visivel.some(Boolean);
+    vazio.hidden = !nada;
+    vazio.textContent = f.modo === 'pendentes' && !termos.length
+      ? '✓ Todos os itens foram marcados. Não ficou nenhum para trás.'
+      : 'Nenhum item neste filtro.';
+  }
+}
+
 /** Botões de grupo: um por valor de OBS, com a quantidade de itens; clique marca/desmarca o grupo. */
 function botoesGruposDataCar() {
   const d = ui.datacar;
@@ -1056,10 +1092,25 @@ function marcarLinhaDataCar(i, valor) {
   atualizarResumoDataCar();
 }
 
-function moverCursorDataCar(i) {
+function linhaVisivelDataCar(i) {
+  const v = ui.datacar.visivel;
+  return !v || v[i] !== false;
+}
+
+/** Próxima linha visível a partir de i, andando na direção dir (+1/-1); se não houver, tenta a outra direção. */
+function acharVisivelDataCar(i, dir = 1) {
+  const n = ui.datacar.linhas.length;
+  i = Math.max(0, Math.min(n - 1, i));
+  for (let j = i; j >= 0 && j < n; j += dir) if (linhaVisivelDataCar(j)) return j;
+  for (let j = i; j >= 0 && j < n; j -= dir) if (linhaVisivelDataCar(j)) return j;
+  return -1;
+}
+
+function moverCursorDataCar(i, dir = 1) {
   const d = ui.datacar;
   if (!d.linhas.length) return;
-  d.cursor = Math.max(0, Math.min(d.linhas.length - 1, i));
+  const alvo = acharVisivelDataCar(i, dir);
+  d.cursor = alvo < 0 ? Math.max(0, Math.min(d.linhas.length - 1, i)) : alvo;
   document.querySelectorAll('.dc-row.dc-atual').forEach(tr => tr.classList.remove('dc-atual'));
   const tr = document.querySelector(`[data-dc-linha="${d.cursor}"]`);
   if (tr) {
@@ -1096,6 +1147,7 @@ document.addEventListener('wheel', rolagemDataCar, { passive: false });
 
 function focarDataCar() {
   atualizarResumoDataCar();
+  aplicarFiltroDataCar();
   const caixa = $('#dcCaixa');
   if (caixa && !caixa.contains(document.activeElement)) caixa.focus({ preventScroll: true });
   moverCursorDataCar(ui.datacar.cursor);
@@ -1123,8 +1175,24 @@ function teclaDataCar(e) {
     } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       fecharMarcaDataCar(t, true);
-      moverCursorDataCar(d.cursor + (e.key === 'ArrowDown' ? 1 : -1));
+      const dir = e.key === 'ArrowDown' ? 1 : -1;
+      moverCursorDataCar(d.cursor + dir, dir);
       editarMarcaDataCar(d.cursor, null, true); // marca selecionada: digitar substitui
+    }
+    return;
+  }
+  if (t.id === 'dcBusca') {
+    // campo de filtro: setas/Enter voltam para a lista; Esc limpa o filtro
+    if (e.key === 'ArrowDown' || e.key === 'Enter') {
+      e.preventDefault();
+      moverCursorDataCar(acharVisivelDataCar(0, 1));
+      $('#dcCaixa').focus({ preventScroll: true });
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      t.value = '';
+      d.filtro = { ...(d.filtro || { modo: 'todos' }), texto: '' };
+      aplicarFiltroDataCar();
+      $('#dcCaixa').focus({ preventScroll: true });
     }
     return;
   }
@@ -1142,19 +1210,27 @@ function teclaDataCar(e) {
   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     if (t.tagName === 'SELECT') return;
     e.preventDefault();
-    moverCursorDataCar(d.cursor + (e.key === 'ArrowDown' ? 1 : -1));
+    const dir = e.key === 'ArrowDown' ? 1 : -1;
+    moverCursorDataCar(d.cursor + dir, dir);
     $('#dcCaixa').focus({ preventScroll: true });
   } else if ((e.key === 'PageDown' || e.key === 'PageUp') && !campoTexto) {
     e.preventDefault();
-    moverCursorDataCar(d.cursor + (e.key === 'PageDown' ? 10 : -10));
+    const dir = e.key === 'PageDown' ? 1 : -1;
+    let j = d.cursor;
+    for (let k = 0; k < 10; k++) { const nx = acharVisivelDataCar(j + dir, dir); if (nx < 0 || (dir > 0 ? nx <= j : nx >= j)) break; j = nx; }
+    moverCursorDataCar(j, dir);
   } else if ((e.key === 'Home' || e.key === 'End') && !campoTexto) {
     e.preventDefault();
-    moverCursorDataCar(e.key === 'Home' ? 0 : d.linhas.length - 1);
+    moverCursorDataCar(e.key === 'Home' ? 0 : d.linhas.length - 1, e.key === 'Home' ? 1 : -1);
   } else if (e.key === ' ' && !campoTexto) {
     if (e.repeat) { e.preventDefault(); return; } // tecla segurada não pula itens
     e.preventDefault();
-    marcarLinhaDataCar(d.cursor, !d.linhas[d.cursor].sel);
-    moverCursorDataCar(d.cursor + 1); // já desce para o próximo item
+    if (!linhaVisivelDataCar(d.cursor)) return;
+    const antes = d.cursor;
+    marcarLinhaDataCar(antes, !d.linhas[antes].sel);
+    aplicarFiltroDataCar(); // em "Não marcados" o item marcado sai da lista
+    const prox = acharVisivelDataCar(antes + 1, 1);
+    moverCursorDataCar(prox >= 0 && prox > antes ? prox : antes, 1); // já desce para o próximo item
   } else if (e.key === 'Enter' && t.tagName !== 'BUTTON' && t.tagName !== 'SELECT') {
     // Adicionar à cotação exige Enter duas vezes seguidas
     e.preventDefault();
@@ -1297,6 +1373,11 @@ function renderDataCar() {
         <button class="sm" data-act="dcTodos">Marcar todos</button>
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
       </div>
+      <div class="dc-filtros">
+        <span class="small muted">Mostrar:</span>
+        ${[['todos', 'Todos'], ['pendentes', 'Não marcados'], ['marcados', 'Marcados']].map(([m, t]) => `<button type="button" class="dc-chip ${((d.filtro || {}).modo || 'todos') === m ? 'on' : ''}" data-act="dcModo" data-modo="${m}">${t} <span></span></button>`).join('')}
+        <input id="dcBusca" class="grow" placeholder="Filtrar por código, descrição ou OBS…" value="${esc((d.filtro || {}).texto || '')}" aria-label="Filtrar a lista">
+      </div>
       <div class="dc-grupos" id="dcGrupos" aria-label="Marcar por ${esc(d.cab[d.col])}">${botoesGruposDataCar()}</div>
       <div class="dc-lista" role="grid">
         <div class="dc-row dc-cab" role="row"><div role="columnheader"></div>${Object.entries(ORDEM_DC).map(([campo, rotulo]) => {
@@ -1319,6 +1400,7 @@ function renderDataCar() {
             ${ok ? celulaMarcaDataCar(l, i, p) : '<div></div>'}
           </div>`;
         }).join('')}
+        <p class="empty" id="dcVazio" hidden></p>
       </div>
       <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
       <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marca e desce · digite para preencher a marca (<span class="kbd">F2</span> edita sem apagar) · <span class="kbd">Enter</span> confirma a marca · <span class="kbd">Enter</span> <span class="kbd">Enter</span> adiciona à cotação · <span class="kbd">Esc</span> cancelar</p>
@@ -2044,6 +2126,14 @@ const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
   dcOrdenar: el => { ordenarDataCar(el.dataset.campo); renderSoDataCar(); focarDataCar(); },
+  dcModo: el => {
+    const d = ui.datacar;
+    d.filtro = { ...(d.filtro || { texto: '' }), modo: el.dataset.modo };
+    aplicarFiltroDataCar();
+    moverCursorDataCar(acharVisivelDataCar(0, 1));
+    $('#dcCaixa')?.focus({ preventScroll: true });
+  },
+
   dcGrupo: el => {
     const d = ui.datacar;
     const k = el.dataset.g;
@@ -2058,8 +2148,9 @@ const acoes = {
         tr.querySelector('.dc-check')?.setAttribute('aria-checked', String(!todos));
       }
     }
-    if (idx.length) moverCursorDataCar(idx[0]);
     atualizarResumoDataCar();
+    aplicarFiltroDataCar();
+    if (idx.length) moverCursorDataCar(idx[0]);
     $('#dcCaixa')?.focus({ preventScroll: true });
   },
 
@@ -2449,6 +2540,16 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'dcBusca' && ui.datacar) {
+    ui.datacar.filtro = { ...(ui.datacar.filtro || { modo: 'todos' }), texto: t.value };
+    aplicarFiltroDataCar();
+    const d = ui.datacar;
+    if (!linhaVisivelDataCar(d.cursor)) {
+      const j = acharVisivelDataCar(0, 1);
+      if (j >= 0) { d.cursor = j; document.querySelectorAll('.dc-row.dc-atual').forEach(r => r.classList.remove('dc-atual')); document.querySelector(`[data-dc-linha="${j}"]`)?.classList.add('dc-atual'); }
+    }
+    return;
+  }
   if (t.dataset.draft) {
     rascunho()[t.dataset.draft] = t.value;
     salvar();

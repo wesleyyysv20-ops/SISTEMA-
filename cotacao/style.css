@@ -323,7 +323,7 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
   background: var(--blue-bg);
 }
 .dlg.dlg-largo { width: min(1000px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
-.dc-lista { overflow: auto; flex: 1; min-height: 120px; border: 1px solid var(--line); border-radius: 7px; contain: content; }
+.dc-lista { position: relative; overflow: auto; flex: 1; min-height: 120px; border: 1px solid var(--line); border-radius: 7px; contain: content; }
 .dc-lista .dc-row:last-child { border-bottom: none; }
 /* lista leve: cada linha é uma grade; linhas fora da tela não são desenhadas */
 .dc-row {
@@ -532,3 +532,10 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
 .dc-chip.on span { color: var(--on-primary); opacity: .85; }
 .dlg.dlg-largo > * { flex-shrink: 0; }
 .dlg.dlg-largo > .dc-lista { flex: 1 1 auto; flex-shrink: 1; }
+
+/* filtro da lista do DataCar */
+.dc-filtros { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; }
+.dc-filtros input { width: auto; min-width: 200px; padding: 5px 9px; }
+.dc-filtros .dc-chip.on { background: var(--primary-2); border-color: var(--primary-2); color: var(--on-primary); }
+.dc-filtros .dc-chip.on span { color: var(--on-primary); }
+.dc-row.dc-oculta { display: none; }
