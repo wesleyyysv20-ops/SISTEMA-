@@ -71,14 +71,28 @@ function normalizar(d) {
   };
 }
 
-function salvar() {
+let timerLocal = null;
+
+function gravarLocal() {
+  clearTimeout(timerLocal);
+  timerLocal = null;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
   } catch (e) {
     if (!nuvem.db) avisar('Não foi possível salvar os dados no navegador. Faça um backup em Configurações.\n\n' + e.message);
   }
+}
+
+/** Salva sem travar a digitação: grava depois de uma pequena pausa. */
+function salvar() {
+  cacheBusca = null;
+  clearTimeout(timerLocal);
+  timerLocal = setTimeout(gravarLocal, 400);
   agendarSincronia();
 }
+
+window.addEventListener('pagehide', () => { if (timerLocal) gravarLocal(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && timerLocal) gravarLocal(); });
 
 try {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -107,7 +121,7 @@ function docsDoEstado() {
 function agendarSincronia() {
   if (!nuvem.db) return;
   clearTimeout(nuvem.timer);
-  nuvem.timer = setTimeout(sincronizar, 500);
+  nuvem.timer = setTimeout(sincronizar, 1200);
 }
 
 async function sincronizar() {
@@ -195,6 +209,7 @@ async function iniciarNuvem() {
     const remoto = await carregarNuvem();
     if (remoto) {
       db = remoto;
+      cacheBusca = null;
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) { /* cache opcional */ }
       render();
       mostrarStatus('salvo');
@@ -972,7 +987,7 @@ function moverCursorDataCar(i) {
   const d = ui.datacar;
   if (!d.linhas.length) return;
   d.cursor = Math.max(0, Math.min(d.linhas.length - 1, i));
-  document.querySelectorAll('tr.dc-atual').forEach(tr => tr.classList.remove('dc-atual'));
+  document.querySelectorAll('.dc-row.dc-atual').forEach(tr => tr.classList.remove('dc-atual'));
   const tr = document.querySelector(`[data-dc-linha="${d.cursor}"]`);
   if (tr) {
     tr.classList.add('dc-atual');
@@ -1076,7 +1091,7 @@ function marcaAtualDataCar(l, p) {
 function celulaMarcaDataCar(l, i, p) {
   const m = marcaAtualDataCar(l, p);
   const dica = p && p.marca ? `Cadastro: ${p.marca}. Alterar aqui muda só nesta cotação.` : 'A marca informada fica salva no cadastro.';
-  return `<td class="dc-marca ${m ? '' : 'falta'} ${p && p.marca && m !== p.marca ? 'so-cotacao' : ''}" data-dc-marca-cel="${i}" title="${esc(dica)} Clique ou F2 para editar.">${m ? esc(m) : '<span class="muted">Informar marca</span>'}</td>`;
+  return `<div class="dc-marca ${m ? '' : 'falta'} ${p && p.marca && m !== p.marca ? 'so-cotacao' : ''}" data-dc-marca-cel="${i}" title="${esc(dica)} Clique ou F2 para editar."><span class="dc-campo">${m ? esc(m) : 'Informar marca'}</span></div>`;
 }
 
 /** Abre um único campo de edição na célula de marca da linha i. */
@@ -1097,7 +1112,7 @@ function fecharMarcaDataCar(inp, salvarValor) {
   inp.dataset.fechando = '1';
   const i = +inp.dataset.dcMarca;
   const l = ui.datacar && ui.datacar.linhas[i];
-  const td = inp.closest('td');
+  const td = inp.closest('[data-dc-marca-cel]');
   if (!l || !td) return;
   if (salvarValor) l.marca = inp.value.trim();
   const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
@@ -1148,28 +1163,28 @@ function renderDataCar() {
         <button class="sm" data-act="dcTodos">Marcar todos</button>
         <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
       </div>
-      <div class="table-wrap dc-lista"><table>
-        <thead><tr><th></th>${Object.entries(ORDEM_DC).map(([campo, rotulo]) => {
+      <div class="dc-lista" role="grid">
+        <div class="dc-row dc-cab" role="row"><div role="columnheader"></div>${Object.entries(ORDEM_DC).map(([campo, rotulo]) => {
           const ativo = d.ordem.campo === campo;
           const seta = ativo ? (d.ordem.dir === 1 ? ' A→Z' : ' Z→A') : '';
-          return `<th aria-sort="${ativo ? (d.ordem.dir === 1 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-ordem ${ativo ? 'ativo' : ''}" data-act="dcOrdenar" data-campo="${campo}" title="Ordenar por ${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}">${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}${seta}</button></th>`;
-        }).join('')}</tr></thead>
-        <tbody>${d.linhas.map((l, i) => {
+          return `<div role="columnheader" aria-sort="${ativo ? (d.ordem.dir === 1 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-ordem ${ativo ? 'ativo' : ''}" data-act="dcOrdenar" data-campo="${campo}" title="Ordenar por ${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}">${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}${seta}</button></div>`;
+        }).join('')}</div>
+        ${d.linhas.map((l, i) => {
           const p = l.produtoId ? prod[l.produtoId] : null;
           const resumo = [d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '', txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
           const ok = !!(l.codigo || l.chave);
           const n = l.chave ? tamGrupo[grupoDc(l.chave)] : 0;
-          return `<tr class="${l.sel ? 'dc-on' : ''} ${ok ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
-            <td class="c"><span class="dc-check" role="checkbox" aria-checked="${l.sel ? 'true' : 'false'}" aria-label="Selecionar linha ${i + 1}"></span></td>
-            <td><b>${esc(l.chave || '—')}</b>${n > 1 ? ` <span class="small muted">(${n})</span>` : ''}</td>
-            <td class="small">${esc(resumo)}</td>
-            <td class="small">${p
+          return `<div role="row" class="dc-row ${l.sel ? 'dc-on' : ''} ${ok ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
+            <div class="c"><span class="dc-check" role="checkbox" aria-checked="${l.sel ? 'true' : 'false'}" aria-label="Selecionar linha ${i + 1}"></span></div>
+            <div><b>${esc(l.chave || '—')}</b>${n > 1 ? ` <span class="small muted">(${n})</span>` : ''}</div>
+            <div class="small">${esc(resumo)}</div>
+            <div class="small">${p
               ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
-              : ok ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem código</span>'}</td>
-            ${ok ? celulaMarcaDataCar(l, i, p) : '<td></td>'}
-          </tr>`;
-        }).join('')}</tbody>
-      </table></div>
+              : ok ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem código</span>'}</div>
+            ${ok ? celulaMarcaDataCar(l, i, p) : '<div></div>'}
+          </div>`;
+        }).join('')}
+      </div>
       <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
       <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marcar/desmarcar · <span class="kbd">F2</span> editar marca · <span class="kbd">Enter</span> adicionar · <span class="kbd">Esc</span> cancelar</p>
       <div class="row-between" style="margin-top:8px">
@@ -1361,6 +1376,15 @@ function renderNova() {
   ${renderDataCar()}`;
 }
 
+let cacheBusca = null;
+const COLLATOR = new Intl.Collator('pt-BR', { numeric: true, sensitivity: 'base' });
+
+/** Texto de busca (sem acentos) de cada produto, calculado uma vez. */
+function indiceBusca() {
+  if (!cacheBusca) cacheBusca = db.produtos.map(p => [p, semAcento(`${p.codigo} ${p.similar || ''} ${p.descricao} ${p.marca} ${p.categoria}`)]);
+  return cacheBusca;
+}
+
 function resultadosBusca(q) {
   const box = $('#resultadosProd');
   if (!box) return;
@@ -1368,9 +1392,10 @@ function resultadosBusca(q) {
   if (!q) { box.innerHTML = ''; return; }
   const termos = q.split(/\s+/);
   const ja = new Set(rascunho().itens.map(x => x.produtoId));
-  const achados = db.produtos
-    .filter(p => { const t = semAcento(`${p.codigo} ${p.similar || ''} ${p.descricao} ${p.marca} ${p.categoria}`); return termos.every(w => t.includes(w)); })
-    .slice(0, 30);
+  const achados = [];
+  for (const [p, t] of indiceBusca()) {
+    if (termos.every(w => t.includes(w))) { achados.push(p); if (achados.length === 30) break; }
+  }
   box.innerHTML = achados.length
     ? achados.map(p => `<button type="button" data-act="addItem" data-id="${p.id}" ${ja.has(p.id) ? 'disabled' : ''}>
         <b>${esc(p.codigo || '—')}</b> · ${esc(p.descricao)} ${p.marca ? `<span class="muted">(${esc(p.marca)})</span>` : ''}${p.similar ? ` <span class="muted small">sim. ${esc(p.similar)}</span>` : ''} <span class="muted small">${esc(p.unidade)}</span>
@@ -1606,9 +1631,9 @@ function renderCotacao(id) {
 function linhasProdutos() {
   const q = semAcento(ui.filtroProd);
   const precos = ultimosPrecos();
-  const lista = db.produtos
-    .filter(p => !q || q.split(/\s+/).every(w => semAcento(`${p.codigo} ${p.similar || ''} ${p.descricao} ${p.marca} ${p.categoria}`).includes(w)))
-    .sort((a, b) => a.descricao.localeCompare(b.descricao));
+  const termos = q ? q.split(/\s+/) : [];
+  const lista = indiceBusca().filter(([, t]) => termos.every(w => t.includes(w))).map(([p]) => p)
+    .sort((a, b) => COLLATOR.compare(a.descricao, b.descricao));
   const LIMITE = 300;
   const extra = lista.length > LIMITE
     ? `<tr><td colspan="7" class="empty">Mostrando ${LIMITE} de ${lista.length.toLocaleString('pt-BR')} produtos. Use a busca para encontrar o que precisa.</td></tr>`
