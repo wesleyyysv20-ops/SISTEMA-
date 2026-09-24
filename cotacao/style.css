@@ -545,3 +545,63 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
 .dc-chip.ignorado span { text-decoration: none; }
 .dc-row.dc-ignorada > div { opacity: .45; text-decoration: line-through; }
 .dc-row.dc-ignorada .dc-marca { text-decoration: none; }
+
+/* ---------- conferência item a item ---------- */
+.dlg.dlg-conf { width: min(760px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+.dlg-conf:focus { outline: none; }
+.conf-colunas { margin: 6px 0 10px; }
+.conf-colunas summary { color: var(--muted); font-weight: 500; }
+.conf-progresso { margin: 4px 0 12px; }
+.conf-barra { height: 8px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); overflow: hidden; }
+.conf-barra span { display: block; height: 100%; background: var(--primary-2); transition: width .15s; }
+.conf-numeros { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 14px; }
+.conf-vai { color: var(--ok); font-weight: 600; }
+.conf-nao { color: var(--danger); font-weight: 600; }
+.conf-card {
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: var(--card);
+}
+.conf-card.conf-vai { border-color: var(--ok); }
+.conf-card.conf-nao { border-color: var(--danger); }
+.conf-topo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 8px; font-size: 14px; }
+.conf-obs b { font-size: 16px; }
+.conf-codigo { font: 700 28px/1.2 var(--mono); letter-spacing: .01em; overflow-wrap: anywhere; }
+.conf-desc { font-size: 18px; font-weight: 500; margin: 4px 0 8px; }
+.conf-cadastro { color: var(--muted); margin-bottom: 12px; }
+.conf-marca-rotulo { margin: 0 0 4px; }
+.conf-marca {
+  padding: 8px 11px;
+  border: 1px solid var(--input-line);
+  border-radius: 7px;
+  font-size: 16px;
+  cursor: text;
+  min-height: 40px;
+}
+.conf-marca:hover { border-color: var(--primary-2); }
+.conf-marca.falta { background: var(--field); color: var(--field-text); border-style: dashed; }
+.conf-marca.so-cotacao { color: var(--primary-2); font-weight: 600; border-color: var(--primary-2); }
+.conf-marca input {
+  margin: -8px -11px; width: calc(100% + 22px);
+  padding: 8px 11px; font-size: 16px; font-weight: 600;
+  border: 2px solid var(--primary-2); border-radius: 7px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-2) 30%, transparent);
+  outline: none;
+}
+.conf-botoes { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; margin-top: 14px; }
+.conf-btn { justify-content: center; padding: 12px; font-size: 16px; font-weight: 600; border-width: 2px; }
+.conf-btn-nao { color: var(--danger); border-color: var(--danger); }
+.conf-btn-nao:hover { background: var(--danger-bg); }
+.conf-btn-vai { background: var(--ok); border-color: var(--ok); color: var(--on-primary); }
+.conf-btn-vai:hover { background: var(--ok); filter: brightness(1.08); }
+.conf-btn .kbd { color: var(--text); }
+.conf-voltar { margin-top: 10px; }
+.conf-proximos { margin-top: 10px; display: grid; gap: 2px; }
+.conf-proximos span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conf-lista-vai { display: flex; flex-wrap: wrap; gap: 4px; max-height: 140px; overflow-y: auto; }
+.conf-lista-vai span { font: 12px var(--mono); padding: 2px 6px; border-radius: 4px; background: var(--ok-bg); color: var(--ok); }
+@media (max-width: 560px) {
+  .conf-botoes { grid-template-columns: 1fr; }
+  .conf-codigo { font-size: 22px; }
+}

@@ -989,10 +989,8 @@ async function abrirArquivoDataCar(file) {
         return -1;
       })(),
       linhas: dados.map((cels, orig) => ({ cels, orig })),
-      ordem: { campo: 'chave', dir: 1 }, // abre já em ordem A-Z pelo OBS
-      ignorados: new Set(), // grupos de OBS ignorados (botão direito): não vão para a cotação
-      agrupar: false, // marca item por item; o grupo inteiro só com a opção ligada
-      cursor: 0,
+      ordem: { campo: 'chave', dir: 1 }, // conferência em ordem A-Z pelo OBS
+      pos: 0, // item em conferência (posição na fila)
     };
     casarLinhasDataCar();
     aplicarOrdemDataCar();
@@ -1004,306 +1002,8 @@ async function abrirArquivoDataCar(file) {
   }
 }
 
-/** Esconde/mostra linhas conforme o filtro (Todos / Não marcados / Marcados + texto). */
-function aplicarFiltroDataCar() {
-  const d = ui.datacar;
-  if (!d) return;
-  const f = d.filtro || { modo: 'todos', texto: '' };
-  const termos = semAcento(f.texto || '').split(/\s+/).filter(Boolean);
-  d.visivel = d.linhas.map(l => {
-    if (f.modo === 'pendentes' && (l.sel || ignoradaDataCar(l))) return false;
-    if (f.modo === 'marcados' && !l.sel) return false;
-    if (termos.length) {
-      if (!l._busca) l._busca = semAcento([l.chave, l.codigo, ...l.cels].join(' '));
-      if (!termos.every(w => l._busca.includes(w))) return false;
-    }
-    return true;
-  });
-  document.querySelectorAll('#dlgDataCar [data-dc-linha]').forEach(tr => {
-    tr.classList.toggle('dc-oculta', d.visivel[+tr.dataset.dcLinha] === false);
-    tr.classList.toggle('dc-ignorada', ignoradaDataCar(d.linhas[+tr.dataset.dcLinha]));
-  });
-  const sel = d.linhas.filter(l => l.sel).length;
-  const total = d.linhas.filter(l => l.codigo || l.chave).length;
-  const ign = d.linhas.filter(l => (l.codigo || l.chave) && ignoradaDataCar(l)).length;
-  const cont = { todos: total, pendentes: total - sel - ign, marcados: sel };
-  document.querySelectorAll('#dlgDataCar [data-act="dcModo"]').forEach(b => {
-    b.classList.toggle('on', b.dataset.modo === f.modo);
-    const c = b.querySelector('span');
-    if (c) c.textContent = `(${cont[b.dataset.modo]})`;
-  });
-  const vazio = $('#dcVazio');
-  if (vazio) {
-    const nada = !d.visivel.some(Boolean);
-    vazio.hidden = !nada;
-    vazio.textContent = f.modo === 'pendentes' && !termos.length
-      ? '✓ Todos os itens foram marcados. Não ficou nenhum para trás.'
-      : 'Nenhum item neste filtro.';
-  }
-}
-
-/** Botões de grupo: um por valor de OBS, com a quantidade de itens; clique marca/desmarca o grupo. */
-function botoesGruposDataCar() {
-  const d = ui.datacar;
-  const grupos = new Map();
-  for (const l of d.linhas) {
-    if (!(l.codigo || l.chave)) continue;
-    const k = grupoDc(l.chave || '');
-    if (!grupos.has(k)) grupos.set(k, { rotulo: l.chave || 'Sem ' + d.cab[d.col], n: 0, sel: 0 });
-    const g = grupos.get(k);
-    g.n++;
-    if (l.sel) g.sel++;
-  }
-  // grupos já marcados por inteiro vão para o final; os que faltam ficam no começo (A-Z)
-  const completo = ([k, g]) => (d.ignorados.has(k) ? 2 : g.sel === g.n ? 1 : 0);
-  const modo = (d.filtro && d.filtro.modo) || 'todos';
-  let entradas = [...grupos.entries()];
-  // "Não marcados": só os grupos que ainda têm itens sem marcar (não ignorados), para conferir o que faltou
-  if (modo === 'pendentes') entradas = entradas.filter(([k, g]) => !d.ignorados.has(k) && g.sel < g.n);
-  if (modo === 'marcados') entradas = entradas.filter(([, g]) => g.sel > 0);
-  if (!entradas.length) {
-    return `<span class="small ${modo === 'pendentes' ? '' : 'muted'}">${modo === 'pendentes' ? '✓ Nenhum grupo pendente: todos os grupos foram marcados ou ignorados.' : 'Nenhum grupo com itens marcados.'}</span>`;
-  }
-  const lista = entradas.sort((a, b) => (completo(a) - completo(b)) || (!a[0] - !b[0]) || COLLATOR.compare(a[0], b[0]));
-  return `<span class="small muted" title="Clique marca o grupo. Botão direito ignora o grupo (não vai para a cotação).">${modo === 'pendentes' ? `Grupos de ${esc(d.cab[d.col])} com itens não marcados` : `Marcar por ${esc(d.cab[d.col])}`} (botão direito ignora):</span> ` + lista.map(([k, g]) => {
-    if (d.ignorados.has(k)) {
-      return `<button type="button" class="dc-chip ignorado" data-act="dcGrupo" data-g="${esc(k)}" title="Ignorado: não vai para a cotação. Clique (ou botão direito) para voltar.">${esc(g.rotulo)} <span>(${g.n}) ignorado</span></button>`;
-    }
-    const estado = g.sel === g.n ? 'on' : g.sel ? 'parcial' : '';
-    if (modo === 'pendentes') {
-      const faltam = g.n - g.sel;
-      return `<button type="button" class="dc-chip ${estado}" data-act="dcGrupo" data-g="${esc(k)}" title="${faltam} item(ns) deste grupo ainda não marcados. Clique para marcar o grupo; botão direito para ignorar.">${esc(g.rotulo)} <span>(faltam ${faltam}${g.sel ? ' de ' + g.n : ''})</span></button>`;
-    }
-    return `<button type="button" class="dc-chip ${estado}" data-act="dcGrupo" data-g="${esc(k)}" aria-pressed="${g.sel === g.n}" title="${g.sel}/${g.n} marcados. Clique para ${g.sel === g.n ? 'desmarcar' : 'marcar'} todos com ${esc(g.rotulo)}.">${esc(g.rotulo)} <span>(${g.sel ? g.sel + '/' : ''}${g.n})</span></button>`;
-  }).join('');
-}
-
-function atualizarResumoDataCar() {
-  const caixaGrupos = $('#dcGrupos');
-  if (caixaGrupos) { caixaGrupos.innerHTML = botoesGruposDataCar(); caixaGrupos.scrollTop = 0; }
-  const d = ui.datacar;
-  const sel = d.linhas.filter(l => l.sel).length;
-  const novos = d.linhas.filter(l => l.sel && !l.produtoId).length;
-  const grupos = new Set(d.linhas.filter(l => l.sel && l.chave).map(l => grupoDc(l.chave))).size;
-  const el = $('#dcResumo');
-  const ignorados = d.ignorados && d.ignorados.size ? d.linhas.filter(l => (l.codigo || l.chave) && ignoradaDataCar(l)).length : 0;
-  if (el) el.textContent = `${sel} selecionado(s)${grupos ? ` em ${grupos} grupo(s) de ${d.cab[d.col]}` : ''}${ignorados ? ` · ${ignorados} ignorado(s)` : ''}${novos ? ` · ${novos} será(ão) cadastrado(s) como produto novo` : ''}`;
-}
-
 const grupoDc = v => semAcento(v).replace(/\s+/g, ' ');
 const chaveCodigo = v => semAcento(v).replace(/\s+/g, '');
-
-/** Marca/desmarca a linha i — e, com "agrupar" ligado, todas as linhas com a mesma OBS. */
-function ignoradaDataCar(l) {
-  const ig = ui.datacar.ignorados;
-  return !!(ig && ig.size && ig.has(grupoDc(l.chave || '')));
-}
-
-/** Botão direito num grupo: ignora (desmarca tudo, esconde de "Não marcados" e manda para o final) ou volta. */
-function alternarIgnorarGrupoDataCar(k) {
-  const d = ui.datacar;
-  const ignorar = !d.ignorados.has(k);
-  if (ignorar) d.ignorados.add(k); else d.ignorados.delete(k);
-  d.linhas.forEach((l, i) => {
-    if (grupoDc(l.chave || '') !== k) return;
-    if (ignorar) l.sel = false;
-    const tr = document.querySelector(`[data-dc-linha="${i}"]`);
-    if (tr) {
-      tr.classList.toggle('dc-on', !!l.sel);
-      tr.querySelector('.dc-check')?.setAttribute('aria-checked', String(!!l.sel));
-    }
-  });
-  atualizarResumoDataCar();
-  aplicarFiltroDataCar();
-  moverCursorDataCar(d.cursor, 1);
-  $('#dcCaixa')?.focus({ preventScroll: true });
-}
-
-function marcarLinhaDataCar(i, valor) {
-  const d = ui.datacar;
-  const l = d.linhas[i];
-  if (!l || !(l.codigo || l.chave)) return;
-  if (valor && ignoradaDataCar(l)) { toast(`O grupo "${l.chave || 'sem OBS'}" está ignorado. Clique com o botão direito no botão do grupo para voltar a usá-lo.`, 4000); return; }
-  const alvo = d.agrupar && l.chave ? grupoDc(l.chave) : null;
-  d.linhas.forEach((x, j) => {
-    if (j !== i && (!alvo || !x.chave || grupoDc(x.chave) !== alvo)) return;
-    if (!(x.codigo || x.chave)) return;
-    if (valor && ignoradaDataCar(x)) return; // grupo ignorado não é marcado
-    x.sel = valor;
-    const tr = document.querySelector(`[data-dc-linha="${j}"]`);
-    if (tr) {
-      tr.classList.toggle('dc-on', valor);
-      const cb = tr.querySelector('.dc-check');
-      if (cb) cb.setAttribute('aria-checked', valor ? 'true' : 'false');
-    }
-  });
-  atualizarResumoDataCar();
-}
-
-function linhaVisivelDataCar(i) {
-  const v = ui.datacar.visivel;
-  return !v || v[i] !== false;
-}
-
-/** Próxima linha visível a partir de i, andando na direção dir (+1/-1); se não houver, tenta a outra direção. */
-function acharVisivelDataCar(i, dir = 1) {
-  const n = ui.datacar.linhas.length;
-  i = Math.max(0, Math.min(n - 1, i));
-  for (let j = i; j >= 0 && j < n; j += dir) if (linhaVisivelDataCar(j)) return j;
-  for (let j = i; j >= 0 && j < n; j -= dir) if (linhaVisivelDataCar(j)) return j;
-  return -1;
-}
-
-function moverCursorDataCar(i, dir = 1) {
-  const d = ui.datacar;
-  if (!d.linhas.length) return;
-  const alvo = acharVisivelDataCar(i, dir);
-  d.cursor = alvo < 0 ? Math.max(0, Math.min(d.linhas.length - 1, i)) : alvo;
-  document.querySelectorAll('.dc-row.dc-atual').forEach(tr => tr.classList.remove('dc-atual'));
-  const tr = document.querySelector(`[data-dc-linha="${d.cursor}"]`);
-  if (tr) {
-    tr.classList.add('dc-atual');
-    const lista = tr.closest('.dc-lista');
-    if (lista) {
-      // rola linha a linha: a linha atual fica sempre visível, logo abaixo do cabeçalho ou acima da próxima
-      const alt = tr.offsetHeight;
-      const cab = lista.querySelector('.dc-cab')?.offsetHeight || 0;
-      const topo = tr.offsetTop - cab;
-      const base = tr.offsetTop + alt * 2 - lista.clientHeight; // deixa a próxima linha à vista
-      if (lista.scrollTop > topo) lista.scrollTop = topo;
-      else if (lista.scrollTop < base) lista.scrollTop = Math.min(base, topo);
-    }
-  }
-}
-
-/** Roda do mouse na lista: rola por linhas inteiras (nada fica pela metade ou é pulado sem ver). */
-function rolagemDataCar(e) {
-  const lista = e.target.closest && e.target.closest('.dc-lista');
-  if (!lista || e.ctrlKey) return;
-  const linha = lista.querySelector('.dc-row:not(.dc-cab)');
-  const alt = linha ? linha.offsetHeight : 40;
-  e.preventDefault();
-  const px = e.deltaMode === 1 ? e.deltaY * alt : e.deltaMode === 2 ? e.deltaY * lista.clientHeight : e.deltaY;
-  lista._acum = (lista._acum || 0) + px;
-  const linhas = Math.trunc(lista._acum / alt);
-  if (!linhas) return;
-  lista._acum -= linhas * alt;
-  const passo = Math.max(-3, Math.min(3, linhas)); // no máximo 3 linhas por movimento da roda
-  lista.scrollTop = Math.round(lista.scrollTop / alt) * alt + passo * alt;
-}
-document.addEventListener('wheel', rolagemDataCar, { passive: false });
-
-document.addEventListener('contextmenu', e => {
-  const b = e.target.closest && e.target.closest('#dcGrupos [data-act="dcGrupo"]');
-  if (!b || !ui.datacar) return;
-  e.preventDefault();
-  alternarIgnorarGrupoDataCar(b.dataset.g);
-});
-
-function focarDataCar() {
-  atualizarResumoDataCar();
-  aplicarFiltroDataCar();
-  const caixa = $('#dcCaixa');
-  if (caixa && !caixa.contains(document.activeElement)) caixa.focus({ preventScroll: true });
-  moverCursorDataCar(ui.datacar.cursor);
-}
-
-function desarmarEnterDataCar() {
-  const d = ui.datacar;
-  if (!d || !d.enterArmado) return;
-  d.enterArmado = 0;
-  const btn = document.querySelector('#dlgDataCar [data-act="dcAdicionar"]');
-  if (btn) { btn.textContent = 'Adicionar à cotação'; btn.classList.remove('armado'); }
-}
-
-function teclaDataCar(e) {
-  const d = ui.datacar;
-  const t = e.target;
-  if (e.key !== 'Enter') desarmarEnterDataCar();
-  const campoTexto = t.matches('input:not([type=checkbox]), select, textarea');
-  // Editando a marca: Enter/Tab salva, Esc desiste, setas salvam e passam para a linha de cima/baixo.
-  if (t.dataset && t.dataset.dcMarca != null) {
-    if (e.key === 'Enter' || e.key === 'Escape' || e.key === 'Tab') {
-      e.preventDefault();
-      fecharMarcaDataCar(t, e.key !== 'Escape');
-      $('#dcCaixa').focus({ preventScroll: true });
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      fecharMarcaDataCar(t, true);
-      const dir = e.key === 'ArrowDown' ? 1 : -1;
-      moverCursorDataCar(d.cursor + dir, dir);
-      editarMarcaDataCar(d.cursor, null, true); // marca selecionada: digitar substitui
-    }
-    return;
-  }
-  if (t.id === 'dcBusca') {
-    // campo de filtro: setas/Enter voltam para a lista; Esc limpa o filtro
-    if (e.key === 'ArrowDown' || e.key === 'Enter') {
-      e.preventDefault();
-      moverCursorDataCar(acharVisivelDataCar(0, 1));
-      $('#dcCaixa').focus({ preventScroll: true });
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      t.value = '';
-      d.filtro = { ...(d.filtro || { modo: 'todos' }), texto: '' };
-      aplicarFiltroDataCar();
-      $('#dcCaixa').focus({ preventScroll: true });
-    }
-    return;
-  }
-  const letra = e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey;
-  if (!campoTexto && (letra || e.key === 'Backspace' || e.key === 'Delete')) {
-    // qualquer tecla de texto na linha já começa a digitar a marca
-    const l = d.linhas[d.cursor];
-    if (l && (l.codigo || l.chave)) {
-      e.preventDefault();
-      editarMarcaDataCar(d.cursor, letra ? e.key : '');
-    }
-  } else if (e.key === 'F2') {
-    e.preventDefault();
-    editarMarcaDataCar(d.cursor);
-  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    if (t.tagName === 'SELECT') return;
-    e.preventDefault();
-    const dir = e.key === 'ArrowDown' ? 1 : -1;
-    moverCursorDataCar(d.cursor + dir, dir);
-    $('#dcCaixa').focus({ preventScroll: true });
-  } else if ((e.key === 'PageDown' || e.key === 'PageUp') && !campoTexto) {
-    e.preventDefault();
-    const dir = e.key === 'PageDown' ? 1 : -1;
-    let j = d.cursor;
-    for (let k = 0; k < 10; k++) { const nx = acharVisivelDataCar(j + dir, dir); if (nx < 0 || (dir > 0 ? nx <= j : nx >= j)) break; j = nx; }
-    moverCursorDataCar(j, dir);
-  } else if ((e.key === 'Home' || e.key === 'End') && !campoTexto) {
-    e.preventDefault();
-    moverCursorDataCar(e.key === 'Home' ? 0 : d.linhas.length - 1, e.key === 'Home' ? 1 : -1);
-  } else if (e.key === ' ' && !campoTexto) {
-    if (e.repeat) { e.preventDefault(); return; } // tecla segurada não pula itens
-    e.preventDefault();
-    if (!linhaVisivelDataCar(d.cursor)) return;
-    const antes = d.cursor;
-    marcarLinhaDataCar(antes, !d.linhas[antes].sel);
-    aplicarFiltroDataCar(); // em "Não marcados" o item marcado sai da lista
-    const prox = acharVisivelDataCar(antes + 1, 1);
-    moverCursorDataCar(prox >= 0 && prox > antes ? prox : antes, 1); // já desce para o próximo item
-  } else if (e.key === 'Enter' && t.tagName !== 'BUTTON' && t.tagName !== 'SELECT') {
-    // Adicionar à cotação exige Enter duas vezes seguidas
-    e.preventDefault();
-    const sel = d.linhas.filter(l => l.sel).length;
-    if (d.enterArmado && Date.now() - d.enterArmado < 5000) {
-      d.enterArmado = 0;
-      acoes.dcAdicionar();
-    } else {
-      d.enterArmado = Date.now();
-      const btn = document.querySelector('#dlgDataCar [data-act="dcAdicionar"]');
-      if (btn) { btn.textContent = 'Enter de novo para adicionar'; btn.classList.add('armado'); }
-      toast(sel ? `Pressione Enter de novo para adicionar ${sel} item(ns) à cotação.` : 'Nenhum item marcado. Marque com Espaço antes de adicionar.', 4000);
-    }
-  } else if (e.key === 'Escape') {
-    e.preventDefault();
-    acoes.dcCancelar();
-  }
-}
 
 const ORDEM_DC = { chave: 'OBS', arquivo: 'No arquivo', produto: 'Produto cadastrado', marca: 'Marca' };
 
@@ -1317,16 +1017,6 @@ function chaveOrdemDataCar(l, campo) {
   if (campo === 'marca') return marcaAtualDataCar(l, p) || '';
   if (campo === 'marca') return (p && p.marca) || l.marca || txt(d.colMarca) || '';
   return '';
-}
-
-/** Ordena as linhas do arquivo: clicar numa coluna ordena de A a Z; clicar de novo inverte (Z a A). */
-function ordenarDataCar(campo) {
-  const d = ui.datacar;
-  const atual = d.linhas[d.cursor];
-  if (d.ordem.campo !== campo) d.ordem = { campo, dir: 1 };
-  else d.ordem.dir = -d.ordem.dir;
-  aplicarOrdemDataCar();
-  d.cursor = Math.max(0, d.linhas.indexOf(atual));
 }
 
 function aplicarOrdemDataCar() {
@@ -1347,120 +1037,258 @@ function marcaAtualDataCar(l, p) {
   return l.marca ?? (p ? p.marca : (d.colMarca >= 0 ? l.cels[d.colMarca] : '')) ?? '';
 }
 
-function celulaMarcaDataCar(l, i, p) {
-  const m = marcaAtualDataCar(l, p);
-  const dica = p && p.marca ? `Cadastro: ${p.marca}. Alterar aqui muda só nesta cotação.` : 'A marca informada fica salva no cadastro.';
-  return `<div class="dc-marca ${m ? '' : 'falta'} ${p && p.marca && m !== p.marca ? 'so-cotacao' : ''}" data-dc-marca-cel="${i}" title="${esc(dica)} Clique ou F2 para editar."><span class="dc-campo">${m ? esc(m) : 'Informar marca'}</span></div>`;
+/* ---------------- conferência item a item ----------------
+ * Mostra UM item por vez. → ou Espaço: vai para a cotação · ←: não vai · Backspace: volta.
+ * Digitar preenche a marca. O próximo só aparece depois de decidir o atual. */
+
+function filaDataCar() {
+  const d = ui.datacar;
+  return d.linhas.filter(l => l.codigo || l.chave);
 }
 
-/** Abre um único campo de edição na célula de marca da linha i. */
-function editarMarcaDataCar(i, textoInicial, selecionarTudo = false) {
-  const td = document.querySelector(`[data-dc-marca-cel="${i}"]`);
-  if (!td || td.querySelector('input')) return;
-  const l = ui.datacar.linhas[i];
+function contagemDataCar() {
+  const fila = filaDataCar();
+  const vai = fila.filter(l => l.decisao === 'vai').length;
+  const nao = fila.filter(l => l.decisao === 'nao').length;
+  return { total: fila.length, vai, nao, falta: fila.length - vai - nao };
+}
+
+function decidirDataCar(decisao) {
+  const d = ui.datacar;
+  const fila = filaDataCar();
+  const l = fila[d.pos];
+  if (!l) return;
+  l.decisao = decisao;
+  l.sel = decisao === 'vai';
+  d.pos = Math.min(d.pos + 1, fila.length); // fila.length = tela de resumo
+  desenharConferencia();
+}
+
+function voltarDataCar() {
+  const d = ui.datacar;
+  if (d.pos <= 0) { toast('Este é o primeiro item.'); return; }
+  d.pos--;
+  desenharConferencia();
+}
+
+/** Vai para o primeiro item ainda sem decisão (ou para o resumo). */
+function irPendenteDataCar() {
+  const d = ui.datacar;
+  const fila = filaDataCar();
+  const i = fila.findIndex(l => !l.decisao);
+  d.pos = i < 0 ? fila.length : i;
+  desenharConferencia();
+}
+
+function marcaAtualDataCar(l, p) {
+  const d = ui.datacar;
+  return l.marca ?? (p ? p.marca : (d.colMarca >= 0 ? l.cels[d.colMarca] : '')) ?? '';
+}
+
+function editarMarcaDataCar(textoInicial) {
+  const caixa = $('#dcMarcaCampo');
+  if (!caixa || caixa.querySelector('input')) return;
+  const d = ui.datacar;
+  const l = filaDataCar()[d.pos];
+  if (!l) return;
   const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
-  td.innerHTML = `<input data-dc-marca="${i}" value="${esc(marcaAtualDataCar(l, p))}" placeholder="Informar marca" aria-label="Marca do item ${i + 1}">`;
-  const inp = td.firstChild;
+  caixa.innerHTML = `<input data-dc-marca="1" value="${esc(marcaAtualDataCar(l, p))}" placeholder="Informar marca" aria-label="Marca">`;
+  const inp = caixa.firstChild;
   inp.focus();
-  // começou a digitar direto na linha: substitui a marca pelo que está sendo digitado;
-  // F2 ou clique: mantém a marca e põe o cursor no fim para completar
   if (textoInicial != null) inp.value = textoInicial;
-  if (selecionarTudo) inp.select();
-  else inp.setSelectionRange(inp.value.length, inp.value.length);
+  inp.setSelectionRange(inp.value.length, inp.value.length);
 }
 
-/** Fecha o campo de edição: salva (ou descarta) e volta a mostrar o texto. */
 function fecharMarcaDataCar(inp, salvarValor) {
   if (inp.dataset.fechando) return; // remover o campo dispara "focusout": evita fechar duas vezes
   inp.dataset.fechando = '1';
-  const i = +inp.dataset.dcMarca;
-  const l = ui.datacar && ui.datacar.linhas[i];
-  const td = inp.closest('[data-dc-marca-cel]');
-  if (!l || !td) return;
-  if (salvarValor) l.marca = inp.value.trim();
-  const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
-  td.outerHTML = celulaMarcaDataCar(l, i, p);
+  const d = ui.datacar;
+  const l = d && filaDataCar()[d.pos];
+  if (l && salvarValor) l.marca = inp.value.trim();
+  desenharConferencia();
 }
 
-/** Redesenha só a caixa de seleção (sem refazer a tela inteira). */
+function focarDataCar() {
+  $('#dcCaixa')?.focus({ preventScroll: true });
+}
+
+function desarmarEnterDataCar() {
+  const d = ui.datacar;
+  if (!d || !d.enterArmado) return;
+  d.enterArmado = 0;
+  document.querySelectorAll('#dlgDataCar [data-act="dcAdicionar"]').forEach(btn => { btn.textContent = 'Adicionar à cotação'; btn.classList.remove('armado'); });
+}
+
+function enterDuploDataCar() {
+  const d = ui.datacar;
+  const { vai, falta } = contagemDataCar();
+  if (d.enterArmado && Date.now() - d.enterArmado < 5000) {
+    d.enterArmado = 0;
+    acoes.dcAdicionar();
+    return;
+  }
+  d.enterArmado = Date.now();
+  document.querySelectorAll('#dlgDataCar [data-act="dcAdicionar"]').forEach(btn => { btn.textContent = 'Enter de novo para adicionar'; btn.classList.add('armado'); });
+  toast(vai
+    ? `Pressione Enter de novo para adicionar ${vai} item(ns) à cotação.${falta ? ` Ainda faltam ${falta} sem decisão (não vão).` : ''}`
+    : 'Nenhum item marcado para ir. Use → ou Espaço nos itens que vão.', 4500);
+}
+
+function teclaDataCar(e) {
+  const d = ui.datacar;
+  const t = e.target;
+  if (e.key !== 'Enter') desarmarEnterDataCar();
+  // Editando a marca: Enter/Tab confirma, Esc desiste.
+  if (t.dataset && t.dataset.dcMarca != null) {
+    if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'Escape') {
+      e.preventDefault();
+      fecharMarcaDataCar(t, e.key !== 'Escape');
+      focarDataCar();
+    }
+    return;
+  }
+  if (t.matches('select, input, textarea')) return; // seletores de coluna
+  if (e.repeat && (e.key === ' ' || e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Backspace')) { e.preventDefault(); return; } // tecla segurada não decide vários itens
+  const noResumo = d.pos >= filaDataCar().length;
+  const letra = e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey;
+  if (e.key === 'ArrowRight' || e.key === ' ') {
+    e.preventDefault();
+    if (!noResumo) decidirDataCar('vai');
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    if (!noResumo) decidirDataCar('nao');
+  } else if (e.key === 'Backspace' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    voltarDataCar();
+  } else if (e.key === 'F2') {
+    e.preventDefault();
+    if (!noResumo) editarMarcaDataCar();
+  } else if (letra && !noResumo) {
+    e.preventDefault();
+    editarMarcaDataCar(e.key);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    enterDuploDataCar();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    acoes.dcCancelar();
+  }
+}
+
+/** Redesenha só o miolo da conferência (item atual, progresso e próximos). */
+function desenharConferencia() {
+  const alvo = $('#dcConferencia');
+  if (!alvo) return;
+  alvo.innerHTML = conteudoConferencia();
+  focarDataCar();
+}
+
+function conteudoConferencia() {
+  const d = ui.datacar;
+  const fila = filaDataCar();
+  const c = contagemDataCar();
+  const pct = c.total ? Math.round(((c.vai + c.nao) / c.total) * 100) : 100;
+  const progresso = `
+    <div class="conf-progresso">
+      <div class="conf-barra" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.vai + c.nao}"><span style="width:${pct}%"></span></div>
+      <div class="conf-numeros">
+        <span>${d.pos < fila.length ? `Item <b>${d.pos + 1}</b> de ${fila.length}` : `<b>${fila.length}</b> itens`}</span>
+        <span class="conf-vai">✓ ${c.vai} vão</span>
+        <span class="conf-nao">✗ ${c.nao} não vão</span>
+        ${c.falta ? `<span class="muted">${c.falta} sem decisão</span>` : ''}
+      </div>
+    </div>`;
+
+  if (d.pos >= fila.length) {
+    const vao = fila.filter(l => l.decisao === 'vai');
+    return `${progresso}
+      <div class="conf-card conf-fim">
+        <h3 style="margin:0 0 6px">${c.falta ? 'Fim da lista' : '✓ Conferência concluída'}</h3>
+        <p style="margin:0 0 10px">${c.vai} item(ns) vão para a cotação e ${c.nao} não vão.${c.falta ? ` ${c.falta} ficaram sem decisão.` : ''}</p>
+        ${vao.length ? `<div class="conf-lista-vai">${vao.slice(0, 200).map(l => `<span>${esc(l.codigo || l.chave)}</span>`).join('')}${vao.length > 200 ? `<span class="muted">+${vao.length - 200}</span>` : ''}</div>` : ''}
+        <div class="row" style="margin-top:12px">
+          ${c.falta ? '<button class="sm" data-act="dcPendente">Ir para o próximo sem decisão</button>' : ''}
+          <button class="sm" data-act="dcVoltar">↶ Voltar ao último item (Backspace)</button>
+          <button class="sm" data-act="dcRecomecar">Revisar do início</button>
+        </div>
+        <p class="small muted" style="margin:10px 0 0">Aperte <span class="kbd">Enter</span> duas vezes para adicionar à cotação.</p>
+      </div>`;
+  }
+
+  const l = fila[d.pos];
+  const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
+  const txt = cc => (cc >= 0 ? l.cels[cc] : '');
+  const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
+  const m = marcaAtualDataCar(l, p);
+  const doGrupo = l.chave ? fila.filter(x => grupoDc(x.chave || '') === grupoDc(l.chave)) : [];
+  const posGrupo = doGrupo.indexOf(l) + 1;
+  const repetido = l.codigo && fila.filter(x => chaveCodigo(x.codigo || '') === chaveCodigo(l.codigo)).length > 1;
+  const proximos = fila.slice(d.pos + 1, d.pos + 4);
+  const anterior = fila[d.pos - 1];
+  return `${progresso}
+    <div class="conf-card ${l.decisao ? 'conf-' + l.decisao : ''}">
+      <div class="conf-topo">
+        <span class="conf-obs">${esc(d.cab[d.col])}: <b>${esc(l.chave || '—')}</b>${doGrupo.length > 1 ? ` <span class="muted">(${posGrupo} de ${doGrupo.length} do grupo)</span>` : ''}</span>
+        ${l.decisao ? `<span class="badge ${l.decisao === 'vai' ? 'ok' : 'danger'}">já decidido: ${l.decisao === 'vai' ? 'VAI' : 'NÃO VAI'}</span>` : ''}
+        ${repetido ? '<span class="badge warn">código repetido no arquivo</span>' : ''}
+        ${p && naCotacao.has(p.id) ? '<span class="badge">já está na cotação</span>' : ''}
+      </div>
+      <div class="conf-codigo">${esc(l.codigo || l.chave)}</div>
+      <div class="conf-desc">${esc(txt(d.colDesc) || (p ? p.descricao : ''))}</div>
+      <div class="conf-cadastro small">${p
+        ? `Cadastro: <b>${esc(p.codigo)}</b> · ${esc(p.descricao)}${p.similar ? ` · sim. ${esc(p.similar)}` : ''}`
+        : '<span class="badge warn">não cadastrado · será cadastrado ao adicionar</span>'}</div>
+      <label class="conf-marca-rotulo">Marca <span class="muted small">(digite para trocar${p && p.marca ? ' · vale só nesta cotação' : ''})</span></label>
+      <div id="dcMarcaCampo" class="conf-marca ${m ? '' : 'falta'} ${p && p.marca && m !== p.marca ? 'so-cotacao' : ''}" data-act="dcEditarMarca" title="Clique ou comece a digitar para trocar a marca">${m ? esc(m) : 'Informar marca'}</div>
+      <div class="conf-botoes">
+        <button type="button" class="conf-btn conf-btn-nao" data-act="dcDecidir" data-d="nao"><span class="kbd">←</span> Não vai</button>
+        <button type="button" class="conf-btn conf-btn-vai" data-act="dcDecidir" data-d="vai">Vai para a cotação <span class="kbd">→</span> <span class="kbd">Espaço</span></button>
+      </div>
+      <button type="button" class="sm conf-voltar" data-act="dcVoltar" ${d.pos ? '' : 'disabled'}>↶ Voltar (Backspace)${anterior ? ` · anterior: ${esc(anterior.codigo || anterior.chave)} ${anterior.decisao === 'vai' ? '✓' : anterior.decisao === 'nao' ? '✗' : ''}` : ''}</button>
+    </div>
+    ${proximos.length ? `<div class="conf-proximos small muted">Próximos: ${proximos.map(x => `<span>${esc(x.chave || '—')} · ${esc(x.codigo || '')}${d.colDesc >= 0 && x.cels[d.colDesc] ? ' · ' + esc(x.cels[d.colDesc]) : ''}</span>`).join('')}</div>` : ''}`;
+}
+
 function renderSoDataCar() {
   const atual = $('#dlgDataCar');
   if (!atual) return render();
   const tmp = document.createElement('div');
   tmp.innerHTML = renderDataCar();
-  const lista = atual.querySelector('.dc-lista');
-  const topo = lista ? lista.scrollTop : 0;
   atual.replaceWith(tmp.firstElementChild);
-  const nova = $('#dlgDataCar .dc-lista');
-  if (nova) nova.scrollTop = topo;
 }
 
 function renderDataCar() {
   const d = ui.datacar;
   if (!d) return '';
-  const prod = byId(db.produtos);
-  const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
-  const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
-  const contaCodArq = {};
-  d.linhas.forEach(l => { const k = chaveCodigo(l.codigo); if (k) contaCodArq[k] = (contaCodArq[k] || 0) + 1; });
-  const tamGrupo = {};
-  d.linhas.forEach(l => { if (l.chave) tamGrupo[grupoDc(l.chave)] = (tamGrupo[grupoDc(l.chave)] || 0) + 1; });
   return `
   <div class="dlg-fundo" id="dlgDataCar">
-    <div class="dlg dlg-largo" role="dialog" aria-modal="true" aria-labelledby="dcTitulo" tabindex="-1" id="dcCaixa">
+    <div class="dlg dlg-conf" role="dialog" aria-modal="true" aria-labelledby="dcTitulo" tabindex="-1" id="dcCaixa">
       <div class="row-between">
-        <h3 id="dcTitulo" style="margin:0">Selecione os itens para a cotação</h3>
-        <span class="muted small">${esc(d.arquivo)} · ${d.linhas.length} linha(s)</span>
+        <h3 id="dcTitulo" style="margin:0">Conferência dos itens do arquivo</h3>
+        <span class="muted small">${esc(d.arquivo)}</span>
       </div>
-      <div class="row" style="margin:10px 0">
-        <label style="margin:0;display:flex;gap:6px;align-items:center">Agrupar pelo campo
-          <select id="dcCol" style="width:auto;margin:0">${d.cab.map((c, i) => `<option value="${i}" ${i === d.col ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-        </label>
-        <label style="margin:0;display:flex;gap:6px;align-items:center">Código do item
-          <select id="dcColCod" style="width:auto;margin:0">
-            <option value="-1" ${d.colCod < 0 ? 'selected' : ''}>(escolha a coluna)</option>
-            ${d.cab.map((c, i) => `<option value="${i}" ${i === d.colCod ? 'selected' : ''}>${esc(c)}</option>`).join('')}
-          </select>
-        </label>
-        ${d.colCod < 0 ? '<span class="badge warn">Não achei a coluna de código: escolha ao lado</span>' : ''}
-        <label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="dcAgrupar" ${d.agrupar ? 'checked' : ''}> Marcar o grupo inteiro</label>
-        <span class="grow"></span>
-        <button class="sm" data-act="dcTodos">Marcar todos</button>
-        <button class="sm" data-act="dcNenhum">Desmarcar todos</button>
-      </div>
-      <div class="dc-filtros">
-        <span class="small muted">Mostrar:</span>
-        ${[['todos', 'Todos'], ['pendentes', 'Não marcados'], ['marcados', 'Marcados']].map(([m, t]) => `<button type="button" class="dc-chip ${((d.filtro || {}).modo || 'todos') === m ? 'on' : ''}" data-act="dcModo" data-modo="${m}">${t} <span></span></button>`).join('')}
-        <input id="dcBusca" class="grow" placeholder="Filtrar por código, descrição ou OBS…" value="${esc((d.filtro || {}).texto || '')}" aria-label="Filtrar a lista">
-      </div>
-      <div class="dc-grupos" id="dcGrupos" aria-label="Marcar por ${esc(d.cab[d.col])}">${botoesGruposDataCar()}</div>
-      <div class="dc-lista" role="grid">
-        <div class="dc-row dc-cab" role="row"><div role="columnheader"></div>${Object.entries(ORDEM_DC).map(([campo, rotulo]) => {
-          const ativo = d.ordem.campo === campo;
-          const seta = ativo ? (d.ordem.dir === 1 ? ' A→Z' : ' Z→A') : '';
-          return `<div role="columnheader" aria-sort="${ativo ? (d.ordem.dir === 1 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="th-ordem ${ativo ? 'ativo' : ''}" data-act="dcOrdenar" data-campo="${campo}" title="Ordenar por ${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}">${esc(campo === 'chave' ? d.cab[d.col] : rotulo)}${seta}</button></div>`;
-        }).join('')}</div>
-        ${d.linhas.map((l, i) => {
-          const p = l.produtoId ? prod[l.produtoId] : null;
-          const resumo = [d.colCod >= 0 && d.colCod !== d.col ? txt(l, d.colCod) : '', txt(l, d.colDesc), txt(l, d.colMarca)].filter(Boolean).join(' · ') || l.cels.filter((v, j) => j !== d.col && v).slice(0, 3).join(' · ');
-          const ok = !!(l.codigo || l.chave);
-          const n = l.chave ? tamGrupo[grupoDc(l.chave)] : 0;
-          return `<div role="row" class="dc-row ${l.sel ? 'dc-on' : ''} ${ok ? '' : 'dc-vazia'} ${i === d.cursor ? 'dc-atual' : ''}" data-dc-linha="${i}">
-            <div class="c"><span class="dc-check" role="checkbox" aria-checked="${l.sel ? 'true' : 'false'}" aria-label="Selecionar linha ${i + 1}"></span></div>
-            <div><b>${esc(l.chave || '—')}</b>${n > 1 ? ` <span class="small muted">(${n})</span>` : ''}</div>
-            <div class="small" title="${esc(resumo)}">${esc(resumo)}${l.codigo && contaCodArq[chaveCodigo(l.codigo)] > 1 ? ` <span class="badge warn" title="Este código aparece ${contaCodArq[chaveCodigo(l.codigo)]} vezes no arquivo">código repetido</span>` : ''}</div>
-            <div class="small" title="${esc(p ? `${p.codigo} · ${p.descricao}` : '')}">${p
-              ? `${esc(p.codigo)} · ${esc(p.descricao)}${naCotacao.has(p.id) ? ' <span class="badge">já na cotação</span>' : ''}`
-              : ok ? '<span class="badge warn">não cadastrado · será cadastrado</span>' : '<span class="muted">sem código</span>'}</div>
-            ${ok ? celulaMarcaDataCar(l, i, p) : '<div></div>'}
-          </div>`;
-        }).join('')}
-        <p class="empty" id="dcVazio" hidden></p>
-      </div>
-      <p class="small" style="margin:10px 0 0">Ordem: <b>${esc(d.ordem.campo === 'chave' ? d.cab[d.col] : ORDEM_DC[d.ordem.campo] || 'arquivo')}</b> ${d.ordem.dir === 1 ? 'de A a Z' : 'de Z a A'} <span class="muted">· clique no título de uma coluna para ordenar por ela, clique de novo para inverter</span></p>
-      <p class="small muted" style="margin:4px 0 0"><span class="kbd">↑</span> <span class="kbd">↓</span> navegar · <span class="kbd">Espaço</span> marca e desce · digite para preencher a marca (<span class="kbd">F2</span> edita sem apagar) · <span class="kbd">Enter</span> confirma a marca · <span class="kbd">Enter</span> <span class="kbd">Enter</span> adiciona à cotação · <span class="kbd">Esc</span> cancelar</p>
+      <details class="conf-colunas">
+        <summary class="small">Colunas do arquivo</summary>
+        <div class="row" style="margin-top:6px">
+          <label style="margin:0;display:flex;gap:6px;align-items:center">OBS (ordem)
+            <select id="dcCol" style="width:auto;margin:0">${d.cab.map((c, i) => `<option value="${i}" ${i === d.col ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+          </label>
+          <label style="margin:0;display:flex;gap:6px;align-items:center">Código do item
+            <select id="dcColCod" style="width:auto;margin:0">
+              <option value="-1" ${d.colCod < 0 ? 'selected' : ''}>(escolha a coluna)</option>
+              ${d.cab.map((c, i) => `<option value="${i}" ${i === d.colCod ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+            </select>
+          </label>
+          ${d.colCod < 0 ? '<span class="badge warn">Não achei a coluna de código: escolha ao lado</span>' : ''}
+        </div>
+      </details>
+      <div id="dcConferencia">${conteudoConferencia()}</div>
+      <p class="small muted" style="margin:10px 0 0">
+        <span class="kbd">→</span>/<span class="kbd">Espaço</span> vai · <span class="kbd">←</span> não vai · <span class="kbd">Backspace</span> volta ·
+        digite para trocar a marca · <span class="kbd">Enter</span> <span class="kbd">Enter</span> adiciona à cotação · <span class="kbd">Esc</span> sair
+      </p>
       <div class="row-between" style="margin-top:8px">
-        <span class="small muted" id="dcResumo"></span>
+        <span></span>
         <div class="row">
           <button data-act="dcCancelar">Cancelar</button>
           <button class="primary" data-act="dcAdicionar">Adicionar à cotação</button>
@@ -2132,17 +1960,6 @@ document.addEventListener('click', e => {
     if (campo) { ui.cursorItem = +linhaItem.dataset.itemLinha; moverCursorItem(ui.cursorItem, false); campo.dataset.original = campo.value; }
     else if (!e.target.closest('button')) moverCursorItem(+linhaItem.dataset.itemLinha);
   }
-  const linhaDc = e.target.closest('[data-dc-linha]');
-  if (linhaDc && ui.datacar) {
-    const i = +linhaDc.dataset.dcLinha;
-    moverCursorDataCar(i);
-    if (e.target.closest('[data-dc-marca-cel]')) {
-      if (!e.target.closest('input')) editarMarcaDataCar(i);
-    } else if (!e.target.closest('input, button, select, label')) {
-      marcarLinhaDataCar(i, !ui.datacar.linhas[i].sel);
-      $('#dcCaixa')?.focus({ preventScroll: true });
-    }
-  }
   const link = e.target.closest('[data-route]');
   if (link) {
     e.preventDefault();
@@ -2180,45 +1997,18 @@ function adicionarItem(produtoId, quantidade = 1) {
 const acoes = {
   addItem: el => adicionarItem(el.dataset.id),
 
-  dcOrdenar: el => { ordenarDataCar(el.dataset.campo); renderSoDataCar(); focarDataCar(); },
-  dcModo: el => {
-    const d = ui.datacar;
-    d.filtro = { ...(d.filtro || { texto: '' }), modo: el.dataset.modo };
-    atualizarResumoDataCar(); // redesenha os botões de grupo conforme o filtro
-    aplicarFiltroDataCar();
-    moverCursorDataCar(acharVisivelDataCar(0, 1));
-    $('#dcCaixa')?.focus({ preventScroll: true });
-  },
+  dcDecidir: el => decidirDataCar(el.dataset.d),
+  dcVoltar: () => voltarDataCar(),
+  dcPendente: () => irPendenteDataCar(),
+  dcRecomecar: () => { ui.datacar.pos = 0; desenharConferencia(); },
+  dcEditarMarca: () => editarMarcaDataCar(),
 
-  dcGrupo: el => {
-    const d = ui.datacar;
-    const k = el.dataset.g;
-    if (d.ignorados.has(k)) return alternarIgnorarGrupoDataCar(k);
-    const idx = [];
-    d.linhas.forEach((l, i) => { if ((l.codigo || l.chave) && grupoDc(l.chave || '') === k) idx.push(i); });
-    const todos = idx.every(i => d.linhas[i].sel);
-    for (const i of idx) {
-      d.linhas[i].sel = !todos;
-      const tr = document.querySelector(`[data-dc-linha="${i}"]`);
-      if (tr) {
-        tr.classList.toggle('dc-on', !todos);
-        tr.querySelector('.dc-check')?.setAttribute('aria-checked', String(!todos));
-      }
-    }
-    atualizarResumoDataCar();
-    aplicarFiltroDataCar();
-    if (idx.length) moverCursorDataCar(idx[0]);
-    $('#dcCaixa')?.focus({ preventScroll: true });
-  },
-
-  dcTodos: () => { ui.datacar.linhas.forEach(l => { if ((l.codigo || l.chave) && !ignoradaDataCar(l)) l.sel = true; }); renderSoDataCar(); focarDataCar(); },
-  dcNenhum: () => { ui.datacar.linhas.forEach(l => { l.sel = false; }); renderSoDataCar(); focarDataCar(); },
   dcCancelar: async () => {
     const d = ui.datacar;
     if (!d) return;
     const sel = d.linhas.filter(l => l.sel).length;
     const msg = sel
-      ? `Sair desta tela? Os ${sel} item(ns) marcado(s) não serão adicionados à cotação.`
+      ? `Sair desta tela? Os ${sel} item(ns) marcado(s) para ir não serão adicionados à cotação.`
       : 'Sair desta tela sem adicionar itens à cotação?';
     if (!(await abrirDialogo(msg, [{ txt: 'Continuar aqui', valor: false }, { txt: 'Sair', valor: true, cls: 'danger' }]))) {
       focarDataCar();
@@ -2597,16 +2387,6 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('input', e => {
   const t = e.target;
-  if (t.id === 'dcBusca' && ui.datacar) {
-    ui.datacar.filtro = { ...(ui.datacar.filtro || { modo: 'todos' }), texto: t.value };
-    aplicarFiltroDataCar();
-    const d = ui.datacar;
-    if (!linhaVisivelDataCar(d.cursor)) {
-      const j = acharVisivelDataCar(0, 1);
-      if (j >= 0) { d.cursor = j; document.querySelectorAll('.dc-row.dc-atual').forEach(r => r.classList.remove('dc-atual')); document.querySelector(`[data-dc-linha="${j}"]`)?.classList.add('dc-atual'); }
-    }
-    return;
-  }
   if (t.dataset.draft) {
     rascunho()[t.dataset.draft] = t.value;
     salvar();
@@ -2758,20 +2538,12 @@ document.addEventListener('change', async e => {
     }
     salvar();
     render();
-  } else if (t.id === 'dcAgrupar') {
-    ui.datacar.agrupar = t.checked;
-    focarDataCar();
-  } else if (t.id === 'dcColCod') {
-    ui.datacar.colCod = +t.value;
+  } else if (t.id === 'dcColCod' || t.id === 'dcCol') {
+    if (t.id === 'dcColCod') ui.datacar.colCod = +t.value; else ui.datacar.col = +t.value;
     casarLinhasDataCar();
     aplicarOrdemDataCar();
-    render();
-    focarDataCar();
-  } else if (t.id === 'dcCol') {
-    ui.datacar.col = +t.value;
-    casarLinhasDataCar();
-    aplicarOrdemDataCar();
-    render();
+    ui.datacar.pos = 0;
+    renderSoDataCar();
     focarDataCar();
   } else if (t.id === 'statusCot') {
     ui.statusCot = t.value;
