@@ -3088,6 +3088,97 @@ function linhaTotalComp(c, comp) {
   </tr>`;
 }
 
+/* ---------------- pedido mínimo e frete ---------------- */
+
+/** Regras do cadastro do fornecedor: pedido mínimo, frete e frete grátis a partir de um valor. */
+function regrasForn(fornecedorId) {
+  const f = db.fornecedores.find(x => x.id === fornecedorId) || {};
+  return { minimo: Number(f.pedidoMinimo) || 0, frete: Number(f.frete) || 0, gratis: Number(f.freteGratisAcima) || 0 };
+}
+
+function custoFrete(r, total) {
+  return r.frete && total > 0 && !(r.gratis && total >= r.gratis) ? r.frete : 0;
+}
+
+/** 2º colocado de um item, sem contar o fornecedor `fi` (evita marca errada quando dá). */
+function alternativaItem(l, fi) {
+  const cands = l.precos.map((p, j) => ({ j, preco: p })).filter(x => x.j !== fi && x.preco != null);
+  const boas = cands.filter(x => l.marcas[x.j] !== 'errada');
+  const lista = (boas.length ? boas : cands).sort((a, b) => a.preco - b.preco);
+  return lista[0] || null;
+}
+
+/**
+ * Simula passar os itens ganhos pelo fornecedor `fi` para o 2º colocado de cada item:
+ * quanto os itens ficam mais caros, como muda o frete e quem fica abaixo do mínimo.
+ */
+function simularMover(c, comp, fi) {
+  const moves = [], presos = [];
+  for (const l of comp.linhas) {
+    if (l.vencedor !== fi || !l.q) continue;
+    const alt = alternativaItem(l, fi);
+    if (alt) moves.push({ l, j: alt.j, preco: alt.preco }); else presos.push(l);
+  }
+  if (!moves.length) return null;
+  const antes = c.fornecedores.map((f, j) => comp.linhas.reduce((s, l) => s + (l.vencedor === j && l.q ? l.preco * l.q : 0), 0));
+  const depois = [...antes];
+  let extra = 0;
+  for (const m of moves) {
+    extra += (m.preco - m.l.preco) * m.l.q;
+    depois[fi] -= m.l.preco * m.l.q;
+    depois[m.j] += m.preco * m.l.q;
+  }
+  const regras = c.fornecedores.map(f => regrasForn(f.fornecedorId));
+  const frete = tot => tot.reduce((s, t, j) => s + custoFrete(regras[j], t), 0);
+  const freteAntes = frete(antes), freteDepois = frete(depois);
+  const abaixoDepois = c.fornecedores.map((f, j) => j).filter(j => j !== fi && regras[j].minimo && depois[j] > 0 && depois[j] < regras[j].minimo && moves.some(m => m.j === j));
+  return { moves, presos, extra, freteAntes, freteDepois, saldo: extra + freteDepois - freteAntes, abaixoDepois, depois };
+}
+
+/** Situação de cada pedido quanto a mínimo e frete, com a sugestão para os que ficaram abaixo. */
+function analisarMinimos(c, comp) {
+  const peds = pedidosPorFornecedor(c);
+  const lista = peds.map(p => {
+    const r = regrasForn(p.f.fornecedorId);
+    const frete = custoFrete(r, p.total);
+    const abaixo = r.minimo > 0 && p.total < r.minimo;
+    return {
+      p, r, frete, abaixo, falta: abaixo ? r.minimo - p.total : 0,
+      faltaGratis: frete && r.gratis ? r.gratis - p.total : 0,
+      ignorado: !!c.minimoOk?.[p.f.fornecedorId],
+      sim: abaixo ? simularMover(c, comp, p.fi) : null,
+    };
+  });
+  return { lista, freteTotal: lista.reduce((s, x) => s + x.frete, 0) };
+}
+
+function avisosMinimo(c, an) {
+  const itens = an.lista.filter(x => (x.abaixo && !x.ignorado) || (x.frete && x.faltaGratis > 0 && !x.abaixo));
+  if (!itens.length) return '';
+  return `<div class="avisos-minimo">${itens.map(x => {
+    const nome = esc(x.p.f.nome);
+    if (!x.abaixo) {
+      return `<p class="aviso-frete small">🚚 <b>${nome}</b> cobra frete de ${fmtMoeda(x.frete)}: faltam ${fmtMoeda(x.faltaGratis)} para o frete grátis (acima de ${fmtMoeda(x.r.gratis)}).</p>`;
+    }
+    const sim = x.sim;
+    let sug = '';
+    if (sim) {
+      const tudo = !sim.presos.length;
+      const qual = sim.moves.length === 1 ? (tudo ? 'o item' : '1 item') : `${tudo ? 'os ' : ''}${sim.moves.length} itens`;
+      sug = `<br>Passar ${qual} para o 2º colocado: itens ${sim.extra >= 0 ? '+' : '−'}${fmtMoeda(Math.abs(sim.extra))}${sim.freteDepois !== sim.freteAntes ? `, frete ${sim.freteDepois > sim.freteAntes ? '+' : '−'}${fmtMoeda(Math.abs(sim.freteDepois - sim.freteAntes))}` : ''} → <b>${sim.saldo > 0 ? `custa ${fmtMoeda(sim.saldo)} a mais` : sim.saldo < 0 ? `economiza ${fmtMoeda(-sim.saldo)}` : 'mesmo valor'}</b>.
+        ${sim.presos.length ? `<span class="muted">${sim.presos.length} item(ns) só ${nome} cotou e continuam com ele.</span>` : ''}
+        ${sim.abaixoDepois.length ? `<span class="txt-ruim">Atenção: ${sim.abaixoDepois.map(j => esc(c.fornecedores[j].nome)).join(', ')} continuaria abaixo do mínimo.</span>` : ''}`;
+    } else sug = '<br><span class="muted">Nenhum outro fornecedor cotou esses itens.</span>';
+    return `<div class="aviso-minimo">
+      <div>⚠ <b>${nome}</b>: pedido de ${fmtMoeda(x.p.total)}, abaixo do mínimo de ${fmtMoeda(x.r.minimo)} (faltam ${fmtMoeda(x.falta)}).${sug}</div>
+      <div class="row">
+        ${sim ? `<button class="sm primary" data-act="moverItensMinimo" data-f="${x.p.fi}">Passar os itens</button>` : ''}
+        <button class="sm" data-act="manterMinimo" data-forn="${esc(x.p.f.fornecedorId)}" title="Vou completar o pedido ou o fornecedor aceita assim">Manter assim</button>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
 function celulaRecebimento(c, p, porLoja) {
   const LJ = lojas();
   const partes = [];
@@ -3109,6 +3200,15 @@ function celulaRecebimento(c, p, porLoja) {
   return partes.join('<br>') + (links ? `<br>${links}` : '');
 }
 
+function celulaFrete(x) {
+  if (!x) return '';
+  const partes = [];
+  if (x.frete) partes.push(`frete ${fmtMoeda(x.frete)}`);
+  else if (x.r.frete) partes.push('<span class="ok-mark">frete grátis</span>');
+  if (x.r.minimo) partes.push(x.abaixo ? `<span class="txt-ruim">mín. ${fmtMoeda(x.r.minimo)}</span>` : `<span class="muted">mín. ${fmtMoeda(x.r.minimo)} ✓</span>`);
+  return partes.join('<br>') || '—';
+}
+
 function secaoPedidos(c, comp) {
   const LJ = lojas();
   const peds = pedidosPorFornecedor(c);
@@ -3117,6 +3217,9 @@ function secaoPedidos(c, comp) {
   if (!peds.length) {
     return `<section class="card" id="secPedidos"><h3>Pedidos de compra</h3><p class="muted small">Nenhum item com quantidade ainda. Digite as quantidades das lojas no comparativo.</p></section>`;
   }
+  const an = analisarMinimos(c, comp);
+  const infoMin = fid => an.lista.find(x => x.p.f.fornecedorId === fid);
+  const temFrete = an.lista.some(x => x.r.frete || x.r.minimo);
   const totLoja = (p, lj) => p.itens.reduce((s, x) => s + x.preco * (x.qtds[lj.id] || 0), 0);
   const itensLoja = (p, lj) => p.itens.filter(x => x.qtds[lj.id] > 0).length;
   return `
@@ -3131,12 +3234,14 @@ function secaoPedidos(c, comp) {
       </div>
     </div>
     <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
+    ${avisosMinimo(c, an)}
     <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th><th>Pagamento / entrega</th><th>Recebimento</th><th></th></tr></thead>
+      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th>${temFrete ? '<th class="r">Frete / mínimo</th>' : ''}<th>Pagamento / entrega</th><th>Recebimento</th><th></th></tr></thead>
       <tbody>${peds.map(p => `<tr>
         <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span>${p.f.pedidoEnviadoEm ? `<br><span class="badge ok">✉ pedido enviado ${fmtData(p.f.pedidoEnviadoEm)}</span>` : ''}</td>
         ${comp.porLoja ? LJ.map(lj => `<td class="r">${itensLoja(p, lj) ? `${fmtMoeda(totLoja(p, lj))}<br><span class="small muted">${itensLoja(p, lj)} item(ns)</span>` : '<span class="muted">—</span>'}</td>`).join('') : ''}
         <td class="r"><b>${fmtMoeda(p.total)}</b></td>
+        ${temFrete ? `<td class="r small">${celulaFrete(infoMin(p.f.fornecedorId))}</td>` : ''}
         <td class="small">${esc([p.f.cond?.pagamento, p.f.cond?.prazo].filter(Boolean).join(' · ') || '—')}</td>
         <td class="small">${celulaRecebimento(c, p, comp.porLoja)}</td>
         <td class="actions-cell">
@@ -3145,7 +3250,7 @@ function secaoPedidos(c, comp) {
           <button class="sm" data-act="baixarPedido" data-f="${p.fi}" title="${comp.porLoja ? 'Um pedido com as duas lojas (uma coluna de quantidade para cada)' : 'Pedido deste fornecedor'}">⬇ ${comp.porLoja ? 'Lojas juntas' : 'Pedido'}</button>
         </td>
       </tr>`).join('')}
-      <tr class="total"><td>Total</td>${comp.porLoja ? LJ.map(lj => `<td class="r">${fmtMoeda(comp.porLojaTotal[lj.id])}</td>`).join('') : ''}<td class="r">${fmtMoeda(comp.melhor)}</td><td colspan="3"></td></tr>
+      <tr class="total"><td>Total</td>${comp.porLoja ? LJ.map(lj => `<td class="r">${fmtMoeda(comp.porLojaTotal[lj.id])}</td>`).join('') : ''}<td class="r">${fmtMoeda(comp.melhor)}${an.freteTotal ? `<br><span class="small">+ frete ${fmtMoeda(an.freteTotal)} = <b>${fmtMoeda(comp.melhor + an.freteTotal)}</b></span>` : ''}</td>${temFrete ? '<td></td>' : ''}<td colspan="3"></td></tr>
       </tbody>
     </table></div>
   </section>`;
@@ -3635,7 +3740,7 @@ function linhasFornecedores() {
   return lista.map(f => {
     const n = db.cotacoes.filter(c => c.fornecedores.some(x => x.fornecedorId === f.id)).length;
     return `<tr>
-      <td><b>${esc(f.nome)}</b>${f.obs ? `<br><span class="small muted">${esc(f.obs)}</span>` : ''}</td>
+      <td><b>${esc(f.nome)}</b>${f.obs ? `<br><span class="small muted">${esc(f.obs)}</span>` : ''}${f.pedidoMinimo || f.frete ? `<br><span class="small">${[f.pedidoMinimo && `mínimo ${fmtMoeda(f.pedidoMinimo)}`, f.frete && `frete ${fmtMoeda(f.frete)}${f.freteGratisAcima ? ` (grátis acima de ${fmtMoeda(f.freteGratisAcima)})` : ''}`].filter(Boolean).join(' · ')}</span>` : ''}</td>
       <td>${esc(f.contato || '—')}</td>
       <td>${f.email ? `<a href="mailto:${esc(f.email)}">${esc(f.email)}</a>` : '—'}</td>
       <td>${esc(f.telefone || '—')}</td>
@@ -3660,6 +3765,9 @@ function renderFornecedores() {
       <label>E-mail<input name="email" type="email" value="${esc(v.email)}"></label>
       <label>Telefone / WhatsApp<input name="telefone" value="${esc(v.telefone)}"></label>
       <label>CNPJ <span class="muted small">(para reconhecer a NF-e)</span><input name="cnpj" value="${esc(v.cnpj)}"></label>
+      <label>Pedido mínimo (R$)<input name="pedidoMinimo" inputmode="decimal" value="${v.pedidoMinimo ? esc(fmtNum(v.pedidoMinimo, 2)) : ''}" placeholder="sem mínimo"></label>
+      <label>Frete (R$)<input name="frete" inputmode="decimal" value="${v.frete ? esc(fmtNum(v.frete, 2)) : ''}" placeholder="sem frete"></label>
+      <label>Frete grátis acima de (R$)<input name="freteGratisAcima" inputmode="decimal" value="${v.freteGratisAcima ? esc(fmtNum(v.freteGratisAcima, 2)) : ''}" placeholder="—"></label>
       <label style="grid-column:1/-1">Observação (o que fornece, condições…)<input name="obs" value="${esc(v.obs)}"></label>
       <div class="actions" style="grid-column:1/-1">
         ${f ? '<button type="button" data-act="cancelarForn">Cancelar</button>' : ''}
@@ -4239,6 +4347,26 @@ const acoes = {
     if (rec) return exportarDivergencias(c, rec);
   },
 
+  moverItensMinimo: async el => {
+    const c = cotAtual();
+    const fi = +el.dataset.f;
+    const sim = simularMover(c, comparar(c), fi);
+    if (!sim) return;
+    const f = c.fornecedores[fi];
+    if (!(await confirmar(`Passar ${sim.moves.length} item(ns) de ${f.nome} para o 2º colocado?\n\n${sim.moves.map(m => `• ${m.l.it.descricao}: ${fmtMoeda(m.l.preco)} → ${c.fornecedores[m.j].nome} ${fmtMoeda(m.preco)}`).join('\n')}\n\nDiferença total (itens + frete): ${sim.saldo >= 0 ? '+' : '−'}${fmtMoeda(Math.abs(sim.saldo))}. Dá para desfazer clicando nos preços ou em "Desfazer as escolhas".`, 'Passar os itens'))) return;
+    c.escolhas = { ...(c.escolhas || {}) };
+    for (const m of sim.moves) c.escolhas[m.l.i] = c.fornecedores[m.j].fornecedorId;
+    salvar();
+    render();
+    toast(`${sim.moves.length} item(ns) passados para o 2º colocado.`);
+  },
+  manterMinimo: el => {
+    const c = cotAtual();
+    c.minimoOk = { ...(c.minimoOk || {}), [el.dataset.forn]: true };
+    salvar();
+    render();
+  },
+
   limparEscolhas: async () => {
     const c = cotAtual();
     if (!(await confirmar('Desfazer todas as escolhas feitas na mão e voltar ao menor preço em todos os itens?'))) return;
@@ -4400,6 +4528,7 @@ const formularios = {
   fornecedor: form => {
     const d = formDados(form);
     if (!d.nome) return;
+    for (const k of ['pedidoMinimo', 'frete', 'freteGratisAcima']) d[k] = Math.max(0, parseNum(d[k]) || 0);
     if (ui.editForn) {
       Object.assign(db.fornecedores.find(f => f.id === ui.editForn), d);
       ui.editForn = null;

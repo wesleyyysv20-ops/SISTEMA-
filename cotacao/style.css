@@ -776,3 +776,9 @@ button.link.small { font-size: 12px; }
 
 /* envio dos pedidos */
 .formato-pedido { margin: 8px 0 0; padding: 8px 10px; background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; gap: 14px; }
+
+/* pedido mínimo e frete */
+.avisos-minimo { display: grid; gap: 8px; margin: 0 0 10px; }
+.aviso-minimo { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 8px; background: var(--danger-bg); color: var(--text); border-left: 4px solid var(--danger); font-size: 14px; }
+.aviso-minimo .row { flex-wrap: nowrap; }
+.aviso-frete { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }

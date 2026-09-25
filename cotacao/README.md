@@ -125,6 +125,15 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
   marcado como enviado; quem não tem e-mail pode ser marcado com ✓ depois de mandar pelo WhatsApp.
 - O texto do e-mail fica em Configurações (campos {totalPedido} {itensPedido} {entrega} {pagamento}).
 
+## Pedido mínimo e frete
+
+- No cadastro do fornecedor: **pedido mínimo**, **frete** e **frete grátis acima de**.
+- Nos pedidos de compra: aviso de pedido abaixo do mínimo (quanto falta), frete de cada pedido,
+  quanto falta para o frete grátis e o total com frete.
+- Para o pedido abaixo do mínimo, o sistema simula passar os itens para o 2º colocado e mostra a
+  conta (diferença dos itens + mudança no frete, e se quem recebe fica abaixo do mínimo dele).
+  **Passar os itens** aplica como escolha manual (dá para desfazer); **Manter assim** tira o aviso.
+
 ## Conferência da nota fiscal (NF-e)
 
 - **🧾 Conferir NF-e (XML)** (na lista de cotações ou nos pedidos da cotação): o sistema lê o XML da
