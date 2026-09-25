@@ -1,0 +1,14 @@
+{
+  "name": "cotacao-testes",
+  "private": true,
+  "description": "Testes automáticos do sistema de cotação (abre o sistema num navegador e confere cada função).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 \"testes/*.test.mjs\""
+  },
+  "devDependencies": {
+    "exceljs": "4.4.0",
+    "jszip": "^3.10.1",
+    "playwright": "^1.55.0"
+  }
+}

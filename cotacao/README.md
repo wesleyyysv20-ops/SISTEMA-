@@ -115,3 +115,7 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
 - **Arquivar:** a cotação sai da lista, mas continua no histórico de preços e nos relatórios. A lista
   sugere arquivar as canceladas e as finalizadas com mais de 60 dias; *Ver só as arquivadas* mostra as
   arquivadas, e **↩ Desarquivar** (na cotação) traz de volta.
+
+## Testes automáticos
+
+Ficam em `../cotacao-testes/` e rodam sozinhos no GitHub a cada alteração. Veja o README de lá para rodar no computador.

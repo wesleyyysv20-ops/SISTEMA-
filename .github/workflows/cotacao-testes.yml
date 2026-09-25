@@ -1,0 +1,25 @@
+name: Testes do sistema de cotação
+on:
+  push:
+    paths: [ 'cotacao/**', 'cotacao-testes/**', '.github/workflows/cotacao-testes.yml' ]
+  pull_request:
+    paths: [ 'cotacao/**', 'cotacao-testes/**', '.github/workflows/cotacao-testes.yml' ]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cotacao-testes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cotacao-testes/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
