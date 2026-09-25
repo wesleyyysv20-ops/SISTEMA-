@@ -24,6 +24,13 @@ const DEFAULT_DB = {
       'Por favor, preencha os preços unitários (campos em amarelo) e nos devolva a planilha por e-mail até {prazo}.\n\n' +
       'Obrigado,\n{comprador}\n{loja}\n{telefone}',
     diasAviso: 1,
+    marcaErradaNaoGanha: true,
+    marcasEquivalentes: {}, // marca pedida (normalizada) → abreviações aceitas
+    marcasDiferentes: {}, // marca pedida (normalizada) → respostas que NÃO são a mesma marca
+    lojas: [
+      { id: 'sao-sebastiao', nome: 'São Sebastião', cnpj: '', endereco: '' },
+      { id: 'paranoa', nome: 'Paranoá', cnpj: '', endereco: '' },
+    ],
     assuntoCobranca: 'Lembrete: cotação nº {numero} - {loja}',
     corpoCobranca:
       'Olá, {fornecedor}!\n\n' +
@@ -528,20 +535,135 @@ function novoFornCot(f) {
   };
 }
 
+/* ---------------- marcas ---------------- */
+
+function normMarca(v) {
+  return semAcento(v).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** A marca pedida pode ter mais de uma opção: "NSK/SKF", "COFAP ou MONROE". */
+function opcoesMarca(pedida) {
+  return String(pedida || '').split(/[\/,;|+]|\s+OU\s+/i).map(normMarca).filter(Boolean);
+}
+
+const PESO_MARCA = { ok: 4, abrev: 3, duvida: 2, errada: 1 };
+
+function ehSubsequencia(curta, longa) {
+  let k = 0;
+  for (const ch of longa) if (ch === curta[k]) k++;
+  return k === curta.length;
+}
+
+/** Compara uma opção de marca pedida com a resposta (as duas já normalizadas). */
+function compararMarcaOpcao(op, r) {
+  const oc = op.replace(/ /g, ''), rc = r.replace(/ /g, '');
+  if (oc === rc) return 'ok';
+  if ((db.config.marcasDiferentes?.[op] || []).includes(r)) return 'errada';
+  if ((db.config.marcasEquivalentes?.[op] || []).includes(r)) return 'ok';
+  let melhor = 'errada';
+  for (const [a, b] of [[op, r], [r, op]]) { // a = nome completo, b = possível abreviação
+    const ac = a.replace(/ /g, ''), bc = b.replace(/ /g, '');
+    const pa = a.split(' '), pb = b.split(' ');
+    if (bc.length >= 2 && ac.startsWith(bc)) return 'abrev'; // COF → COFAP
+    if (pa.length > 1 && bc === pa.map(w => w[0]).join('')) return 'abrev'; // MM → MAGNETI MARELLI
+    if (pa.some(w => w.length >= 3 && pb.includes(w))) return 'abrev'; // MARELLI, "NSK ORIGINAL"
+    if (bc.length >= 2 && bc[0] === ac[0] && ehSubsequencia(bc, ac)) {
+      if (bc.length >= 3) return 'abrev'; // MGN → MAGNETI, NKT → NAKATA
+      melhor = 'duvida'; // só 2 letras: confirmar
+    }
+  }
+  return melhor;
+}
+
+/**
+ * Situação da marca respondida em relação à pedida:
+ * null (item sem marca pedida), 'sem' (fornecedor não informou), 'ok', 'abrev' (abreviação reconhecida),
+ * 'duvida' (pode ser abreviação: confirmar) ou 'errada'.
+ */
+function statusMarca(pedida, resposta) {
+  const ops = opcoesMarca(pedida);
+  if (!ops.length) return null;
+  const r = normMarca(resposta);
+  if (!r) return 'sem';
+  return ops.map(op => compararMarcaOpcao(op, r)).sort((a, b) => PESO_MARCA[b] - PESO_MARCA[a])[0];
+}
+
+function chipMarca(l, j, o) {
+  const st = l.marcas[j];
+  const m = o?.marca || '';
+  const at = `data-act="marcaResposta" data-i="${l.i}" data-f="${j}"`;
+  if (st === 'errada') return `<span class="chip-marca errada" ${at} title="Pedida: ${esc(l.it.marca)}. Clique para confirmar ou corrigir.">⚠ ${esc(m)} ≠ ${esc(l.it.marca)}</span>`;
+  if (st === 'duvida') return `<span class="chip-marca duvida" ${at} title="Pode ser abreviação de ${esc(l.it.marca)}. Clique para confirmar.">? ${esc(m)} — confira</span>`;
+  if (st === 'abrev') return `<span class="chip-marca ok" ${at} title="Reconhecida como ${esc(l.it.marca)}">✓ ${esc(m)}</span>`;
+  if (st === 'ok') return `<span class="chip-marca ok" title="Marca pedida">✓ ${esc(m)}</span>`;
+  if (st === 'sem') return `<span class="chip-marca sem" title="O fornecedor não informou a marca (pedida: ${esc(l.it.marca)})">sem marca</span>`;
+  return `<span class="small muted">Marca: ${esc(m)}</span>`;
+}
+
+/** Guarda a decisão sobre uma marca respondida: 'igual' ou 'diferente'. */
+function aprenderMarca(pedida, resposta, decisao) {
+  const r = normMarca(resposta);
+  const ops = opcoesMarca(pedida);
+  if (!r || !ops.length) return;
+  const eq = db.config.marcasEquivalentes = { ...(db.config.marcasEquivalentes || {}) };
+  const dif = db.config.marcasDiferentes = { ...(db.config.marcasDiferentes || {}) };
+  const tirar = (mapa, op) => { if (mapa[op]) mapa[op] = mapa[op].filter(x => x !== r); if (mapa[op] && !mapa[op].length) delete mapa[op]; };
+  if (decisao === 'igual') {
+    // liga a abreviação à opção mais parecida (a que começa com a mesma letra)
+    const op = ops.find(x => x[0] === r[0]) || ops[0];
+    tirar(dif, op);
+    eq[op] = [...new Set([...(eq[op] || []), r])];
+  } else {
+    for (const op of ops) { tirar(eq, op); dif[op] = [...new Set([...(dif[op] || []), r])]; }
+  }
+}
+
+/** Lojas para as quais a compra é dividida (Configurações). */
+function lojas() {
+  const l = (db.config.lojas || []).filter(x => x && x.id);
+  return l.length ? l : DEFAULT_DB.config.lojas;
+}
+
+/** true quando já foi digitada alguma quantidade por loja nesta cotação. */
+function temQtdLojas(c) {
+  return !!c.qtds && Object.values(c.qtds).some(o => o && Object.values(o).some(v => v > 0));
+}
+
+function qtdLoja(c, i, lojaId) {
+  return Number(c.qtds?.[i]?.[lojaId]) || 0;
+}
+
+/**
+ * Quantidade a comprar do item i: a soma das lojas, depois que as quantidades forem digitadas;
+ * antes disso vale a quantidade da cotação (preço por unidade).
+ */
+function qtdItem(c, i, porLoja = temQtdLojas(c)) {
+  if (!porLoja) return c.itens[i].quantidade || 1;
+  return lojas().reduce((s, l) => s + qtdLoja(c, i, l.id), 0);
+}
+
 /**
  * Monta o comparativo de preços de uma cotação.
  * O vencedor de cada item é o menor preço, a não ser que a pessoa tenha escolhido outro fornecedor
  * (c.escolhas[i] = fornecedorId). l.preco é o preço do vencedor; l.min continua sendo o menor preço.
  */
 function comparar(c) {
+  const porLoja = temQtdLojas(c);
   const linhas = c.itens.map((it, i) => {
     const precos = c.fornecedores.map(f => {
       const p = f.respostas?.[i]?.preco;
       return p != null && p > 0 ? p : null;
     });
-    const validos = precos.filter(p => p != null);
+    const marcas = c.fornecedores.map(f => statusMarca(it.marca, f.respostas?.[i]?.marca));
+    // preço com marca diferente da pedida não ganha sozinho (a não ser que só haja esses)
+    let aptos = precos;
+    if (db.config.marcaErradaNaoGanha !== false) {
+      const filtrados = precos.map((p, j) => (marcas[j] === 'errada' ? null : p));
+      if (filtrados.some(p => p != null)) aptos = filtrados;
+    }
+    const validos = aptos.filter(p => p != null);
     const min = validos.length ? Math.min(...validos) : null;
-    let vencedor = min == null ? -1 : precos.indexOf(min);
+    let vencedor = min == null ? -1 : aptos.indexOf(min);
     let manual = false;
     const escolhido = c.escolhas?.[i];
     if (escolhido) {
@@ -550,27 +672,30 @@ function comparar(c) {
     }
     const preco = vencedor >= 0 ? precos[vencedor] : null;
     // segundo melhor preço (de outro fornecedor) e a diferença em % para o melhor
-    const ordem = precos.map((p, j) => [p, j]).filter(([p]) => p != null).sort((x, y) => x[0] - y[0]);
+    const ordem = aptos.map((p, j) => [p, j]).filter(([p]) => p != null).sort((x, y) => x[0] - y[0]);
     const [seg, segIdx] = ordem.length > 1 ? ordem[1] : [null, -1];
     const difSegundo = seg != null && min > 0 ? seg / min - 1 : null;
-    return { it, i, precos, min, vencedor, preco, manual, segundo: seg, segundoIdx: segIdx, difSegundo };
+    const q = qtdItem(c, i, porLoja);
+    return { it, i, q, precos, marcas, min, vencedor, preco, manual, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
     for (const l of linhas) {
       const p = l.precos[fi];
       if (p == null) continue;
-      total += p * l.it.quantidade;
+      total += p * l.q;
       cotados++;
-      if (l.vencedor === fi) { vencidos++; valorVencido += p * l.it.quantidade; }
+      if (l.vencedor === fi) { vencidos++; valorVencido += p * l.q; }
     }
     return { total, cotados, vencidos, valorVencido };
   });
-  const melhor = linhas.reduce((s, l) => s + (l.preco != null ? l.preco * l.it.quantidade : 0), 0);
-  const menorPossivel = linhas.reduce((s, l) => s + (l.min != null ? l.min * l.it.quantidade : 0), 0);
+  const melhor = linhas.reduce((s, l) => s + (l.preco != null ? l.preco * l.q : 0), 0);
+  const menorPossivel = linhas.reduce((s, l) => s + (l.min != null ? l.min * l.q : 0), 0);
   const itensCotados = linhas.filter(l => l.min != null).length;
   const escolhasManuais = linhas.filter(l => l.manual).length;
-  return { linhas, totais, melhor, menorPossivel, itensCotados, escolhasManuais };
+  const porLojaTotal = Object.fromEntries(lojas().map(lj => [lj.id,
+    linhas.reduce((s, l) => s + (l.preco != null ? l.preco * qtdLoja(c, l.i, lj.id) : 0), 0)]));
+  return { linhas, totais, melhor, menorPossivel, itensCotados, escolhasManuais, porLoja, porLojaTotal };
 }
 
 /**
@@ -1015,8 +1140,9 @@ async function exportarComparativo(c) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Comparativo', { pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   const nf = c.fornecedores.length;
-  const cab = ['Item', 'Código', 'Descrição', 'Unid.', 'Qtd.', ...c.fornecedores.map(f => f.nome), 'Preço escolhido', 'Fornecedor', 'Total', '2º melhor preço', 'Dif. 1º × 2º'];
-  ws.columns = [6, 14, 44, 8, 10, ...c.fornecedores.map(() => 18), 16, 24, 18, 16, 12].map(width => ({ width }));
+  const LJ = lojas();
+  const cab = ['Item', 'Código', 'Descrição', 'Unid.', 'Qtd.', ...c.fornecedores.map(f => f.nome), 'Preço escolhido', 'Fornecedor', 'Total', '2º melhor preço', 'Dif. 1º × 2º', ...LJ.map(l => 'Qtd. ' + l.nome)];
+  ws.columns = [6, 14, 44, 8, 10, ...c.fornecedores.map(() => 18), 16, 24, 18, 16, 12, ...LJ.map(() => 14)].map(width => ({ width }));
 
   ws.mergeCells(1, 1, 1, cab.length);
   ws.getCell('A1').value = `Comparativo da cotação nº ${c.numero}${c.titulo ? ' — ' + c.titulo : ''} (${fmtData(c.data)})`;
@@ -1036,11 +1162,12 @@ async function exportarComparativo(c) {
   linhas.forEach((l, k) => {
     const row = ws.getRow(4 + k);
     row.values = [
-      k + 1, l.it.codigo || '', l.it.descricao, l.it.unidade || '', l.it.quantidade,
+      k + 1, l.it.codigo || '', l.it.descricao, l.it.unidade || '', l.q,
       ...l.precos.map(p => p ?? ''),
       l.preco ?? '', l.vencedor >= 0 ? c.fornecedores[l.vencedor].nome + (l.manual ? ' (escolhido)' : '') : 'sem preço',
-      l.preco != null ? l.preco * l.it.quantidade : '',
+      l.preco != null ? l.preco * l.q : '',
       l.segundo ?? '', l.difSegundo ?? '',
+      ...LJ.map(lj => qtdLoja(c, l.i, lj.id) || ''),
     ];
     for (let col = 1; col <= cab.length; col++) row.getCell(col).border = XL.borda;
     for (let j = 0; j < nf; j++) {
@@ -1080,63 +1207,108 @@ async function exportarComparativo(c) {
 
 /* ---------------- Excel: pedidos de compra ---------------- */
 
-/** Itens que cada fornecedor ganhou: [{ fi, f, itens: [{ it, i, preco, marca }], total }]. */
-function pedidosPorFornecedor(c) {
-  const { linhas } = comparar(c);
+/**
+ * Itens que cada fornecedor ganhou: [{ fi, f, itens: [{ it, i, preco, marca, qtd, qtds }], total }].
+ * Com `lojaId`, só as quantidades daquela loja. Itens com quantidade 0 não entram.
+ */
+function pedidosPorFornecedor(c, lojaId = null) {
+  const { linhas, porLoja } = comparar(c);
+  const LJ = lojas();
   return c.fornecedores.map((f, fi) => {
-    const itens = linhas.filter(l => l.vencedor === fi).map(l => ({
-      it: l.it, i: l.i, preco: l.preco, marca: f.respostas?.[l.i]?.marca || l.it.marca || '',
-    }));
-    return { fi, f, itens, total: itens.reduce((s, x) => s + x.preco * x.it.quantidade, 0) };
+    const itens = linhas.filter(l => l.vencedor === fi).map(l => {
+      const qtds = Object.fromEntries(LJ.map(lj => [lj.id, qtdLoja(c, l.i, lj.id)]));
+      return {
+        it: l.it, i: l.i, preco: l.preco, marca: marcaPedido(l.it.marca, f.respostas?.[l.i]?.marca, l.marcas[fi]),
+        qtds, qtd: lojaId ? qtds[lojaId] : l.q,
+      };
+    }).filter(x => x.qtd > 0);
+    return { fi, f, itens, porLoja, total: itens.reduce((s, x) => s + x.preco * x.qtd, 0) };
   }).filter(p => p.itens.length);
 }
 
-/** Monta uma aba "Pedido de compra" para um fornecedor no workbook `wb`. */
-function abaPedido(wb, c, ped, nomeAba) {
+/** Marca que vai no pedido: a pedida por extenso quando a resposta é ela (ou abreviação dela). */
+function marcaPedido(pedida, resposta, status) {
+  if ((status === 'ok' || status === 'abrev') && opcoesMarca(pedida).length === 1) return pedida;
+  return resposta || pedida || '';
+}
+
+const colLetra = n => { let s = ''; for (; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
+
+/**
+ * Monta uma aba "Pedido de compra" para um fornecedor.
+ * `loja`: pedido só daquela loja (endereço de entrega dela). Sem loja e com quantidades por loja,
+ * o pedido traz uma coluna de quantidade para cada loja.
+ */
+function abaPedido(wb, c, ped, nomeAba, loja = null) {
   const cfg = db.config;
   const { f, itens } = ped;
+  const LJ = lojas();
+  const colunasLoja = !loja && ped.porLoja;
+  const cols = [
+    { h: 'Item', v: (x, k) => k + 1, centro: true },
+    { h: 'Código', v: x => x.it.codigo || '' },
+    { h: 'Similar', v: x => x.it.similar || '' },
+    ...(colunasLoja
+      ? LJ.map(lj => ({ h: 'QTD ' + lj.nome, v: x => x.qtds[lj.id] || '', centro: true }))
+      : []),
+    { h: colunasLoja ? 'QTD TOTAL' : 'QTD', v: x => x.qtd, centro: true, qtd: true },
+    { h: 'Marca', v: x => x.marca },
+    { h: 'Descrição', v: x => x.it.descricao },
+    { h: 'Valor unit.', v: x => x.preco, moeda: true, preco: true, min: 13 },
+    { h: 'Total', total: true, moeda: true, min: 14 },
+  ];
+  const N = cols.length;
+  const ULT = colLetra(N);
+  const cQtd = colLetra(cols.findIndex(x => x.qtd) + 1);
+  const cPreco = colLetra(cols.findIndex(x => x.preco) + 1);
   const ws = wb.addWorksheet(nomeAba, {
-    pageSetup: { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    pageSetup: { orientation: N > 9 ? 'landscape' : 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });
-  const ULT = 'H';
   ws.mergeCells(`A1:${ULT}1`);
   const titulo = ws.getCell('A1');
-  titulo.value = 'PEDIDO DE COMPRA';
+  titulo.value = loja ? `PEDIDO DE COMPRA — ${loja.nome.toUpperCase()}` : 'PEDIDO DE COMPRA';
   titulo.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
   titulo.fill = XL.azul;
   titulo.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(1).height = 21;
 
+  // rótulo em A:B, valor em C até antes da metade direita, segundo par no final
+  const meio = Math.max(5, N - 3);
   const info = (row, label, value, label2, value2) => {
     ws.mergeCells(`A${row}:B${row}`);
     ws.getCell(`A${row}`).value = label;
     ws.getCell(`A${row}`).font = { bold: true };
-    ws.mergeCells(`C${row}:E${row}`);
+    ws.mergeCells(`C${row}:${colLetra(label2 ? meio : N)}${row}`);
     ws.getCell(`C${row}`).value = value || '';
     if (label2) {
-      ws.getCell(`F${row}`).value = label2;
-      ws.getCell(`F${row}`).font = { bold: true };
-      ws.mergeCells(`G${row}:H${row}`);
-      ws.getCell(`G${row}`).value = value2 || '';
-      ws.getCell(`G${row}`).alignment = { horizontal: 'left' };
+      ws.getCell(`${colLetra(meio + 1)}${row}`).value = label2;
+      ws.getCell(`${colLetra(meio + 1)}${row}`).font = { bold: true };
+      ws.mergeCells(`${colLetra(meio + 2)}${row}:${ULT}${row}`);
+      ws.getCell(`${colLetra(meio + 2)}${row}`).value = value2 || '';
+      ws.getCell(`${colLetra(meio + 2)}${row}`).alignment = { horizontal: 'left' };
     }
   };
-  info(2, 'Comprador:', cfg.loja, 'Data:', fmtData(hojeISO()));
-  info(3, 'CNPJ:', cfg.cnpj, 'Cotação nº:', c.numero);
+  const nomeLoja = loja ? [cfg.loja, loja.nome].filter(Boolean).join(' — ') : cfg.loja;
+  info(2, 'Comprador:', nomeLoja, 'Data:', fmtData(hojeISO()));
+  info(3, 'CNPJ:', (loja && loja.cnpj) || cfg.cnpj, 'Cotação nº:', c.numero);
   info(4, 'Contato:', [cfg.comprador, cfg.telefone].filter(Boolean).join(' - '), 'Referência:', c.titulo || '');
   info(5, 'E-mail:', cfg.email);
-  info(6, 'Endereço:', cfg.endereco);
-
-  ws.mergeCells('A7:B7');
-  ws.getCell('A7').value = 'Fornecedor:';
-  ws.getCell('A7').font = { bold: true };
-  ws.mergeCells(`C7:${ULT}7`);
-  ws.getCell('C7').value = [f.nome, f.contato].filter(Boolean).join(' — ');
-  ws.getCell('C7').font = { bold: true, size: 12 };
-
-  const conds = COND_CAMPOS.filter(([k]) => f.cond?.[k]);
-  let r = 8;
-  for (const [k, label] of conds) {
+  let r = 6;
+  if (loja) {
+    info(r++, 'Entregar em:', [loja.nome, loja.endereco || cfg.endereco].filter(Boolean).join(' — '));
+  } else if (colunasLoja) {
+    for (const lj of LJ) info(r++, `Entrega ${lj.nome}:`, lj.endereco || '—');
+  } else {
+    info(r++, 'Endereço:', cfg.endereco);
+  }
+  ws.mergeCells(`A${r}:B${r}`);
+  ws.getCell(`A${r}`).value = 'Fornecedor:';
+  ws.getCell(`A${r}`).font = { bold: true };
+  ws.mergeCells(`C${r}:${ULT}${r}`);
+  ws.getCell(`C${r}`).value = [f.nome, f.contato].filter(Boolean).join(' — ');
+  ws.getCell(`C${r}`).font = { bold: true, size: 12 };
+  r++;
+  for (const [k, label] of COND_CAMPOS.filter(([k]) => f.cond?.[k])) {
     ws.mergeCells(`A${r}:B${r}`);
     ws.getCell(`A${r}`).value = label + ':';
     ws.getCell(`A${r}`).font = { bold: true };
@@ -1147,68 +1319,67 @@ function abaPedido(wb, c, ped, nomeAba) {
 
   const HEADER = r + 1;
   const FIRST = HEADER + 1;
-  const cab = ['Item', 'Código', 'Similar', 'QTD', 'Marca', 'Descrição', 'Valor unit.', 'Total'];
   const hr = ws.getRow(HEADER);
-  cab.forEach((txt, k) => {
+  cols.forEach((col, k) => {
     const cell = hr.getCell(k + 1);
-    cell.value = txt;
+    cell.value = col.h;
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     cell.fill = XL.azul;
     cell.border = XL.borda;
-    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
   });
 
   itens.forEach((x, k) => {
     const n = FIRST + k;
     const row = ws.getRow(n);
-    row.values = [k + 1, x.it.codigo || '', x.it.similar || '', x.it.quantidade, x.marca, x.it.descricao, x.preco, { formula: `D${n}*G${n}`, result: x.preco * x.it.quantidade }];
-    for (let col = 1; col <= 8; col++) {
-      row.getCell(col).border = XL.borda;
-      row.getCell(col).alignment = { vertical: 'middle' };
-    }
-    row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
-    row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
-    row.getCell(7).numFmt = XL.moeda;
-    row.getCell(8).numFmt = XL.moeda;
+    cols.forEach((col, j) => {
+      const cell = row.getCell(j + 1);
+      cell.value = col.total ? { formula: `${cQtd}${n}*${cPreco}${n}`, result: x.preco * x.qtd } : col.v(x, k);
+      cell.border = XL.borda;
+      cell.alignment = { vertical: 'middle', horizontal: col.centro ? 'center' : undefined };
+      if (col.moeda) cell.numFmt = XL.moeda;
+    });
   });
 
   const LAST = FIRST + itens.length - 1;
   const TOTAL = LAST + 1;
-  ws.mergeCells(`A${TOTAL}:G${TOTAL}`);
+  const penult = colLetra(N - 1);
+  ws.mergeCells(`A${TOTAL}:${penult}${TOTAL}`);
   ws.getCell(`A${TOTAL}`).value = `TOTAL DO PEDIDO (${itens.length} ${itens.length === 1 ? 'item' : 'itens'})`;
   ws.getCell(`A${TOTAL}`).alignment = { horizontal: 'right' };
-  ws.getCell(`H${TOTAL}`).value = { formula: `SUM(H${FIRST}:H${LAST})`, result: ped.total };
-  ws.getCell(`H${TOTAL}`).numFmt = XL.moeda;
-  for (const col of ['A', 'H']) {
+  ws.getCell(`${ULT}${TOTAL}`).value = { formula: `SUM(${ULT}${FIRST}:${ULT}${LAST})`, result: ped.total };
+  ws.getCell(`${ULT}${TOTAL}`).numFmt = XL.moeda;
+  for (const col of ['A', ULT]) {
     ws.getCell(`${col}${TOTAL}`).font = { bold: true };
     ws.getCell(`${col}${TOTAL}`).fill = XL.cinza;
     ws.getCell(`${col}${TOTAL}`).border = XL.borda;
   }
 
-  const larguras = cab.map((h, k) => {
-    let m = String(h).length;
-    itens.forEach((x, j) => {
-      const v = [String(j + 1), x.it.codigo || '', x.it.similar || '', String(x.it.quantidade), x.marca, x.it.descricao || ''][k];
-      if (v != null) m = Math.max(m, String(v).length);
-    });
-    return m + 2;
+  ws.columns = cols.map((col, j) => {
+    let m = col.h.length;
+    if (!col.total && !col.moeda) itens.forEach((x, k) => { m = Math.max(m, String(col.v(x, k) ?? '').length); });
+    if (col.h.startsWith('QTD ')) m = Math.min(m, 12);
+    return { width: Math.min(Math.max(m + 2, col.min || 5), 80) };
   });
-  larguras[0] = Math.max(5, larguras[0]);
-  larguras[6] = Math.max(13, larguras[6]);
-  larguras[7] = Math.max(14, larguras[7]);
-  ws.columns = larguras.map(width => ({ width: Math.min(width, 80) }));
   ws.views = [{ state: 'frozen', ySplit: HEADER }];
   return ws;
 }
 
-function nomePedido(c, f) {
-  return `Pedido_${c.numero}_${slug(f.nome)}.xlsx`;
+function nomePedido(c, f, loja) {
+  return `Pedido_${c.numero}_${slug(f.nome)}${loja ? '_' + slug(loja.nome) : ''}.xlsx`;
 }
 
-/** Baixa o pedido de um fornecedor (fi) ou, sem fi, um arquivo com uma aba por fornecedor. */
-async function baixarPedidos(c, fi) {
-  const peds = pedidosPorFornecedor(c).filter(p => fi == null || p.fi === fi);
-  if (!peds.length) { avisar('Nenhum item foi ganho por este fornecedor.'); return; }
+/**
+ * Baixa pedidos. fi: só daquele fornecedor (sem fi: todos, uma aba por fornecedor).
+ * lojaId: só as quantidades daquela loja.
+ */
+async function baixarPedidos(c, fi = null, lojaId = null) {
+  const loja = lojaId ? lojas().find(l => l.id === lojaId) : null;
+  const peds = pedidosPorFornecedor(c, lojaId).filter(p => fi == null || p.fi === fi);
+  if (!peds.length) {
+    avisar(loja ? `Não há itens com quantidade para ${loja.nome}${fi != null ? ' neste fornecedor' : ''}.` : 'Nenhum item com quantidade foi ganho por este fornecedor.');
+    return;
+  }
   const wb = new ExcelJS.Workbook();
   wb.creator = db.config.loja || 'Sistema de Cotação';
   wb.created = new Date();
@@ -1219,9 +1390,9 @@ async function baixarPedidos(c, fi) {
     let nome = base, n = 2;
     while (usados.has(nome.toLowerCase())) nome = `${base.slice(0, 26)} ${n++}`;
     usados.add(nome.toLowerCase());
-    abaPedido(wb, c, p, nome);
+    abaPedido(wb, c, p, nome, loja);
   }
-  const arquivo = fi != null ? nomePedido(c, peds[0].f) : `Pedidos_${c.numero}.xlsx`;
+  const arquivo = fi != null ? nomePedido(c, peds[0].f, loja) : `Pedidos_${c.numero}${loja ? '_' + slug(loja.nome) : ''}.xlsx`;
   await baixarWorkbook(wb, arquivo);
 }
 
@@ -2340,6 +2511,76 @@ function painelLote(c) {
   </section>`;
 }
 
+function celTotal(l) {
+  if (l.preco == null) return '—';
+  if (!l.q) return '<span class="muted small">sem qtd.</span>';
+  return `${fmtMoeda(l.preco * l.q)}${l.q !== 1 ? `<br><span class="small muted">${fmtNum(l.q)} un.</span>` : ''}`;
+}
+
+function linhaTotalComp(c, comp) {
+  const nf = c.fornecedores.length;
+  const LJ = lojas();
+  const qtdL = lj => comp.linhas.reduce((s, l) => s + qtdLoja(c, l.i, lj.id), 0);
+  return `<tr class="total" id="totalComp">
+    <td></td><td>Total dos itens cotados${comp.porLoja ? '<br><span class="small muted">com as quantidades das lojas</span>' : '<br><span class="small muted">1 unidade de cada</span>'}</td>
+    ${comp.totais.map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
+    <td></td>${nf > 1 ? '<td></td>' : ''}<td>${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td>
+    ${LJ.map(lj => `<td class="c col-qtd">${qtdL(lj) ? `${fmtNum(qtdL(lj))} un.<br><span class="small">${fmtMoeda(comp.porLojaTotal[lj.id])}</span>` : '<span class="muted">—</span>'}</td>`).join('')}
+    <td class="r">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
+  </tr>`;
+}
+
+function secaoPedidos(c, comp) {
+  const LJ = lojas();
+  const peds = pedidosPorFornecedor(c);
+  const semVencedor = comp.linhas.filter(l => l.vencedor < 0).length;
+  const semQtd = comp.porLoja ? comp.linhas.filter(l => l.vencedor >= 0 && !l.q).length : 0;
+  if (!peds.length) {
+    return `<section class="card" id="secPedidos"><h3>Pedidos de compra</h3><p class="muted small">Nenhum item com quantidade ainda. Digite as quantidades das lojas no comparativo.</p></section>`;
+  }
+  const totLoja = (p, lj) => p.itens.reduce((s, x) => s + x.preco * (x.qtds[lj.id] || 0), 0);
+  const itensLoja = (p, lj) => p.itens.filter(x => x.qtds[lj.id] > 0).length;
+  return `
+  <section class="card" id="secPedidos">
+    <div class="row-between">
+      <h3>Pedidos de compra</h3>
+      <div class="row">
+        ${comp.porLoja ? LJ.map(lj => `<button class="sm" data-act="baixarPedidos" data-loja="${esc(lj.id)}" title="Um arquivo com os pedidos de ${esc(lj.nome)}, uma aba por fornecedor">⬇ Todos de ${esc(lj.nome)}</button>`).join('') : ''}
+        ${peds.length > 1 || comp.porLoja ? `<button class="sm primary" data-act="baixarPedidos" title="Um arquivo Excel com uma aba para cada fornecedor${comp.porLoja ? ', com a quantidade de cada loja' : ''}">⬇ Todos os pedidos${comp.porLoja ? ' (lojas juntas)' : ' (um arquivo)'}</button>` : ''}
+      </div>
+    </div>
+    <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th><th>Pagamento / entrega</th><th></th></tr></thead>
+      <tbody>${peds.map(p => `<tr>
+        <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span></td>
+        ${comp.porLoja ? LJ.map(lj => `<td class="r">${itensLoja(p, lj) ? `${fmtMoeda(totLoja(p, lj))}<br><span class="small muted">${itensLoja(p, lj)} item(ns)</span>` : '<span class="muted">—</span>'}</td>`).join('') : ''}
+        <td class="r"><b>${fmtMoeda(p.total)}</b></td>
+        <td class="small">${esc([p.f.cond?.pagamento, p.f.cond?.prazo].filter(Boolean).join(' · ') || '—')}</td>
+        <td class="actions-cell">
+          ${comp.porLoja ? LJ.map(lj => itensLoja(p, lj) ? `<button class="sm" data-act="baixarPedido" data-f="${p.fi}" data-loja="${esc(lj.id)}" title="Pedido só de ${esc(lj.nome)}">⬇ ${esc(lj.nome)}</button>` : '').join('') : ''}
+          <button class="sm" data-act="baixarPedido" data-f="${p.fi}" title="${comp.porLoja ? 'Um pedido com as duas lojas (uma coluna de quantidade para cada)' : 'Pedido deste fornecedor'}">⬇ ${comp.porLoja ? 'Lojas juntas' : 'Pedido'}</button>
+        </td>
+      </tr>`).join('')}
+      <tr class="total"><td>Total</td>${comp.porLoja ? LJ.map(lj => `<td class="r">${fmtMoeda(comp.porLojaTotal[lj.id])}</td>`).join('') : ''}<td class="r">${fmtMoeda(comp.melhor)}</td><td colspan="2"></td></tr>
+      </tbody>
+    </table></div>
+  </section>`;
+}
+
+/** Atualiza totais e pedidos sem redesenhar a tabela (para não perder o campo em edição). */
+function atualizarTotaisComp(c) {
+  const comp = comparar(c);
+  for (const l of comp.linhas) {
+    const td = document.getElementById('tot-' + l.i);
+    if (td) td.innerHTML = celTotal(l);
+  }
+  const tot = $('#totalComp');
+  if (tot) tot.outerHTML = linhaTotalComp(c, comp);
+  const sec = $('#secPedidos');
+  if (sec) sec.outerHTML = secaoPedidos(c, comp);
+}
+
 function renderCotacao(id) {
   const c = db.cotacoes.find(x => x.id === id);
   if (!c) return `<section class="card"><p class="empty">Cotação não encontrada. <a href="#" data-route="cotacoes">Voltar</a></p></section>`;
@@ -2441,73 +2682,52 @@ function renderCotacao(id) {
   const temResposta = comp.itensCotados > 0;
   const ultimos = temResposta ? ultimosPrecos(c.id) : {};
   const chips = avs => avs.map(a => `<span class="alerta-preco ${a.tipo}" title="${esc(a.texto)}">⚠ ${esc(a.curto)}</span>`).join('');
+  const LJ = lojas();
   let qtdAlertas = 0;
+  const qtdMarcas = { errada: 0, duvida: 0 };
   const tabelaComp = `
     <div class="table-wrap"><table class="tab-comp">
       <thead><tr>
-        <th class="c">#</th><th>Produto</th><th class="r">Qtd.</th>
+        <th class="c">#</th><th>Produto</th>${temResposta ? '' : '<th class="r">Qtd.</th>'}
         ${c.fornecedores.map(f => `<th class="r">${esc(f.nome)}</th>`).join('')}
-        ${temResposta ? `<th class="r">Preço escolhido</th>${nf > 1 ? '<th class="r" title="Quanto o 2º melhor preço é mais caro que o melhor">Dif. 1º × 2º</th>' : ''}<th>Fornecedor</th><th class="r">Total</th>` : ''}
+        ${temResposta ? `<th class="r">Preço escolhido</th>${nf > 1 ? '<th class="r" title="Quanto o 2º melhor preço é mais caro que o melhor">Dif. 1º × 2º</th>' : ''}<th>Fornecedor</th>
+          ${LJ.map(lj => `<th class="c col-qtd" title="Quantidade para ${esc(lj.nome)}">Qtd.<br>${esc(lj.nome)}</th>`).join('')}<th class="r">Total</th>` : ''}
       </tr></thead>
       <tbody>
         ${comp.linhas.map(l => {
           const ult = l.it.produtoId ? ultimos[l.it.produtoId] : null;
           const celulas = l.precos.map((p, j) => {
             const o = c.fornecedores[j].respostas?.[l.i];
-            const extra = [o?.marca && `Marca: ${o.marca}`, o?.prazo, o?.obs].filter(Boolean).join(' · ');
+            const st = l.marcas[j];
+            if (p != null && (st === 'errada' || st === 'duvida')) qtdMarcas[st]++;
+            const extra = [o?.prazo, o?.obs].filter(Boolean).join(' · ');
             const avs = alertasPreco(p, ult, l.precos);
             if (avs.length) qtdAlertas++;
             const venc = j === l.vencedor && (nf > 1 || l.manual);
-            const cls = ['r', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : ''].filter(Boolean).join(' ');
+            const cls = ['r', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : ''].filter(Boolean).join(' ');
             const dica = p == null ? '' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
+            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${o?.marca || (p != null && st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
           }).join('');
           return `<tr>
           <td class="c">${l.i + 1}</td>
-          <td>${esc(l.it.descricao)}<br><span class="small muted">${esc([l.it.codigo, l.it.similar && 'sim. ' + l.it.similar, l.it.marca].filter(Boolean).join(' · '))}</span></td>
-          <td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>
+          <td>${esc(l.it.descricao)}<br><span class="small muted">${esc([l.it.codigo, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
+          ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : '—'}</b>${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
             ${nf > 1 ? `<td class="r">${l.difSegundo != null ? `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}">${fmtPct(l.difSegundo)}</span><br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>` : '<span class="muted">—</span>'}</td>` : ''}
-            <td>${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.manual ? `<br><span class="small muted">+${fmtMoeda((l.preco - l.min) * l.it.quantidade)} vs menor</span>` : '') : '<span class="muted">sem preço</span>'}</td>
-            <td class="r">${l.preco != null ? fmtMoeda(l.preco * l.it.quantidade) : '—'}</td>` : ''}
+            <td>${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : '<span class="muted">sem preço</span>'}</td>
+            ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${qtdLoja(c, l.i, lj.id) || ''}" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
+            <td class="r" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
         }).join('')}
-        ${temResposta ? `<tr class="total">
-          <td></td><td>Total dos itens cotados</td><td></td>
-          ${comp.totais.map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
-          <td></td>${nf > 1 ? '<td></td>' : ''}<td>${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td><td class="r">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
-        </tr>
-        ${COND_CAMPOS.map(([k, label]) => c.fornecedores.some(f => f.cond?.[k]) ? `<tr>
-          <td></td><td class="small muted">${label}</td><td></td>
+        ${temResposta ? linhaTotalComp(c, comp) : ''}
+        ${temResposta ? COND_CAMPOS.map(([k, label]) => c.fornecedores.some(f => f.cond?.[k]) ? `<tr>
+          <td></td><td class="small muted">${label}</td>
           ${c.fornecedores.map(f => `<td class="r small">${esc(f.cond?.[k] || '—')}</td>`).join('')}
-          <td colspan="${nf > 1 ? 4 : 3}"></td></tr>` : '').join('')}` : ''}
+          <td colspan="${(nf > 1 ? 4 : 3) + LJ.length}"></td></tr>` : '').join('') : ''}
       </tbody>
     </table></div>`;
-
-  const peds = temResposta ? pedidosPorFornecedor(c) : [];
-  const semVencedor = comp.linhas.filter(l => l.vencedor < 0).length;
-  const secaoPedidos = peds.length ? `
-  <section class="card">
-    <div class="row-between">
-      <h3>Pedidos de compra</h3>
-      ${peds.length > 1 ? '<button class="sm primary" data-act="baixarPedidos" title="Um arquivo Excel com uma aba para cada fornecedor">⬇ Todos os pedidos (um arquivo)</button>' : ''}
-    </div>
-    <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço e não entram em nenhum pedido.` : ''}</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th><th class="c">Itens</th><th class="r">Total do pedido</th><th>Pagamento / entrega</th><th></th></tr></thead>
-      <tbody>${peds.map(p => `<tr>
-        <td><b>${esc(p.f.nome)}</b></td>
-        <td class="c">${p.itens.length}</td>
-        <td class="r">${fmtMoeda(p.total)}</td>
-        <td class="small">${esc([p.f.cond?.pagamento, p.f.cond?.prazo].filter(Boolean).join(' · ') || '—')}</td>
-        <td class="actions-cell"><button class="sm" data-act="baixarPedido" data-f="${p.fi}">⬇ Pedido</button></td>
-      </tr>`).join('')}
-      <tr class="total"><td>Total</td><td class="c">${peds.reduce((s, p) => s + p.itens.length, 0)}</td><td class="r">${fmtMoeda(comp.melhor)}</td><td colspan="2"></td></tr>
-      </tbody>
-    </table></div>
-  </section>` : '';
 
   return `
   <section class="card">
@@ -2558,11 +2778,13 @@ function renderCotacao(id) {
     </div>
     ${!temResposta ? '<p class="muted small">Assim que os fornecedores responderem, os preços aparecem aqui lado a lado, com o menor preço de cada item em verde.</p>' : ''}
     ${temResposta && nf > 1 ? `<p class="muted small" style="margin-top:0">O vencedor de cada item fica em verde. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço.${comp.escolhasManuais ? ` <button class="sm" data-act="limparEscolhas">Desfazer as ${comp.escolhasManuais} escolha(s)</button>` : ''}</p>` : ''}
+    ${temResposta ? `<p class="dica-qtd small">📦 <b>Quantidades:</b> depois de ver os preços, digite quantas unidades cada loja vai comprar nas colunas ${LJ.map(l => '<b>' + esc(l.nome) + '</b>').join(' e ')} (Enter ou ↓ vai para o item de baixo). Os pedidos de compra saem divididos por loja. ${comp.porLoja ? '' : 'Enquanto nenhuma quantidade for digitada, os totais usam 1 unidade de cada item.'}</p>` : ''}
+    ${qtdMarcas.errada || qtdMarcas.duvida ? `<p class="aviso-marca small">🏷️ ${qtdMarcas.errada ? `<b>${qtdMarcas.errada} preço(s) com marca diferente da pedida</b>${db.config.marcaErradaNaoGanha !== false ? ' (não ganham automaticamente)' : ''}` : ''}${qtdMarcas.errada && qtdMarcas.duvida ? ' · ' : ''}${qtdMarcas.duvida ? `${qtdMarcas.duvida} marca(s) abreviada(s) para conferir` : ''}. Clique no aviso da marca para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.</p>` : ''}
     ${qtdAlertas ? `<p class="aviso-alertas small">⚠ ${qtdAlertas} preço(s) fora do normal: mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso para ver os detalhes.</p>` : ''}
     ${tabelaComp}
   </section>
 
-  ${secaoPedidos}
+  ${temResposta ? secaoPedidos(c, comp) : ''}
 
   <div class="actions">
     <button data-act="duplicarCot">Duplicar como nova cotação</button>
@@ -2688,8 +2910,8 @@ function dadosRelatorio() {
     if (!comp.itensCotados) continue;
     const r = { c, itens: 0, total: 0, media: 0, maior: 0, comparaveis: 0 };
     for (const l of comp.linhas) {
-      if (l.preco == null) continue;
-      const q = l.it.quantidade || 1;
+      if (l.preco == null || !l.q) continue;
+      const q = l.q;
       const validos = l.precos.filter(p => p != null);
       r.itens++;
       r.total += l.preco * q;
@@ -2824,6 +3046,38 @@ function renderFornecedores() {
   </section>`;
 }
 
+function linhaLojaCfg(l) {
+  return `<tr class="loja-cfg" data-id="${esc(l.id)}">
+    <td><input name="lj_nome" data-c="nome" value="${esc(l.nome)}" placeholder="Nome da loja"></td>
+    <td><input name="lj_cnpj" data-c="cnpj" value="${esc(l.cnpj)}"></td>
+    <td><input name="lj_end" data-c="endereco" value="${esc(l.endereco)}"></td>
+    <td><button type="button" class="sm danger" data-act="removerLojaCfg" title="Remover loja">✕</button></td>
+  </tr>`;
+}
+
+function renderMarcasCfg() {
+  const eq = db.config.marcasEquivalentes || {};
+  const dif = db.config.marcasDiferentes || {};
+  const chaves = [...new Set([...Object.keys(eq), ...Object.keys(dif)])].sort(COLLATOR.compare);
+  return `<section class="card">
+    <h2>Abreviações de marcas</h2>
+    <p class="muted small">Os fornecedores costumam escrever a marca abreviada. O sistema já reconhece abreviações comuns (COF = COFAP, MM = MAGNETI MARELLI, NKT = NAKATA) e aprende as que você confirmar no comparativo. Aqui você vê e corrige o que foi aprendido.</p>
+    <form data-form="equivMarca" class="row" style="align-items:flex-end">
+      <label style="margin:0">Marca<input name="marca" placeholder="Ex.: MAGNETI MARELLI" required></label>
+      <label class="grow" style="margin:0">Abreviações aceitas (separe por vírgula)<input name="abrevs" placeholder="Ex.: MM, MAG, M.MARELLI" required></label>
+      <button class="sm primary">+ Adicionar</button>
+    </form>
+    ${chaves.length ? `<div class="table-wrap" style="margin-top:10px"><table>
+      <thead><tr><th>Marca</th><th>Aceitas como a mesma marca</th><th>Marcadas como outra marca</th></tr></thead>
+      <tbody>${chaves.map(k => `<tr>
+        <td><b>${esc(k)}</b></td>
+        <td>${(eq[k] || []).map(r => `<span class="chip-marca ok">${esc(r)} <button class="link" data-act="esquecerMarca" data-op="${esc(k)}" data-r="${esc(r)}" data-tipo="eq" title="Esquecer">✕</button></span>`).join(' ') || '<span class="muted">—</span>'}</td>
+        <td>${(dif[k] || []).map(r => `<span class="chip-marca errada">${esc(r)} <button class="link" data-act="esquecerMarca" data-op="${esc(k)}" data-r="${esc(r)}" data-tipo="dif" title="Esquecer">✕</button></span>`).join(' ') || '<span class="muted">—</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : '<p class="muted small" style="margin-top:10px">Nenhuma abreviação aprendida ainda.</p>'}
+  </section>`;
+}
+
 function renderConfig() {
   const c = db.config;
   return `
@@ -2842,6 +3096,16 @@ function renderConfig() {
       <label>Endereço<input name="endereco" value="${esc(c.endereco)}"></label>
       <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" name="protegerPlanilha" ${c.protegerPlanilha ? 'checked' : ''}>
         Proteger a planilha (o fornecedor só consegue editar os campos amarelos)</label>
+      <h3 style="margin-top:16px">Lojas</h3>
+      <p class="muted small">A compra é dividida entre estas lojas: no comparativo aparece uma coluna de quantidade para cada uma, e os pedidos saem separados. O endereço vai no pedido como local de entrega.</p>
+      <div class="table-wrap"><table class="tab-lojas">
+        <thead><tr><th>Loja</th><th>CNPJ</th><th>Endereço de entrega</th><th></th></tr></thead>
+        <tbody id="lojasCfg">${lojas().map(linhaLojaCfg).join('')}</tbody>
+      </table></div>
+      <button type="button" class="sm" data-act="addLojaCfg" style="margin-top:6px">+ Adicionar loja</button>
+      <h3 style="margin-top:16px">Marcas</h3>
+      <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" name="marcaErradaNaoGanha" ${c.marcaErradaNaoGanha !== false ? 'checked' : ''}>
+        Preço com marca diferente da pedida não ganha automaticamente (você ainda pode escolher clicando no preço)</label>
       <h3 style="margin-top:16px">Modelo do e-mail</h3>
       <p class="muted small">Você pode usar: {fornecedor} {numero} {loja} {comprador} {telefone} {email} {prazo} {titulo}</p>
       <label>Assunto<input name="assuntoEmail" value="${esc(c.assuntoEmail)}"></label>
@@ -2854,6 +3118,7 @@ function renderConfig() {
       <div class="actions"><button class="primary">Salvar configurações</button></div>
     </form>
   </section>
+  ${renderMarcasCfg()}
   <section class="card">
     <h2>Backup dos dados</h2>
     <p class="muted small">${nuvem.db
@@ -3249,6 +3514,34 @@ const acoes = {
     render();
   },
 
+  marcaResposta: async el => {
+    const c = cotAtual();
+    const i = +el.dataset.i, fi = +el.dataset.f;
+    const it = c.itens[i], f = c.fornecedores[fi];
+    const o = f.respostas?.[i];
+    if (!o) return;
+    const escolha = await abrirDialogo(
+      `${it.descricao}\nMarca pedida: ${it.marca}\n${f.nome} respondeu: ${o.marca}\n\n"${o.marca}" é a marca ${it.marca}?`,
+      [
+        { txt: 'Cancelar', valor: undefined },
+        { txt: 'Corrigir a marca…', valor: 'corrigir' },
+        { txt: 'Não, é outra marca', valor: 'diferente', cls: 'danger' },
+        { txt: `Sim, é ${it.marca}`, valor: 'igual', cls: 'primary' },
+      ]);
+    if (!escolha) return;
+    if (escolha === 'corrigir') {
+      const nova = await pedirValor(`Qual é a marca correta que ${f.nome} vai fornecer? (O que ele escreveu: "${o.marca}")`, { valor: o.marca, ok: 'Salvar' });
+      if (nova == null || nova.trim() === o.marca) return;
+      f.respostas = { ...f.respostas, [i]: { ...o, marca: nova.trim(), marcaOriginal: o.marcaOriginal || o.marca } };
+      toast('Marca corrigida.');
+    } else {
+      aprenderMarca(it.marca, o.marca, escolha);
+      toast(escolha === 'igual' ? `Anotado: "${o.marca}" = ${it.marca}. Vale para as próximas cotações.` : `Anotado: "${o.marca}" não é ${it.marca}.`);
+    }
+    salvar();
+    render();
+  },
+
   limparEscolhas: async () => {
     const c = cotAtual();
     if (!(await confirmar('Desfazer todas as escolhas feitas na mão e voltar ao menor preço em todos os itens?'))) return;
@@ -3257,8 +3550,8 @@ const acoes = {
     render();
   },
 
-  baixarPedido: el => baixarPedidos(cotAtual(), +el.dataset.f),
-  baixarPedidos: () => baixarPedidos(cotAtual()),
+  baixarPedido: el => baixarPedidos(cotAtual(), +el.dataset.f, el.dataset.loja || null),
+  baixarPedidos: el => baixarPedidos(cotAtual(), null, el.dataset.loja || null),
 
   duplicarCot: async () => {
     const c = cotAtual();
@@ -3288,6 +3581,25 @@ const acoes = {
   verHistorico: el => {
     ui.histProd = ui.histProd === el.dataset.id ? null : el.dataset.id;
     $('#tbProd').innerHTML = linhasProdutos();
+  },
+
+  addLojaCfg: () => {
+    $('#lojasCfg').insertAdjacentHTML('beforeend', linhaLojaCfg({ id: uid(), nome: '', cnpj: '', endereco: '' }));
+    $('#lojasCfg tr:last-child input').focus();
+  },
+  removerLojaCfg: el => {
+    if ($('#lojasCfg').children.length <= 1) return avisar('É preciso ter pelo menos uma loja.');
+    el.closest('tr').remove();
+    toast('Loja removida. Clique em "Salvar configurações" para confirmar.');
+  },
+  esquecerMarca: el => {
+    const mapa = el.dataset.tipo === 'eq' ? 'marcasEquivalentes' : 'marcasDiferentes';
+    const m = { ...(db.config[mapa] || {}) };
+    m[el.dataset.op] = (m[el.dataset.op] || []).filter(x => x !== el.dataset.r);
+    if (!m[el.dataset.op].length) delete m[el.dataset.op];
+    db.config[mapa] = m;
+    salvar();
+    render();
   },
 
   editarProd: el => { ui.editProd = el.dataset.id; render(); window.scrollTo(0, 0); },
@@ -3405,8 +3717,29 @@ const formularios = {
     toast(`Preços de ${f.nome} salvos.`);
   },
 
+  equivMarca: form => {
+    const d = formDados(form);
+    const op = normMarca(d.marca);
+    const abrevs = String(d.abrevs || '').split(/[,;]/).map(normMarca).filter(Boolean);
+    if (!op || !abrevs.length) return;
+    for (const r of abrevs) aprenderMarca(op, r, 'igual');
+    salvar();
+    render();
+    toast(`${abrevs.length} abreviação(ões) de ${op} salvas.`);
+  },
+
   config: form => {
     const d = formDados(form);
+    for (const k of Object.keys(d)) if (k.startsWith('lj_')) delete d[k];
+    const novasLojas = [...form.querySelectorAll('.loja-cfg')].map(tr => ({
+      id: tr.dataset.id,
+      nome: tr.querySelector('[data-c=nome]').value.trim(),
+      cnpj: tr.querySelector('[data-c=cnpj]').value.trim(),
+      endereco: tr.querySelector('[data-c=endereco]').value.trim(),
+    })).filter(l => l.nome);
+    if (!novasLojas.length) return avisar('Cadastre pelo menos uma loja.');
+    d.lojas = novasLojas;
+    d.marcaErradaNaoGanha = form.marcaErradaNaoGanha.checked;
     Object.assign(db.config, d, {
       proxNumero: Math.max(1, parseInt(d.proxNumero, 10) || 1),
       diasAviso: Math.max(0, Math.min(30, parseInt(d.diasAviso, 10) || 0)),
@@ -3439,6 +3772,20 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.dataset.qtdLoja != null) {
+    // quantidade por loja no comparativo
+    const c = cotAtual();
+    if (!c) return;
+    const i = +t.dataset.i;
+    const v = Math.max(0, parseNum(t.value) || 0);
+    c.qtds = { ...(c.qtds || {}) };
+    const o = { ...(c.qtds[i] || {}) };
+    if (v) o[t.dataset.qtdLoja] = v; else delete o[t.dataset.qtdLoja];
+    if (Object.keys(o).length) c.qtds[i] = o; else delete c.qtds[i];
+    salvar();
+    atualizarTotaisComp(c);
+    return;
+  }
   if (t.dataset.draft) {
     rascunho()[t.dataset.draft] = t.value;
     salvar();
@@ -3538,7 +3885,21 @@ function teclaItens(e) {
   }
 }
 
+document.addEventListener('focusin', e => {
+  if (e.target.dataset?.qtdLoja != null) e.target.select();
+});
+
 document.addEventListener('keydown', e => {
+  if (e.target.dataset?.qtdLoja != null) {
+    // Enter / ↓ vai para o item de baixo na mesma loja; ↑ volta
+    const d = e.key === 'Enter' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const todos = [...document.querySelectorAll('[data-qtd-loja]')].filter(x => x.dataset.qtdLoja === e.target.dataset.qtdLoja);
+    const prox = todos[todos.indexOf(e.target) + d];
+    if (prox) prox.focus();
+    return;
+  }
   if (!ui.datacar && e.target.closest && e.target.closest('#tabItens')) {
     teclaItens(e);
     return;

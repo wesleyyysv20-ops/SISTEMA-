@@ -85,3 +85,24 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
   número de dias definido em Configurações), a cotação mostra quem falta responder, a lista de
   cotações ganha um aviso e o menu *Cotações* mostra um número. **📣 Cobrar quem falta** abre o
   e-mail de lembrete (modelo editável em Configurações) para cada um ou para todos juntos.
+
+## Compra dividida entre as lojas
+
+- As lojas ficam em **Configurações → Lojas** (padrão: São Sebastião e Paranoá), com CNPJ e endereço
+  de entrega de cada uma.
+- A cotação pede o preço por unidade. Depois das respostas, o comparativo tem uma coluna de
+  **quantidade para cada loja** (Enter ou ↓ desce para o próximo item). Itens sem quantidade não
+  entram nos pedidos.
+- **Pedidos de compra:** por fornecedor e por loja (com o endereço de entrega da loja), todos de uma
+  loja num arquivo, ou as lojas juntas (uma coluna de quantidade por loja).
+
+## Marcas
+
+- A marca pedida aparece no comparativo, e a marca respondida por cada fornecedor ganha uma etiqueta:
+  ✓ (igual ou abreviação reconhecida, como COF = COFAP, MM = MAGNETI MARELLI, NKT = NAKATA),
+  **? confira** (abreviação curta, a confirmar) ou **⚠ marca diferente**.
+- Preço com marca diferente não ganha automaticamente (opção em Configurações); você ainda pode
+  escolhê-lo clicando no preço.
+- Clicando na etiqueta: confirmar que é a mesma marca, marcar como outra marca ou corrigir a marca.
+  O sistema aprende as abreviações confirmadas; elas ficam em **Configurações → Abreviações de marcas**.
+- No pedido de compra vai o nome completo da marca quando a abreviação foi reconhecida.

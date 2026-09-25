@@ -738,3 +738,22 @@ button.link { border: 0; background: none; padding: 0 3px; color: var(--primary-
 .lista-prazo { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 6px; }
 .lista-prazo li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .nav-alerta { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #d9822b; color: #fff; font-size: 11px; font-weight: 700; text-align: center; line-height: 18px; margin-left: 2px; }
+
+/* quantidades por loja e marcas */
+.col-qtd { background: var(--blue-bg); }
+th.col-qtd { line-height: 1.25; }
+input.qtd-loja { width: 62px; text-align: center; padding: 4px 6px; font-family: var(--mono); background: var(--card); }
+input.qtd-loja:not(:placeholder-shown) { border-color: var(--primary-2); font-weight: 600; }
+.dica-qtd { background: var(--blue-bg); padding: 8px 10px; border-radius: 8px; margin: 0 0 8px; }
+.aviso-marca { background: var(--danger-bg); color: var(--danger); padding: 8px 10px; border-radius: 8px; margin: 0 0 8px; }
+.marca-pedida { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--primary-2); color: var(--primary-2); margin-top: 2px; }
+.chip-marca { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.chip-marca[data-act] { cursor: pointer; }
+.chip-marca.ok { background: var(--ok-bg); color: var(--ok); }
+.chip-marca.duvida { background: var(--warn-bg); color: var(--warn); }
+.chip-marca.errada { background: var(--danger-bg); color: var(--danger); }
+.chip-marca.sem { background: var(--card-2); color: var(--muted); border: 1px dashed var(--line); }
+.chip-marca .link { font-size: 11px; color: inherit; }
+td.marca-errada:not(.best) { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+td.marca-errada .chip-marca, td.marca-errada .small { text-decoration: none; display: inline-block; }
+.tab-lojas input { min-width: 120px; }
