@@ -757,3 +757,8 @@ input.qtd-loja:not(:placeholder-shown) { border-color: var(--primary-2); font-we
 td.marca-errada:not(.best) { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 td.marca-errada .chip-marca, td.marca-errada .small { text-decoration: none; display: inline-block; }
 .tab-lojas input { min-width: 120px; }
+
+/* backup e arquivo */
+.aviso-backup { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 14px; }
+.aviso-backup .row { flex-wrap: nowrap; }
+.sugestao-arquivar { border-left: 4px solid var(--primary-2); }

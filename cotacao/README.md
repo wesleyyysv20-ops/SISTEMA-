@@ -106,3 +106,12 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
 - Clicando na etiqueta: confirmar que é a mesma marca, marcar como outra marca ou corrigir a marca.
   O sistema aprende as abreviações confirmadas; elas ficam em **Configurações → Abreviações de marcas**.
 - No pedido de compra vai o nome completo da marca quando a abreviação foi reconhecida.
+
+## Backup e cotações arquivadas
+
+- Quando o último backup passa do prazo (7 dias por padrão; ajustável em Configurações → Backup), um
+  aviso aparece no topo com **⬇ Baixar backup agora** ou **Lembrar amanhã**. O backup só conta como
+  feito quando o arquivo é salvo de verdade.
+- **Arquivar:** a cotação sai da lista, mas continua no histórico de preços e nos relatórios. A lista
+  sugere arquivar as canceladas e as finalizadas com mais de 60 dias; *Ver só as arquivadas* mostra as
+  arquivadas, e **↩ Desarquivar** (na cotação) traz de volta.

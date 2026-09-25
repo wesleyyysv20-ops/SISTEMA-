@@ -24,6 +24,8 @@ const DEFAULT_DB = {
       'Por favor, preencha os preços unitários (campos em amarelo) e nos devolva a planilha por e-mail até {prazo}.\n\n' +
       'Obrigado,\n{comprador}\n{loja}\n{telefone}',
     diasAviso: 1,
+    backupDias: 7, // lembrar do backup a cada N dias (0 = não lembrar)
+    arquivarDias: 60, // sugerir arquivar finalizadas com mais de N dias
     marcaErradaNaoGanha: true,
     marcasEquivalentes: {}, // marca pedida (normalizada) → abreviações aceitas
     marcasDiferentes: {}, // marca pedida (normalizada) → respostas que NÃO são a mesma marca
@@ -61,7 +63,7 @@ const STATUS = {
 let db = carregar();
 let versaoDados = 0; // muda a cada gravação (invalida caches)
 let cacheHist = null;
-const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', sel: null, lote: null };
+const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', sel: null, lote: null, verArquivadas: false };
 
 /* ---------------- persistência ---------------- */
 
@@ -125,7 +127,7 @@ const nuvem = { db: null, downloads: null, enviado: {}, timer: null, gravando: f
 function docsDoEstado() {
   const docs = {
     'sistema/config': db.config,
-    'sistema/extra': { rascunho: db.rascunho || null, ultimoBackup: db.ultimoBackup || null },
+    'sistema/extra': { rascunho: db.rascunho || null, ultimoBackup: db.ultimoBackup || null, backupAdiadoAte: db.backupAdiadoAte || null },
   };
   for (const col of ['produtos', 'fornecedores']) {
     const lista = [...db[col]].sort((a, b) => a.id.localeCompare(b.id));
@@ -197,6 +199,7 @@ async function carregarNuvem() {
     config: mapa['sistema/config'] || {},
     rascunho: mapa['sistema/extra']?.rascunho || null,
     ultimoBackup: mapa['sistema/extra']?.ultimoBackup || null,
+    backupAdiadoAte: mapa['sistema/extra']?.backupAdiadoAte || null,
     produtos: structuredClone(prods.flatMap(([, d]) => d.itens || [])),
     fornecedores: structuredClone(forns.flatMap(([, d]) => d.itens || [])),
     cotacoes: cots.map(([, d]) => structuredClone(d)),
@@ -2095,7 +2098,7 @@ const respondeu = f => !!f.respondidoEm || Object.values(f.respostas || {}).some
  * Retorna { dias, pendentes: [índices dos fornecedores] } ou null.
  */
 function situacaoPrazo(c) {
-  if (c.status !== 'aberta') return null;
+  if (c.status !== 'aberta' || c.arquivada) return null;
   const dias = diasAtePrazo(c);
   if (dias == null || dias > (Number(db.config.diasAviso) || 0)) return null;
   const pendentes = c.fornecedores.map((f, fi) => (respondeu(f) ? -1 : fi)).filter(fi => fi >= 0);
@@ -2371,9 +2374,10 @@ function linhasCotacoes() {
   const q = semAcento(ui.filtroCot);
   const lista = [...db.cotacoes]
     .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero))
+    .filter(c => (ui.verArquivadas ? !!c.arquivada : !c.arquivada))
     .filter(c => !ui.statusCot || c.status === ui.statusCot)
     .filter(c => !q || semAcento(`${c.numero} ${c.titulo} ${c.fornecedores.map(f => f.nome).join(' ')} ${c.itens.map(i => i.descricao + ' ' + i.codigo).join(' ')}`).includes(q));
-  if (!lista.length) return `<tr><td colspan="7" class="empty">Nenhuma cotação encontrada.</td></tr>`;
+  if (!lista.length) return `<tr><td colspan="7" class="empty">${ui.verArquivadas ? 'Nenhuma cotação arquivada.' : 'Nenhuma cotação encontrada.'}</td></tr>`;
   return lista.map(c => {
     const resp = c.fornecedores.filter(f => f.respondidoEm).length;
     const { melhor, itensCotados } = comparar(c);
@@ -2402,8 +2406,34 @@ function avisosPrazo() {
   </section>`;
 }
 
+/** Cotações que podem ser arquivadas: canceladas e finalizadas há mais de N dias. */
+function paraArquivar() {
+  const d = new Date();
+  d.setDate(d.getDate() - (Number(db.config.arquivarDias) || 60));
+  const limite = d.toISOString().slice(0, 10);
+  return db.cotacoes.filter(c => !c.arquivada && !c.manterNaLista && (c.status === 'cancelada' || (c.status === 'finalizada' && c.data < limite)))
+    .sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
+}
+
+function sugestaoArquivar() {
+  const lista = paraArquivar();
+  if (!lista.length || ui.verArquivadas) return '';
+  const canc = lista.filter(c => c.status === 'cancelada').length;
+  const fin = lista.length - canc;
+  return `<section class="card sugestao-arquivar">
+    <div class="row-between">
+      <span>🗂️ <b>${lista.length} cotação(ões) podem ser arquivadas</b>
+        <span class="small muted">(${[canc && `${canc} cancelada(s)`, fin && `${fin} finalizada(s) há mais de ${Number(db.config.arquivarDias) || 60} dias`].filter(Boolean).join(', ')}: ${lista.map(c => 'nº ' + esc(c.numero)).join(', ')})</span></span>
+      <button class="sm primary" data-act="arquivarSugeridas">Arquivar</button>
+    </div>
+    <p class="small muted" style="margin:4px 0 0">Arquivadas saem da lista para ela ficar mais leve, mas continuam no histórico de preços e nos relatórios.</p>
+  </section>`;
+}
+
 function renderCotacoes() {
-  const abertas = db.cotacoes.filter(c => c.status === 'aberta');
+  const visiveis = db.cotacoes.filter(c => !c.arquivada);
+  const nArq = db.cotacoes.length - visiveis.length;
+  const abertas = visiveis.filter(c => c.status === 'aberta');
   const aguardando = abertas.reduce((s, c) => s + c.fornecedores.filter(f => !f.respondidoEm).length, 0);
   return `
   <section class="card">
@@ -2415,7 +2445,7 @@ function renderCotacoes() {
       </div>
     </div>
     <div class="stats">
-      <div class="stat"><span class="muted small">Total de cotações</span><b>${db.cotacoes.length}</b></div>
+      <div class="stat"><span class="muted small">Cotações na lista</span><b>${visiveis.length}</b>${nArq ? `<span class="small muted">+ ${nArq} arquivada(s)</span>` : ''}</div>
       <div class="stat"><span class="muted small">Abertas</span><b>${abertas.length}</b></div>
       <div class="stat"><span class="muted small">Respostas pendentes</span><b>${aguardando}</b></div>
     </div>
@@ -2425,9 +2455,11 @@ function renderCotacoes() {
         <option value="">Todos os status</option>
         ${Object.entries(STATUS).map(([k, [t]]) => `<option value="${k}" ${ui.statusCot === k ? 'selected' : ''}>${t}</option>`).join('')}
       </select>
+      ${nArq || ui.verArquivadas ? `<label class="check-inline"><input type="checkbox" id="verArquivadas" ${ui.verArquivadas ? 'checked' : ''}> Ver só as arquivadas (${nArq})</label>` : ''}
     </div>
   </section>
   ${avisosPrazo()}
+  ${sugestaoArquivar()}
   <section class="card table-wrap">
     <table>
       <thead><tr><th>Nº</th><th>Data</th><th>Título</th><th class="c">Itens</th><th class="c">Respostas</th><th class="r">Melhor total</th><th>Status</th></tr></thead>
@@ -2732,7 +2764,7 @@ function renderCotacao(id) {
   return `
   <section class="card">
     <div class="row-between">
-      <h2>Cotação nº ${esc(c.numero)} ${statusBadge(c.status)}</h2>
+      <h2>Cotação nº ${esc(c.numero)} ${statusBadge(c.status)}${c.arquivada ? ' <span class="badge">🗂️ arquivada</span>' : ''}</h2>
       <div class="row">
         <a class="btn" href="#" data-route="cotacoes">← Voltar</a>
         <select data-change="statusCot" style="width:auto">
@@ -2788,6 +2820,7 @@ function renderCotacao(id) {
 
   <div class="actions">
     <button data-act="duplicarCot">Duplicar como nova cotação</button>
+    <button data-act="arquivarCot" title="${c.arquivada ? 'Volta para a lista de cotações' : 'Tira da lista de cotações (continua no histórico e nos relatórios)'}">${c.arquivada ? '↩ Desarquivar' : '🗂️ Arquivar'}</button>
     <button class="danger" data-act="excluirCot">Excluir cotação</button>
   </div>`;
 }
@@ -2887,6 +2920,49 @@ function renderProdutos() {
     </table></div>
     <p class="tip">Para importar sua lista de produtos, use uma planilha com as colunas <b>Código, Descrição, Unidade, Similar, Marca, Categoria</b> (a primeira linha é o cabeçalho). Produtos com o mesmo código são atualizados.</p>
   </section>`;
+}
+
+/* ---------------- backup ---------------- */
+
+/** Dias desde o último backup (null = nunca fez). */
+function diasSemBackup() {
+  if (!db.ultimoBackup) return null;
+  return Math.floor((Date.now() - new Date(db.ultimoBackup).getTime()) / 86400000);
+}
+
+function precisaBackup() {
+  const n = Number(db.config.backupDias ?? 7);
+  if (!n) return false;
+  if (!db.produtos.length && !db.cotacoes.length) return false;
+  if (db.backupAdiadoAte && hojeISO() < db.backupAdiadoAte) return false;
+  const d = diasSemBackup();
+  return d == null || d >= n;
+}
+
+function avisoBackup() {
+  if (!precisaBackup()) return '';
+  const d = diasSemBackup();
+  return `<div class="aviso-backup" role="status">
+    <span>💾 ${d == null ? '<b>Você ainda não fez nenhum backup.</b>' : `<b>Último backup há ${d} dia(s)</b> (${fmtData(db.ultimoBackup)}).`}
+      Guarde uma cópia dos dados (${db.produtos.length.toLocaleString('pt-BR')} produtos, ${db.cotacoes.length} cotações) no computador ou no Google Drive.</span>
+    <span class="row">
+      <button class="sm primary" data-act="backup">⬇ Baixar backup agora</button>
+      <button class="sm" data-act="adiarBackup">Lembrar amanhã</button>
+    </span>
+  </div>`;
+}
+
+async function fazerBackup() {
+  const nome = `backup_cotacoes_${hojeISO()}.json`;
+  const copia = { ...db, ultimoBackup: new Date().toISOString() };
+  const ok = await salvarComo(nome, async () => new Blob([JSON.stringify(copia, null, 2)], { type: 'application/json' }),
+    { description: 'Backup do sistema', accept: { 'application/json': ['.json'] } });
+  if (!ok) return;
+  db.ultimoBackup = copia.ultimoBackup;
+  db.backupAdiadoAte = null;
+  salvar();
+  render();
+  toast('Backup salvo. Guarde o arquivo num lugar seguro (Google Drive, pendrive…).');
 }
 
 /* ---------------- relatórios ---------------- */
@@ -3126,6 +3202,8 @@ function renderConfig() {
       : 'Os dados ficam salvos <b>somente neste navegador</b>. Faça backup com frequência e guarde o arquivo (Google Drive, pendrive…). Com o backup você também passa os dados para outro computador.'}</p>
     <div class="row">
       <button data-act="backup">⬇ Baixar backup</button>
+      <label class="check-inline">Lembrar a cada
+        <select id="backupDias" style="width:auto">${[[3, '3 dias'], [7, '7 dias'], [15, '15 dias'], [30, '30 dias'], [0, 'nunca']].map(([v, t]) => `<option value="${v}" ${Number(db.config.backupDias ?? 7) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label class="btn" style="margin:0">📥 Restaurar backup<input type="file" class="hidden" accept=".json" data-restaurar></label>
       <button class="danger" data-act="apagarTudo">Apagar todos os dados</button>
     </div>
@@ -3164,7 +3242,7 @@ function render() {
     config: renderConfig,
   };
   try {
-    app.innerHTML = (views[nome] || renderCotacoes)();
+    app.innerHTML = avisoBackup() + (views[nome] || renderCotacoes)();
   } catch (e) {
     console.error(e);
     app.innerHTML = `<section class="card"><h2>Não foi possível abrir esta tela</h2>
@@ -3623,11 +3701,30 @@ const acoes = {
     render();
   },
 
-  backup: () => {
-    db.ultimoBackup = new Date().toISOString();
+  backup: () => fazerBackup(),
+  adiarBackup: () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    db.backupAdiadoAte = d.toISOString().slice(0, 10);
     salvar();
-    baixarBlob(new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' }), `backup_cotacoes_${hojeISO()}.json`);
     render();
+  },
+  arquivarCot: () => {
+    const c = cotAtual();
+    if (c.arquivada) { delete c.arquivada; c.manterNaLista = true; toast(`Cotação nº ${c.numero} voltou para a lista.`); }
+    else { c.arquivada = new Date().toISOString(); delete c.manterNaLista; toast(`Cotação nº ${c.numero} arquivada. Ela continua no histórico e nos relatórios.`); }
+    salvar();
+    render();
+  },
+  arquivarSugeridas: async () => {
+    const lista = paraArquivar();
+    if (!lista.length) return;
+    if (!(await confirmar(`Arquivar ${lista.length} cotação(ões)?\n${lista.map(c => `nº ${c.numero} (${STATUS[c.status]?.[0] || c.status})`).join(', ')}\n\nElas saem da lista, mas continuam no histórico de preços e nos relatórios. Dá para ver e desarquivar quando quiser.`, 'Arquivar'))) return;
+    const agora = new Date().toISOString();
+    for (const c of lista) c.arquivada = agora;
+    salvar();
+    render();
+    toast(`${lista.length} cotação(ões) arquivada(s).`);
   },
 
   apagarTudo: async () => {
@@ -3958,6 +4055,13 @@ document.addEventListener('change', async e => {
     Object.assign(ui.datacar, { pos: 0, gcur: 0, grupoAberto: null });
     renderSoDataCar();
     focarDataCar();
+  } else if (t.id === 'verArquivadas') {
+    ui.verArquivadas = t.checked;
+    render();
+  } else if (t.id === 'backupDias') {
+    db.config.backupDias = Number(t.value);
+    salvar();
+    render();
   } else if (t.id === 'soComPreco') {
     ui.soComPreco = t.checked;
     $('#tbProd').innerHTML = linhasProdutos();
