@@ -762,3 +762,14 @@ td.marca-errada .chip-marca, td.marca-errada .small { text-decoration: none; dis
 .aviso-backup { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 14px; }
 .aviso-backup .row { flex-wrap: nowrap; }
 .sugestao-arquivar { border-left: 4px solid var(--primary-2); }
+
+/* conferência da NF-e */
+.tab-nfe tr.nfe-div td { background: var(--warn-bg); }
+.tab-nfe tr.sub-cab td { font-weight: 700; background: var(--card-2); color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.tab-nfe .badge { white-space: nowrap; }
+.txt-ruim { color: var(--danger); font-weight: 600; }
+.stat.stat-ruim { border-color: var(--danger); background: var(--danger-bg); }
+.stat.stat-ruim b { color: var(--danger); }
+.stat.stat-atencao { border-color: var(--warn); background: var(--warn-bg); }
+.sel-vinc { max-width: 320px; font-size: 13px; padding: 3px 6px; }
+button.link.small { font-size: 12px; }

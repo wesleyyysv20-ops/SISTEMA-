@@ -116,6 +116,19 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
   sugere arquivar as canceladas e as finalizadas com mais de 60 dias; *Ver só as arquivadas* mostra as
   arquivadas, e **↩ Desarquivar** (na cotação) traz de volta.
 
+## Conferência da nota fiscal (NF-e)
+
+- **🧾 Conferir NF-e (XML)** (na lista de cotações ou nos pedidos da cotação): o sistema lê o XML da
+  nota, acha o fornecedor (pelo CNPJ; na primeira vez pelo nome ou perguntando, e guarda o CNPJ), a
+  cotação com o pedido dele e a loja (pelo CNPJ de destino cadastrado em Configurações → Lojas).
+- Cada item da nota é ligado ao pedido pelo código (também códigos parecidos, como "ML-PR9125STD") ou
+  pela descrição. Ligações erradas podem ser desfeitas e itens podem ser ligados na mão; o sistema
+  lembra os vínculos de cada fornecedor.
+- Mostra preço acima do cotado (com o valor a cobrar), quantidade diferente, itens que não vieram e
+  itens que vieram sem ter sido pedidos. O preço da nota considera o desconto e não inclui IPI/ST e frete.
+- **Copiar texto para o fornecedor** e **Divergências (Excel)** para cobrar.
+- Os pedidos mostram a situação do recebimento por loja: aguardando nota, parcial, recebido ou divergência.
+
 ## Testes automáticos
 
 Ficam em `../cotacao-testes/` e rodam sozinhos no GitHub a cada alteração. Veja o README de lá para rodar no computador.

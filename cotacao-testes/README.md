@@ -13,6 +13,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `06-lojas-marcas` | quantidades por loja, pedidos por loja, marcas abreviadas e marca errada |
 | `07-backup-arquivo` | lembrete de backup e cotações arquivadas |
 | `08-telas` | todas as telas abrem sem erro e sem rolagem lateral (1366 e 1024 px) |
+| `09-nfe` | conferência da nota fiscal (XML da NF-e) com o pedido: fornecedor, loja, divergências, vínculos |
 
 ## Rodar
 

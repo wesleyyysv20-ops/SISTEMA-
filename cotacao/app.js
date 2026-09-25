@@ -63,7 +63,7 @@ const STATUS = {
 let db = carregar();
 let versaoDados = 0; // muda a cada gravação (invalida caches)
 let cacheHist = null;
-const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', sel: null, lote: null, verArquivadas: false };
+const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', sel: null, lote: null, verArquivadas: false, conferindo: null };
 
 /* ---------------- persistência ---------------- */
 
@@ -1399,6 +1399,403 @@ async function baixarPedidos(c, fi = null, lojaId = null) {
   await baixarWorkbook(wb, arquivo);
 }
 
+/* ---------------- NF-e: conferência do recebimento ---------------- */
+
+const soDigitos = v => String(v || '').replace(/\D/g, '');
+const normCod = v => semAcento(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+const semZeros = v => v.replace(/^0+(?=.)/, '');
+const fmtCnpj = v => {
+  const d = soDigitos(v);
+  return d.length === 14 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : d;
+};
+/** Diferença de preço tolerada (arredondamento): 0,5% ou R$ 0,02. */
+const tolPreco = p => Math.max(0.02, p * 0.005);
+
+/** Lê o XML de uma NF-e (modelo 55, com ou sem nfeProc). */
+function lerNFe(texto, nomeArquivo) {
+  const doc = new DOMParser().parseFromString(texto, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error(`"${nomeArquivo}" não é um XML válido.`);
+  const inf = doc.getElementsByTagName('infNFe')[0];
+  if (!inf) throw new Error(`"${nomeArquivo}" não é o XML de uma NF-e (não encontrei a tag infNFe).`);
+  const um = (el, tag) => el?.getElementsByTagName(tag)[0]?.textContent?.trim() || '';
+  const num = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
+  const tag = t => inf.getElementsByTagName(t)[0];
+  const ide = tag('ide'), emit = tag('emit'), dest = tag('dest'), tot = tag('ICMSTot');
+  const itens = [...inf.getElementsByTagName('det')].map(det => {
+    const prod = det.getElementsByTagName('prod')[0];
+    const imp = det.getElementsByTagName('imposto')[0];
+    return {
+      n: Number(det.getAttribute('nItem')) || 0,
+      cProd: um(prod, 'cProd'), ean: um(prod, 'cEAN'), xProd: um(prod, 'xProd'), un: um(prod, 'uCom'),
+      q: num(um(prod, 'qCom')), vUn: num(um(prod, 'vUnCom')), vProd: num(um(prod, 'vProd')), vDesc: num(um(prod, 'vDesc')),
+      vIPI: num(um(imp, 'vIPI')), vST: num(um(imp, 'vICMSST')), xPed: um(prod, 'xPed'), infAd: um(det, 'infAdProd'),
+    };
+  });
+  if (!itens.length) throw new Error(`A nota "${nomeArquivo}" não tem itens.`);
+  return {
+    chave: (inf.getAttribute('Id') || '').replace(/^NFe/, ''),
+    numero: um(ide, 'nNF'), serie: um(ide, 'serie'), emissao: (um(ide, 'dhEmi') || um(ide, 'dEmi')).slice(0, 10),
+    emitente: { cnpj: soDigitos(um(emit, 'CNPJ') || um(emit, 'CPF')), nome: um(emit, 'xNome'), fantasia: um(emit, 'xFant') },
+    dest: { cnpj: soDigitos(um(dest, 'CNPJ') || um(dest, 'CPF')), nome: um(dest, 'xNome') },
+    total: num(um(tot, 'vNF')), totalProdutos: num(um(tot, 'vProd')), frete: num(um(tot, 'vFrete')),
+    itens,
+  };
+}
+
+/** Preço unitário efetivo de uma linha da nota (com desconto, sem impostos). */
+const precoLinhaNF = x => (x.q ? (x.vProd - (x.vDesc || 0)) / x.q : x.vUn);
+
+const PALAVRAS_EMPRESA = new Set(['LTDA', 'EIRELI', 'COMERCIO', 'COM', 'DISTRIBUIDORA', 'DISTRIBUIDOR', 'DISTRIBUICAO', 'DE', 'DO', 'DA', 'DOS', 'DAS', 'AUTO', 'AUTOPECAS', 'PECAS', 'ME', 'EPP', 'SA', 'IMPORTACAO', 'EXPORTACAO', 'IND', 'INDUSTRIA', 'E', 'ATACADO', 'VAREJO', 'LTD']);
+const palavrasNome = v => normMarca(v).split(' ').filter(w => w.length >= 3 && !PALAVRAS_EMPRESA.has(w));
+
+/** Fornecedor do cadastro que emitiu a nota: pelo CNPJ ou por palavras do nome. */
+function acharFornecedorNFe(nf) {
+  const cnpj = nf.emitente.cnpj;
+  const porCnpj = cnpj && db.fornecedores.find(f => soDigitos(f.cnpj) === cnpj);
+  if (porCnpj) return porCnpj;
+  const alvo = new Set([...palavrasNome(nf.emitente.nome), ...palavrasNome(nf.emitente.fantasia)]);
+  const pontos = db.fornecedores.map(f => [f, palavrasNome(f.nome).filter(w => alvo.has(w)).length]).filter(([, p]) => p > 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (pontos.length && (pontos.length === 1 || pontos[0][1] > pontos[1][1])) return pontos[0][0];
+  return null;
+}
+
+/** Cotações (não canceladas) com pedido de compra para o fornecedor, da mais recente para a mais antiga. */
+function cotacoesComPedido(fornecedorId) {
+  return db.cotacoes.filter(c => c.status !== 'cancelada' && pedidosPorFornecedor(c).some(p => p.f.fornecedorId === fornecedorId))
+    .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
+}
+
+function codigosItem(it) {
+  const brutos = [it.codigo, it.codigoArquivo, it.codigoCadastro, ...String(it.similar || '').split(/[\s,;|]+/)];
+  return [...new Set(brutos.flatMap(v => [v, ...String(v || '').split(/[\/,;|]+/)]).map(normCod).filter(t => t.length >= 3))];
+}
+
+/** Liga uma linha da nota a um item da cotação: vínculo aprendido, código, código parecido ou descrição. */
+function casarItemNFe(c, fornCad, x, noPedido) {
+  const k = normCod(x.cProd);
+  const preferir = lista => lista.find(i => noPedido.has(i)) ?? lista[0];
+  const vinc = fornCad?.codigosNfe?.[k];
+  if (vinc) {
+    const i = c.itens.findIndex(it => it.produtoId === vinc);
+    if (i >= 0) return { idx: i, como: 'aprendido' };
+  }
+  if (k.length >= 3) {
+    const exatos = c.itens.map((it, i) => (codigosItem(it).some(t => t === k || semZeros(t) === semZeros(k)) ? i : -1)).filter(i => i >= 0);
+    if (exatos.length) return { idx: preferir(exatos), como: 'codigo' };
+    if (k.length >= 5) {
+      const parecidos = c.itens.map((it, i) => (codigosItem(it).some(t => t.length >= 5 && (k.includes(t) || t.includes(k))) ? i : -1)).filter(i => i >= 0);
+      if (parecidos.length) return { idx: preferir(parecidos), como: 'parecido' };
+    }
+  }
+  // pela descrição: palavras em comum
+  const pal = v => new Set(normMarca(v).split(' ').filter(w => w.length >= 3));
+  const a = pal(x.xProd);
+  const notas = c.itens.map((it, i) => {
+    const b = pal(it.descricao);
+    const comum = [...a].filter(w => b.has(w)).length;
+    return [i, comum / Math.max(1, Math.min(a.size, b.size))];
+  }).filter(([, sc]) => sc >= 0.6).sort((p, q) => q[1] - p[1] || (noPedido.has(q[0]) - noPedido.has(p[0])));
+  if (notas.length && (notas.length === 1 || notas[0][1] > notas[1][1] || noPedido.has(notas[0][0]))) return { idx: notas[0][0], como: 'descricao' };
+  return { idx: -1, como: '' };
+}
+
+/** Itens do pedido (fornecedor + loja) com as quantidades pedidas. */
+function itensPedido(c, fornecedorId, lojaId) {
+  const ped = pedidosPorFornecedor(c, lojaId).find(p => p.f.fornecedorId === fornecedorId);
+  return ped ? ped.itens : [];
+}
+
+/** Compara uma nota com o pedido. */
+function conferirNFe(c, rec) {
+  const pedido = itensPedido(c, rec.fornecedorId, rec.lojaId);
+  const noPedido = new Map(pedido.map(p => [p.i, p]));
+  const outras = (c.recebimentos || []).filter(r => r.id !== rec.id && r.fornecedorId === rec.fornecedorId && (r.lojaId || null) === (rec.lojaId || null));
+  const qtdOutras = i => outras.reduce((s, r) => s + r.itens.filter(x => x.idx === i).reduce((t, x) => t + x.q, 0), 0);
+  const porItem = new Map();
+  const naoPedidos = [];
+  rec.itens.forEach((x, k) => {
+    if (x.idx >= 0 && noPedido.has(x.idx)) {
+      if (!porItem.has(x.idx)) porItem.set(x.idx, []);
+      porItem.get(x.idx).push({ ...x, k });
+    } else naoPedidos.push({ ...x, k, deOutro: x.idx >= 0 });
+  });
+  const linhas = pedido.map(p => {
+    const nfs = porItem.get(p.i) || [];
+    const antes = qtdOutras(p.i);
+    const esperado = Math.max(0, p.qtd - antes);
+    const qNF = nfs.reduce((s, x) => s + x.q, 0);
+    const valorNF = nfs.reduce((s, x) => s + x.vProd - (x.vDesc || 0), 0);
+    const precoNF = qNF ? valorNF / qNF : null;
+    const sit = [];
+    let cobrar = 0;
+    if (!nfs.length) sit.push(esperado ? 'nao-veio' : 'outra-nota');
+    else {
+      const d = precoNF - p.preco;
+      if (d > tolPreco(p.preco)) { sit.push('preco-maior'); cobrar = d * qNF; }
+      else if (d < -tolPreco(p.preco)) sit.push('preco-menor');
+      if (qNF < esperado) sit.push('faltou');
+      else if (qNF > esperado) sit.push('a-mais');
+      if (!sit.length) sit.push('ok');
+    }
+    const marcaNaNota = p.marca && nfs.some(x => normMarca(`${x.xProd} ${x.infAd}`).split(' ').some(w => opcoesMarca(p.marca).some(o => o === w || o.replace(/ /g, '') === w)));
+    return { p, nfs, antes, esperado, qNF, precoNF, sit, cobrar, marcaNaNota };
+  });
+  const resumo = {
+    ok: linhas.filter(l => l.sit[0] === 'ok').length,
+    precoMaior: linhas.filter(l => l.sit.includes('preco-maior')).length,
+    precoMenor: linhas.filter(l => l.sit.includes('preco-menor')).length,
+    qtd: linhas.filter(l => l.sit.includes('faltou') || l.sit.includes('a-mais')).length,
+    naoVeio: linhas.filter(l => l.sit.includes('nao-veio')).length,
+    naoPedidos: naoPedidos.length,
+    cobrar: linhas.reduce((s, l) => s + l.cobrar, 0),
+    valorNaoPedidos: naoPedidos.reduce((s, x) => s + x.vProd - (x.vDesc || 0), 0),
+  };
+  resumo.divergencias = resumo.precoMaior + resumo.qtd + resumo.naoVeio + resumo.naoPedidos;
+  return { linhas, naoPedidos, resumo };
+}
+
+/** Situação do recebimento de um pedido (fornecedor + loja). */
+function situacaoRecebimento(c, fornecedorId, lojaId) {
+  const recs = (c.recebimentos || []).filter(r => r.fornecedorId === fornecedorId && (r.lojaId || null) === (lojaId || null));
+  if (!recs.length) return { estado: 'pendente', recs };
+  const pedido = itensPedido(c, fornecedorId, lojaId);
+  const recebido = i => recs.reduce((s, r) => s + r.itens.filter(x => x.idx === i).reduce((t, x) => t + x.q, 0), 0);
+  const faltando = pedido.filter(p => recebido(p.i) < p.qtd).length;
+  const confs = recs.map(r => conferirNFe(c, r));
+  const precoOuExtra = confs.some(x => x.resumo.precoMaior || x.resumo.naoPedidos);
+  const cobrar = confs.reduce((s, x) => s + x.resumo.cobrar, 0);
+  return { estado: precoOuExtra ? 'divergencia' : faltando ? 'parcial' : 'recebido', recs, faltando, cobrar };
+}
+
+const ESTADO_REC = {
+  pendente: ['aguardando nota', ''],
+  recebido: ['✓ recebido', 'ok'],
+  parcial: ['parcial', 'warn'],
+  divergencia: ['⚠ divergência', 'danger'],
+};
+
+const SIT_NF = {
+  ok: ['✓ OK', 'ok'],
+  'preco-maior': ['⚠ preço acima', 'danger'],
+  'preco-menor': ['preço abaixo', 'blue'],
+  faltou: ['⚠ veio menos', 'warn'],
+  'a-mais': ['⚠ veio a mais', 'warn'],
+  'nao-veio': ['✗ não veio', 'danger'],
+  'outra-nota': ['veio em outra nota', ''],
+};
+
+async function importarNFes(files, cotId = null, fiSugerido = null) {
+  for (const file of files) {
+    try {
+      await importarNFe(file, cotId, fiSugerido);
+    } catch (e) {
+      console.error(e);
+      await avisar('Erro ao importar a nota:\n' + e.message);
+    }
+  }
+}
+
+async function importarNFe(file, cotId, fiSugerido) {
+  const nf = lerNFe(await file.text(), file.name);
+  const rotuloNF = `NF-e nº ${nf.numero} de ${nf.emitente.fantasia || nf.emitente.nome} (${fmtCnpj(nf.emitente.cnpj)})`;
+  let c = cotId ? db.cotacoes.find(x => x.id === cotId) : null;
+
+  // 1. fornecedor
+  let fornCad = null;
+  if (c && fiSugerido != null && c.fornecedores[fiSugerido]) fornCad = db.fornecedores.find(f => f.id === c.fornecedores[fiSugerido].fornecedorId);
+  if (!fornCad) fornCad = acharFornecedorNFe(nf);
+  if (!fornCad) {
+    const comPedido = db.fornecedores.filter(f => cotacoesComPedido(f.id).length).sort((a, b) => COLLATOR.compare(a.nome, b.nome));
+    if (!comPedido.length) throw new Error('Não há pedidos de compra no sistema para conferir esta nota.');
+    const id = await pedirValor(`${rotuloNF}\nDe qual fornecedor do cadastro é esta nota? (o CNPJ fica salvo para as próximas)`, {
+      tipo: 'lista', ok: 'Continuar', opcoes: comPedido.map(f => ({ valor: f.id, texto: f.nome })),
+    });
+    if (!id) return;
+    fornCad = db.fornecedores.find(f => f.id === id);
+  }
+  if (nf.emitente.cnpj && !soDigitos(fornCad.cnpj)) fornCad.cnpj = fmtCnpj(nf.emitente.cnpj);
+
+  // 2. cotação
+  if (!c || !pedidosPorFornecedor(c).some(p => p.f.fornecedorId === fornCad.id)) {
+    const cands = cotacoesComPedido(fornCad.id);
+    if (!cands.length) throw new Error(`Não achei pedido de compra para ${fornCad.nome}. Confira se ele ganhou itens com quantidade em alguma cotação.`);
+    const peloPedido = cands.find(x => nf.itens.some(i => i.xPed && soDigitos(i.xPed) && semZeros(soDigitos(i.xPed)) === semZeros(soDigitos(x.numero))));
+    c = peloPedido || (cands.length === 1 ? cands[0] : null);
+    if (!c) {
+      const id = await pedirValor(`${rotuloNF}\nDe qual cotação é o pedido desta nota?`, {
+        tipo: 'lista', ok: 'Conferir', opcoes: cands.map(x => ({ valor: x.id, texto: `Nº ${x.numero} · ${fmtData(x.data)}${x.titulo ? ' · ' + x.titulo : ''}` })),
+      });
+      if (!id) return;
+      c = db.cotacoes.find(x => x.id === id);
+    }
+  }
+
+  // 3. loja
+  let lojaId = null;
+  if (comparar(c).porLoja) {
+    const LJ = lojas();
+    const porCnpj = nf.dest.cnpj && LJ.find(l => soDigitos(l.cnpj) === nf.dest.cnpj);
+    if (porCnpj) lojaId = porCnpj.id;
+    else if (LJ.length === 1) lojaId = LJ[0].id;
+    else {
+      const v = await pedirValor(`${rotuloNF}\nPara qual loja é esta nota? (destinatário: ${nf.dest.nome || '—'} ${fmtCnpj(nf.dest.cnpj)})\nCadastre o CNPJ das lojas em Configurações para o sistema reconhecer sozinho.`, {
+        tipo: 'lista', ok: 'Conferir', opcoes: [...LJ.map(l => ({ valor: l.id, texto: l.nome })), { valor: '*', texto: 'As lojas juntas (um pedido só)' }],
+      });
+      if (!v) return;
+      lojaId = v === '*' ? null : v;
+    }
+  }
+
+  // 4. nota repetida
+  const ja = (c.recebimentos || []).find(r => r.nf.chave && r.nf.chave === nf.chave);
+  if (ja && !(await confirmar(`A NF-e nº ${nf.numero} já foi conferida nesta cotação. Conferir de novo (substitui a anterior)?`))) return;
+
+  const noPedido = new Set(itensPedido(c, fornCad.id, lojaId).map(p => p.i));
+  const { itens, ...cab } = nf;
+  const rec = {
+    id: ja ? ja.id : uid(), fornecedorId: fornCad.id, lojaId, importadoEm: new Date().toISOString(), nf: cab,
+    itens: itens.map(x => ({ ...x, ...casarItemNFe(c, fornCad, x, noPedido) })),
+  };
+  c.recebimentos = [...(c.recebimentos || []).filter(r => r.id !== rec.id), rec];
+  salvar();
+  ir('cotacao', c.id);
+  ui.conferindo = { cotId: c.id, recId: rec.id };
+  render();
+  $('#painelNFe')?.scrollIntoView({ behavior: 'smooth' });
+  const { resumo } = conferirNFe(c, rec);
+  toast(resumo.divergencias ? `NF-e nº ${nf.numero}: ${resumo.divergencias} divergência(s).` : `NF-e nº ${nf.numero} confere com o pedido.`);
+}
+
+function nomeLojaRec(rec) {
+  if (!rec.lojaId) return '';
+  return lojas().find(l => l.id === rec.lojaId)?.nome || '';
+}
+
+/** Painel da conferência de uma nota. */
+function painelNFe(c, rec) {
+  const f = c.fornecedores.find(x => x.fornecedorId === rec.fornecedorId);
+  const { linhas, naoPedidos, resumo } = conferirNFe(c, rec);
+  const pedido = itensPedido(c, rec.fornecedorId, rec.lojaId);
+  const chip = k => `<span class="badge ${SIT_NF[k][1]}">${SIT_NF[k][0]}</span>`;
+  const comoTxt = { aprendido: 'vínculo salvo', codigo: 'pelo código', parecido: 'código parecido — confira', descricao: 'pela descrição — confira', manual: 'vinculado por você' };
+  const loja = nomeLojaRec(rec);
+  const opcoesVinc = sel => `<option value="">Vincular a um item do pedido…</option>${pedido.map(p => `<option value="${p.i}" ${sel === p.i ? 'selected' : ''}>${esc([p.it.codigo, p.it.descricao].filter(Boolean).join(' · '))}</option>`).join('')}`;
+  return `
+  <section class="card" id="painelNFe">
+    <div class="row-between">
+      <h3>Conferência da NF-e nº ${esc(rec.nf.numero)}${loja ? ' · ' + esc(loja) : ''}</h3>
+      <div class="row">
+        ${resumo.divergencias ? '<button class="sm" data-act="copiarCobranca" title="Texto para mandar ao fornecedor">⧉ Copiar texto para o fornecedor</button><button class="sm" data-act="exportarDivergencias">⬇ Divergências (Excel)</button>' : ''}
+        <button class="sm danger" data-act="excluirNFe">Excluir conferência</button>
+        <button class="sm" data-act="fecharNFe">Fechar</button>
+      </div>
+    </div>
+    <p class="muted small" style="margin:0 0 8px">${esc(rec.nf.emitente.nome)} · CNPJ ${esc(fmtCnpj(rec.nf.emitente.cnpj))} · emitida em ${fmtData(rec.nf.emissao)} · valor da nota ${fmtMoeda(rec.nf.total)}${rec.nf.frete ? ` (frete ${fmtMoeda(rec.nf.frete)})` : ''} · pedido de <b>${esc(f?.nome || '')}</b></p>
+    <div class="stats">
+      <div class="stat"><span class="muted small">Itens conferidos</span><b>${linhas.length}</b><span class="small muted">${resumo.ok} OK</span></div>
+      <div class="stat${resumo.precoMaior ? ' stat-ruim' : ''}"><span class="muted small">Preço acima do cotado</span><b>${resumo.precoMaior}</b><span class="small">${resumo.cobrar ? 'a cobrar ' + fmtMoeda(resumo.cobrar) : ''}</span></div>
+      <div class="stat${resumo.qtd ? ' stat-atencao' : ''}"><span class="muted small">Quantidade diferente</span><b>${resumo.qtd}</b></div>
+      <div class="stat${resumo.naoVeio ? ' stat-ruim' : ''}"><span class="muted small">Não vieram</span><b>${resumo.naoVeio}</b></div>
+      <div class="stat${resumo.naoPedidos ? ' stat-atencao' : ''}"><span class="muted small">Na nota, mas não pedidos</span><b>${resumo.naoPedidos}</b><span class="small">${resumo.valorNaoPedidos ? fmtMoeda(resumo.valorNaoPedidos) : ''}</span></div>
+    </div>
+    <div class="table-wrap"><table class="tab-nfe">
+      <thead><tr><th>Situação</th><th>Item do pedido</th><th>Na nota</th><th class="r">Qtd. pedida</th><th class="r">Qtd. na nota</th><th class="r">Preço cotado</th><th class="r">Preço na nota</th><th class="r">A cobrar</th></tr></thead>
+      <tbody>${linhas.map(l => `<tr class="${l.sit[0] === 'ok' || l.sit[0] === 'outra-nota' ? '' : 'nfe-div'}">
+        <td>${l.sit.map(chip).join(' ')}</td>
+        <td>${esc(l.p.it.descricao)}<br><span class="small muted">${esc(l.p.it.codigo || '')}</span>${l.p.marca ? ` <span class="marca-pedida">${esc(l.p.marca)}</span>` : ''}</td>
+        <td>${l.nfs.length ? l.nfs.map(x => `<span class="small"><b>${esc(x.cProd)}</b> ${esc(x.xProd)}</span><br><span class="small muted">${esc(comoTxt[x.como] || '')}</span> <button class="link small" data-act="desvincularNFe" data-k="${x.k}" title="Não é este item">desvincular</button>`).join('<br>') : '<span class="muted">—</span>'}
+          ${l.nfs.length && l.p.marca && opcoesMarca(l.p.marca).length === 1 ? (l.marcaNaNota ? '<br><span class="chip-marca ok">✓ marca na descrição da nota</span>' : '<br><span class="chip-marca sem">marca não aparece na nota</span>') : ''}</td>
+        <td class="r">${fmtNum(l.esperado)}${l.antes ? `<br><span class="small muted">${fmtNum(l.antes)} em outra nota</span>` : ''}</td>
+        <td class="r">${l.nfs.length ? fmtNum(l.qNF) : '—'}</td>
+        <td class="r">${fmtMoeda(l.p.preco)}</td>
+        <td class="r">${l.precoNF != null ? fmtMoeda(l.precoNF) : '—'}${l.precoNF != null && Math.abs(l.precoNF - l.p.preco) > tolPreco(l.p.preco) ? `<br><span class="small ${l.precoNF > l.p.preco ? 'txt-ruim' : 'muted'}">${l.precoNF > l.p.preco ? '+' : ''}${fmtPct(l.precoNF / l.p.preco - 1)}</span>` : ''}</td>
+        <td class="r">${l.cobrar ? `<b class="txt-ruim">${fmtMoeda(l.cobrar)}</b>` : ''}</td>
+      </tr>`).join('')}
+      ${naoPedidos.length ? `<tr class="sub-cab"><td colspan="8">Na nota, mas não estão neste pedido</td></tr>` + naoPedidos.map(x => `<tr class="nfe-div">
+        <td><span class="badge warn">${x.deOutro ? 'item de outro fornecedor' : 'não pedido'}</span></td>
+        <td><select data-vincular-nfe="${x.k}" class="sel-vinc">${opcoesVinc(null)}</select>${x.deOutro ? `<br><span class="small muted">na cotação: ${esc(c.itens[x.idx].descricao)}</span>` : ''}</td>
+        <td class="small"><b>${esc(x.cProd)}</b> ${esc(x.xProd)}</td>
+        <td class="r">—</td>
+        <td class="r">${fmtNum(x.q)} ${esc(x.un)}</td>
+        <td class="r">—</td>
+        <td class="r">${fmtMoeda(precoLinhaNF(x))}${x.q !== 1 ? `<br><span class="small muted">total ${fmtMoeda(x.vProd - (x.vDesc || 0))}</span>` : ''}</td>
+        <td></td>
+      </tr>`).join('') : ''}
+      </tbody>
+    </table></div>
+    <p class="small muted" style="margin:6px 0 0">Preço na nota = valor do produto com desconto, sem IPI/ST e frete. Se um item foi ligado errado, clique em <b>desvincular</b>; para ligar um item da nota ao pedido, escolha na lista. O sistema lembra os vínculos deste fornecedor para as próximas notas.</p>
+  </section>`;
+}
+
+function textoCobranca(c, rec) {
+  const { linhas, naoPedidos, resumo } = conferirNFe(c, rec);
+  const f = c.fornecedores.find(x => x.fornecedorId === rec.fornecedorId);
+  const L = [`Olá${f?.contato ? ', ' + f.contato : ''}!`, '', `Conferimos a NF-e nº ${rec.nf.numero} (${fmtData(rec.nf.emissao)}) com o nosso pedido da cotação nº ${c.numero}${nomeLojaRec(rec) ? ' — loja ' + nomeLojaRec(rec) : ''} e encontramos estas diferenças:`, ''];
+  for (const l of linhas) {
+    const nome = [l.p.it.codigo, l.p.it.descricao].filter(Boolean).join(' ');
+    if (l.sit.includes('preco-maior')) L.push(`- ${nome}: cotado a ${fmtMoeda(l.p.preco)}, faturado a ${fmtMoeda(l.precoNF)} (${fmtNum(l.qNF)} un., diferença de ${fmtMoeda(l.cobrar)})`);
+    if (l.sit.includes('faltou')) L.push(`- ${nome}: pedimos ${fmtNum(l.esperado)}, vieram ${fmtNum(l.qNF)}`);
+    if (l.sit.includes('a-mais')) L.push(`- ${nome}: pedimos ${fmtNum(l.esperado)}, vieram ${fmtNum(l.qNF)}`);
+    if (l.sit.includes('nao-veio')) L.push(`- ${nome}: pedimos ${fmtNum(l.esperado)}, não veio na nota`);
+  }
+  for (const x of naoPedidos) L.push(`- ${x.cProd} ${x.xProd}: veio na nota (${fmtNum(x.q)} un., ${fmtMoeda(x.vProd - (x.vDesc || 0))}), mas não estava no pedido`);
+  if (resumo.cobrar) L.push('', `Total cobrado acima do cotado: ${fmtMoeda(resumo.cobrar)}.`);
+  L.push('', 'Podem verificar, por favor?', '', db.config.comprador || '', db.config.loja || '');
+  return L.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Liga (ou desliga, com idx -1) a linha k da nota a um item da cotação e lembra o vínculo. */
+function vincularItemNFe(c, rec, k, idx) {
+  const x = rec.itens[k];
+  if (!x) return;
+  rec.itens = rec.itens.map((y, j) => (j === k ? { ...y, idx, como: idx >= 0 ? 'manual' : '' } : y));
+  const cad = db.fornecedores.find(f => f.id === rec.fornecedorId);
+  const chave = normCod(x.cProd);
+  if (cad && chave) {
+    const mapa = { ...(cad.codigosNfe || {}) };
+    if (idx >= 0 && c.itens[idx]?.produtoId) mapa[chave] = c.itens[idx].produtoId;
+    else delete mapa[chave];
+    cad.codigosNfe = mapa;
+  }
+  salvar();
+  render();
+  toast(idx >= 0 ? `"${x.cProd}" ligado a ${c.itens[idx].descricao}. O sistema lembra nas próximas notas.` : `"${x.cProd}" desvinculado.`);
+}
+
+async function exportarDivergencias(c, rec) {
+  const { linhas, naoPedidos, resumo } = conferirNFe(c, rec);
+  const f = c.fornecedores.find(x => x.fornecedorId === rec.fornecedorId);
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Divergências', { pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  ws.mergeCells('A1:H1');
+  ws.getCell('A1').value = `Divergências da NF-e nº ${rec.nf.numero} — ${f?.nome || rec.nf.emitente.nome}`;
+  ws.getCell('A1').font = { bold: true, size: 14 };
+  ws.getCell('A2').value = `Cotação nº ${c.numero}${nomeLojaRec(rec) ? ' · loja ' + nomeLojaRec(rec) : ''} · emitida em ${fmtData(rec.nf.emissao)} · valor da nota ${fmtMoeda(rec.nf.total)}`;
+  const cab = ['Situação', 'Código', 'Descrição', 'Qtd. pedida', 'Qtd. na nota', 'Preço cotado', 'Preço na nota', 'A cobrar'];
+  const hr = ws.getRow(4);
+  cab.forEach((t, k) => { const cell = hr.getCell(k + 1); cell.value = t; cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.fill = XL.azul; cell.border = XL.borda; });
+  let r = 5;
+  const linha = vals => {
+    const row = ws.getRow(r++);
+    row.values = vals;
+    for (let k = 1; k <= 8; k++) row.getCell(k).border = XL.borda;
+    for (const k of [6, 7, 8]) row.getCell(k).numFmt = XL.moeda;
+  };
+  for (const l of linhas) {
+    if (l.sit[0] === 'ok' || l.sit[0] === 'outra-nota') continue;
+    linha([l.sit.map(k => SIT_NF[k][0].replace(/^[^\wÀ-ú]+/, '')).join(', '), l.p.it.codigo || '', l.p.it.descricao, l.esperado, l.nfs.length ? l.qNF : 0, l.p.preco, l.precoNF ?? '', l.cobrar || '']);
+  }
+  for (const x of naoPedidos) linha(['não pedido', x.cProd, x.xProd, 0, x.q, '', precoLinhaNF(x), '']);
+  const tr = ws.getRow(r);
+  tr.getCell(7).value = 'Total a cobrar';
+  tr.getCell(8).value = resumo.cobrar;
+  tr.getCell(8).numFmt = XL.moeda;
+  tr.font = { bold: true };
+  ws.columns = [22, 16, 46, 12, 12, 14, 14, 14].map(width => ({ width }));
+  await baixarWorkbook(wb, `Divergencias_NF${rec.nf.numero}_${slug(f?.nome || 'fornecedor')}.xlsx`);
+}
+
 async function exportarProdutos() {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Produtos');
@@ -2441,6 +2838,7 @@ function renderCotacoes() {
       <h2>Cotações</h2>
       <div class="row">
         <label class="btn" style="margin:0">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx,.xls" data-import-geral></label>
+        <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido de compra">🧾 Conferir NF-e (XML)<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
       </div>
     </div>
@@ -2562,6 +2960,27 @@ function linhaTotalComp(c, comp) {
   </tr>`;
 }
 
+function celulaRecebimento(c, p, porLoja) {
+  const LJ = lojas();
+  const partes = [];
+  const badge = (sit, rotulo) => {
+    const [txt, cls] = ESTADO_REC[sit.estado];
+    return `<span class="badge ${cls}" title="${sit.estado === 'parcial' ? `${sit.faltando} item(ns) ainda não chegaram` : ''}">${rotulo ? esc(rotulo) + ': ' : ''}${txt}</span>${sit.cobrar ? ` <span class="txt-ruim">cobrar ${fmtMoeda(sit.cobrar)}</span>` : ''}`;
+  };
+  const juntas = situacaoRecebimento(c, p.f.fornecedorId, null);
+  if (porLoja) {
+    for (const lj of LJ) {
+      if (!p.itens.some(x => x.qtds[lj.id] > 0)) continue;
+      const sit = situacaoRecebimento(c, p.f.fornecedorId, lj.id);
+      if (sit.recs.length || !juntas.recs.length) partes.push(badge(sit, lj.nome));
+    }
+    if (juntas.recs.length) partes.push(badge(juntas, 'Lojas juntas'));
+  } else partes.push(badge(juntas));
+  const recs = (c.recebimentos || []).filter(r => r.fornecedorId === p.f.fornecedorId);
+  const links = recs.map(r => `<button class="link" data-act="verNFe" data-rec="${r.id}">NF ${esc(r.nf.numero)}${nomeLojaRec(r) ? ' (' + esc(nomeLojaRec(r)) + ')' : ''}</button>`).join(' ');
+  return partes.join('<br>') + (links ? `<br>${links}` : '');
+}
+
 function secaoPedidos(c, comp) {
   const LJ = lojas();
   const peds = pedidosPorFornecedor(c);
@@ -2578,23 +2997,26 @@ function secaoPedidos(c, comp) {
       <h3>Pedidos de compra</h3>
       <div class="row">
         ${comp.porLoja ? LJ.map(lj => `<button class="sm" data-act="baixarPedidos" data-loja="${esc(lj.id)}" title="Um arquivo com os pedidos de ${esc(lj.nome)}, uma aba por fornecedor">⬇ Todos de ${esc(lj.nome)}</button>`).join('') : ''}
+        <label class="btn sm" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">📥 Conferir NF-e (XML)<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-cot></label>
         ${peds.length > 1 || comp.porLoja ? `<button class="sm primary" data-act="baixarPedidos" title="Um arquivo Excel com uma aba para cada fornecedor${comp.porLoja ? ', com a quantidade de cada loja' : ''}">⬇ Todos os pedidos${comp.porLoja ? ' (lojas juntas)' : ' (um arquivo)'}</button>` : ''}
       </div>
     </div>
     <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th><th>Pagamento / entrega</th><th></th></tr></thead>
+      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th><th>Pagamento / entrega</th><th>Recebimento</th><th></th></tr></thead>
       <tbody>${peds.map(p => `<tr>
         <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span></td>
         ${comp.porLoja ? LJ.map(lj => `<td class="r">${itensLoja(p, lj) ? `${fmtMoeda(totLoja(p, lj))}<br><span class="small muted">${itensLoja(p, lj)} item(ns)</span>` : '<span class="muted">—</span>'}</td>`).join('') : ''}
         <td class="r"><b>${fmtMoeda(p.total)}</b></td>
         <td class="small">${esc([p.f.cond?.pagamento, p.f.cond?.prazo].filter(Boolean).join(' · ') || '—')}</td>
+        <td class="small">${celulaRecebimento(c, p, comp.porLoja)}</td>
         <td class="actions-cell">
+          <label class="btn sm" style="margin:0" title="Conferir a nota fiscal deste fornecedor">📥 NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe="${p.fi}"></label>
           ${comp.porLoja ? LJ.map(lj => itensLoja(p, lj) ? `<button class="sm" data-act="baixarPedido" data-f="${p.fi}" data-loja="${esc(lj.id)}" title="Pedido só de ${esc(lj.nome)}">⬇ ${esc(lj.nome)}</button>` : '').join('') : ''}
           <button class="sm" data-act="baixarPedido" data-f="${p.fi}" title="${comp.porLoja ? 'Um pedido com as duas lojas (uma coluna de quantidade para cada)' : 'Pedido deste fornecedor'}">⬇ ${comp.porLoja ? 'Lojas juntas' : 'Pedido'}</button>
         </td>
       </tr>`).join('')}
-      <tr class="total"><td>Total</td>${comp.porLoja ? LJ.map(lj => `<td class="r">${fmtMoeda(comp.porLojaTotal[lj.id])}</td>`).join('') : ''}<td class="r">${fmtMoeda(comp.melhor)}</td><td colspan="2"></td></tr>
+      <tr class="total"><td>Total</td>${comp.porLoja ? LJ.map(lj => `<td class="r">${fmtMoeda(comp.porLojaTotal[lj.id])}</td>`).join('') : ''}<td class="r">${fmtMoeda(comp.melhor)}</td><td colspan="3"></td></tr>
       </tbody>
     </table></div>
   </section>`;
@@ -2710,6 +3132,8 @@ function renderCotacao(id) {
   }
 
   if (ui.lote && ui.lote.cotId === c.id) painel = painelLote(c);
+  const recAberto = ui.conferindo && ui.conferindo.cotId === c.id && (c.recebimentos || []).find(r => r.id === ui.conferindo.recId);
+  if (recAberto) painel = painelNFe(c, recAberto);
 
   const temResposta = comp.itensCotados > 0;
   const ultimos = temResposta ? ultimosPrecos(c.id) : {};
@@ -3106,6 +3530,7 @@ function renderFornecedores() {
       <label>Contato (pessoa)<input name="contato" value="${esc(v.contato)}"></label>
       <label>E-mail<input name="email" type="email" value="${esc(v.email)}"></label>
       <label>Telefone / WhatsApp<input name="telefone" value="${esc(v.telefone)}"></label>
+      <label>CNPJ <span class="muted small">(para reconhecer a NF-e)</span><input name="cnpj" value="${esc(v.cnpj)}"></label>
       <label style="grid-column:1/-1">Observação (o que fornece, condições…)<input name="obs" value="${esc(v.obs)}"></label>
       <div class="actions" style="grid-column:1/-1">
         ${f ? '<button type="button" data-act="cancelarForn">Cancelar</button>' : ''}
@@ -3225,6 +3650,7 @@ function ir(nome, id = null) {
   ui.digitando = null;
   ui.enviando = null;
   ui.lote = null;
+  ui.conferindo = null;
   render();
   window.scrollTo(0, 0);
 }
@@ -3618,6 +4044,40 @@ const acoes = {
     }
     salvar();
     render();
+  },
+
+  verNFe: el => {
+    const c = cotAtual();
+    ui.conferindo = { cotId: c.id, recId: el.dataset.rec };
+    ui.digitando = null; ui.enviando = null; ui.lote = null;
+    render();
+    $('#painelNFe')?.scrollIntoView({ behavior: 'smooth' });
+  },
+  fecharNFe: () => { ui.conferindo = null; render(); },
+  excluirNFe: async () => {
+    const c = cotAtual();
+    const rec = (c.recebimentos || []).find(r => r.id === ui.conferindo?.recId);
+    if (!rec || !(await confirmar(`Excluir a conferência da NF-e nº ${rec.nf.numero}? O pedido volta a ficar aguardando esta nota.`, 'Excluir'))) return;
+    c.recebimentos = c.recebimentos.filter(r => r.id !== rec.id);
+    ui.conferindo = null;
+    salvar();
+    render();
+  },
+  desvincularNFe: el => {
+    const c = cotAtual();
+    const rec = (c.recebimentos || []).find(r => r.id === ui.conferindo?.recId);
+    if (!rec) return;
+    vincularItemNFe(c, rec, +el.dataset.k, -1);
+  },
+  copiarCobranca: el => {
+    const c = cotAtual();
+    const rec = (c.recebimentos || []).find(r => r.id === ui.conferindo?.recId);
+    if (rec) return copiar(textoCobranca(c, rec), el);
+  },
+  exportarDivergencias: () => {
+    const c = cotAtual();
+    const rec = (c.recebimentos || []).find(r => r.id === ui.conferindo?.recId);
+    if (rec) return exportarDivergencias(c, rec);
   },
 
   limparEscolhas: async () => {
@@ -4092,6 +4552,17 @@ document.addEventListener('change', async e => {
     cotAtual().status = t.value;
     salvar();
     render();
+  } else if (t.type === 'file' && t.files.length && (t.dataset.importNfe != null || t.hasAttribute('data-import-nfe-cot') || t.hasAttribute('data-import-nfe-geral'))) {
+    const files = [...t.files];
+    t.value = '';
+    if (t.dataset.importNfe != null) await importarNFes(files, cotAtual()?.id, +t.dataset.importNfe);
+    else if (t.hasAttribute('data-import-nfe-cot')) await importarNFes(files, cotAtual()?.id, null);
+    else await importarNFes(files, null, null);
+  } else if (t.dataset.vincularNfe != null) {
+    const c = cotAtual();
+    const rec = c && (c.recebimentos || []).find(r => r.id === ui.conferindo?.recId);
+    if (!rec || t.value === '') return;
+    vincularItemNFe(c, rec, +t.dataset.vincularNfe, +t.value);
   } else if (t.type === 'file' && t.files.length) {
     const file = t.files[0];
     t.value = '';
