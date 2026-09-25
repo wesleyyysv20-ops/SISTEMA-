@@ -23,6 +23,13 @@ const DEFAULT_DB = {
       'Segue em anexo a planilha da cotação nº {numero}.\n' +
       'Por favor, preencha os preços unitários (campos em amarelo) e nos devolva a planilha por e-mail até {prazo}.\n\n' +
       'Obrigado,\n{comprador}\n{loja}\n{telefone}',
+    diasAviso: 1,
+    assuntoCobranca: 'Lembrete: cotação nº {numero} - {loja}',
+    corpoCobranca:
+      'Olá, {fornecedor}!\n\n' +
+      'Ainda não recebemos a sua resposta da cotação nº {numero}, com prazo até {prazo}.\n' +
+      'Consegue nos devolver a planilha preenchida? Se precisar, reenviamos o arquivo.\n\n' +
+      'Obrigado,\n{comprador}\n{loja}\n{telefone}',
   },
   produtos: [],
   fornecedores: [],
@@ -47,7 +54,7 @@ const STATUS = {
 let db = carregar();
 let versaoDados = 0; // muda a cada gravação (invalida caches)
 let cacheHist = null;
-const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '' };
+const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', sel: null, lote: null };
 
 /* ---------------- persistência ---------------- */
 
@@ -385,14 +392,11 @@ const TIPO_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
  * "Salvar como"; na página publicada, o próprio Claude pede a confirmação do download.
  * gerar() devolve o Blob. Retorna false se a pessoa cancelou.
  */
-async function salvarComo(nome, gerar) {
+async function salvarComo(nome, gerar, tipo = { description: 'Planilha do Excel', accept: { [TIPO_XLSX]: ['.xlsx'] } }) {
   if (!nuvem.downloads && typeof window.showSaveFilePicker === 'function') {
     let handle = null;
     try {
-      handle = await window.showSaveFilePicker({
-        suggestedName: nome,
-        types: [{ description: 'Planilha do Excel', accept: { [TIPO_XLSX]: ['.xlsx'] } }],
-      });
+      handle = await window.showSaveFilePicker({ suggestedName: nome, types: [tipo] });
     } catch (e) {
       if (e && e.name === 'AbortError') return false; // cancelou a janela
       handle = null; // navegador bloqueou a janela: baixa do jeito normal
@@ -408,6 +412,73 @@ async function salvarComo(nome, gerar) {
   }
   return baixarBlob(await gerar(), nome);
 }
+
+/* ---------------- .zip (sem compressão: as planilhas .xlsx já são compactadas) ---------------- */
+
+const CRC_TABELA = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(dados) {
+  let c = 0xffffffff;
+  for (let i = 0; i < dados.length; i++) c = CRC_TABELA[(c ^ dados[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** Monta um arquivo .zip com [{ nome, dados: Uint8Array }]. */
+function criarZip(arquivos) {
+  const partes = [], central = [];
+  const agora = new Date();
+  const hora = (agora.getHours() << 11) | (agora.getMinutes() << 5) | (agora.getSeconds() >> 1);
+  const data = ((agora.getFullYear() - 1980) << 9) | ((agora.getMonth() + 1) << 5) | agora.getDate();
+  let offset = 0;
+  for (const a of arquivos) {
+    const nome = new TextEncoder().encode(a.nome);
+    const crc = crc32(a.dados);
+    const cab = new DataView(new ArrayBuffer(30));
+    cab.setUint32(0, 0x04034b50, true);
+    cab.setUint16(4, 20, true);
+    cab.setUint16(6, 0x0800, true); // nomes em UTF-8
+    cab.setUint16(8, 0, true); // sem compressão
+    cab.setUint16(10, hora, true);
+    cab.setUint16(12, data, true);
+    cab.setUint32(14, crc, true);
+    cab.setUint32(18, a.dados.length, true);
+    cab.setUint32(22, a.dados.length, true);
+    cab.setUint16(26, nome.length, true);
+    partes.push(cab, nome, a.dados);
+    const cd = new DataView(new ArrayBuffer(46));
+    cd.setUint32(0, 0x02014b50, true);
+    cd.setUint16(4, 20, true);
+    cd.setUint16(6, 20, true);
+    cd.setUint16(8, 0x0800, true);
+    cd.setUint16(12, hora, true);
+    cd.setUint16(14, data, true);
+    cd.setUint32(16, crc, true);
+    cd.setUint32(20, a.dados.length, true);
+    cd.setUint32(24, a.dados.length, true);
+    cd.setUint16(28, nome.length, true);
+    cd.setUint32(42, offset, true);
+    central.push(cd, nome);
+    offset += 30 + nome.length + a.dados.length;
+  }
+  const tamCentral = central.reduce((s, x) => s + x.byteLength, 0);
+  const fim = new DataView(new ArrayBuffer(22));
+  fim.setUint32(0, 0x06054b50, true);
+  fim.setUint16(8, arquivos.length, true);
+  fim.setUint16(10, arquivos.length, true);
+  fim.setUint32(12, tamCentral, true);
+  fim.setUint32(16, offset, true);
+  return new Blob([...partes, ...central, fim], { type: 'application/zip' });
+}
+
+const TIPO_ZIP = { description: 'Arquivo compactado', accept: { 'application/zip': ['.zip'] } };
 
 async function baixarWorkbook(wb, nome) {
   return salvarComo(nome, async () => new Blob([await wb.xlsx.writeBuffer()], { type: TIPO_XLSX }));
@@ -605,7 +676,7 @@ function alertasPreco(p, ultimo, precos) {
 function preencherModelo(tpl, c, f) {
   const cfg = db.config;
   const vars = {
-    fornecedor: f.contato || f.nome,
+    fornecedor: f ? f.contato || f.nome : '',
     numero: c.numero,
     loja: cfg.loja,
     comprador: cfg.comprador,
@@ -614,7 +685,9 @@ function preencherModelo(tpl, c, f) {
     prazo: c.prazoResposta ? fmtData(c.prazoResposta) : 'o prazo combinado',
     titulo: c.titulo || '',
   };
-  return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] || '' : m)).replace(/\n{3,}/g, '\n\n').trim();
+  return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] || '' : m))
+    .replace(/,\s*([!.])/g, '$1') // "Olá, !" quando não há nome
+    .replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /* ---------------- Excel: planilha para o fornecedor ---------------- */
@@ -1799,23 +1872,115 @@ async function importarProdutos(file) {
 
 /* ---------------- e-mail ---------------- */
 
-function dadosEmail(c, f) {
-  const assunto = preencherModelo(db.config.assuntoEmail, c, f);
-  const corpo = preencherModelo(db.config.corpoEmail, c, f);
+/** Links e textos do e-mail. tipo: 'cotacao' (padrão) ou 'cobranca'. */
+function dadosEmail(c, f, tipo = 'cotacao') {
+  const cfg = db.config;
+  const cob = tipo === 'cobranca';
+  const assunto = preencherModelo(cob ? cfg.assuntoCobranca || DEFAULT_DB.config.assuntoCobranca : cfg.assuntoEmail, c, f);
+  const corpo = preencherModelo(cob ? cfg.corpoCobranca || DEFAULT_DB.config.corpoCobranca : cfg.corpoEmail, c, f);
   return {
     assunto,
     corpo,
-    gmail: `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(f.email)}&su=${enc(assunto)}&body=${enc(corpo)}`,
-    outlook: `https://outlook.office.com/mail/deeplink/compose?to=${enc(f.email)}&subject=${enc(assunto)}&body=${enc(corpo)}`,
-    mailto: `mailto:${enc(f.email)}?subject=${enc(assunto)}&body=${enc(corpo.replace(/\n/g, '\r\n'))}`,
+    gmail: `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(f?.email || '')}&su=${enc(assunto)}&body=${enc(corpo)}`,
+    outlook: `https://outlook.office.com/mail/deeplink/compose?to=${enc(f?.email || '')}&subject=${enc(assunto)}&body=${enc(corpo)}`,
+    mailto: `mailto:${enc(f?.email || '')}?subject=${enc(assunto)}&body=${enc(corpo.replace(/\n/g, '\r\n'))}`,
   };
 }
 
-function marcarEnviado(c, fi) {
+/** Um e-mail só para vários fornecedores, com todos em cópia oculta (ninguém vê os outros). */
+function dadosEmailGrupo(c, fornecedores, tipo = 'cotacao') {
+  const m = dadosEmail(c, null, tipo);
+  const emails = fornecedores.map(f => f.email).filter(Boolean);
+  const cco = emails.join(',');
+  const para = db.config.email || '';
+  return {
+    ...m,
+    emails,
+    gmail: `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(para)}&bcc=${enc(cco)}&su=${enc(m.assunto)}&body=${enc(m.corpo)}`,
+    mailto: `mailto:${enc(para)}?bcc=${enc(cco)}&subject=${enc(m.assunto)}&body=${enc(m.corpo.replace(/\n/g, '\r\n'))}`,
+  };
+}
+
+/** Dias até o prazo de resposta (negativo = vencido). */
+function diasAtePrazo(c) {
+  if (!c.prazoResposta) return null;
+  const [a, m, d] = c.prazoResposta.split('-').map(Number);
+  const [ha, hm, hd] = hojeISO().split('-').map(Number);
+  return Math.round((Date.UTC(a, m - 1, d) - Date.UTC(ha, hm - 1, hd)) / 86400000);
+}
+
+function textoPrazo(dias) {
+  if (dias == null) return '';
+  if (dias < 0) return dias === -1 ? 'venceu ontem' : `venceu há ${-dias} dias`;
+  if (dias === 0) return 'vence hoje';
+  if (dias === 1) return 'vence amanhã';
+  return `vence em ${dias} dias`;
+}
+
+const respondeu = f => !!f.respondidoEm || Object.values(f.respostas || {}).some(r => r?.preco > 0);
+
+/**
+ * Cotação aberta com fornecedores sem resposta e prazo vencido ou perto de vencer.
+ * Retorna { dias, pendentes: [índices dos fornecedores] } ou null.
+ */
+function situacaoPrazo(c) {
+  if (c.status !== 'aberta') return null;
+  const dias = diasAtePrazo(c);
+  if (dias == null || dias > (Number(db.config.diasAviso) || 0)) return null;
+  const pendentes = c.fornecedores.map((f, fi) => (respondeu(f) ? -1 : fi)).filter(fi => fi >= 0);
+  return pendentes.length ? { dias, pendentes } : null;
+}
+
+function cotacoesComPrazo() {
+  return db.cotacoes.map(c => ({ c, s: situacaoPrazo(c) })).filter(x => x.s)
+    .sort((a, b) => a.s.dias - b.s.dias);
+}
+
+function marcarEnviado(c, fi, tipo = 'cotacao') {
   const f = c.fornecedores[fi];
   if (!f) return;
-  f.enviadoEm = new Date().toISOString();
+  if (tipo === 'cobranca') f.cobradoEm = new Date().toISOString();
+  else f.enviadoEm = new Date().toISOString();
   salvar();
+}
+
+/** Gera as planilhas dos fornecedores `fis` e salva num .zip. */
+async function salvarZip(c, fis) {
+  if (!fis.length) { avisar('Marque pelo menos um fornecedor.'); return; }
+  const gerar = async () => {
+    const arquivos = [];
+    for (const fi of fis) {
+      const f = c.fornecedores[fi];
+      const wb = await gerarPlanilha(c, f);
+      arquivos.push({ nome: nomePlanilha(c, f), dados: new Uint8Array(await wb.xlsx.writeBuffer()) });
+    }
+    return criarZip(arquivos);
+  };
+  const ok = await salvarComo(`Cotacao_${c.numero}_planilhas.zip`, gerar, TIPO_ZIP);
+  if (ok && nuvem.downloads) toast(`${fis.length} planilha(s) no arquivo .zip.`);
+}
+
+/** Grava as planilhas numa pasta escolhida (Chrome/Edge com o arquivo aberto no computador). */
+async function salvarNaPasta(c, fis) {
+  let dir;
+  try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); } catch (e) { return; }
+  for (const fi of fis) {
+    const f = c.fornecedores[fi];
+    const wb = await gerarPlanilha(c, f);
+    const h = await dir.getFileHandle(nomePlanilha(c, f), { create: true });
+    const w = await h.createWritable();
+    await w.write(new Blob([await wb.xlsx.writeBuffer()], { type: TIPO_XLSX }));
+    await w.close();
+  }
+  toast(`${fis.length} planilha(s) salvas na pasta "${dir.name}".`);
+}
+
+function abrirLote(c, fis, tipo) {
+  ui.lote = { cotId: c.id, tipo, ids: fis.map(fi => c.fornecedores[fi].fornecedorId), inicio: new Date().toISOString() };
+  ui.enviando = null;
+  ui.digitando = null;
+  render();
+  $('#painelLote')?.scrollIntoView({ behavior: 'smooth' });
 }
 
 async function copiar(texto, el) {
@@ -2053,6 +2218,19 @@ function linhasCotacoes() {
   }).join('');
 }
 
+function avisosPrazo() {
+  const lista = cotacoesComPrazo();
+  if (!lista.length) return '';
+  return `<section class="card aviso-prazo-card">
+    <h3>⏰ Respostas ${lista.some(x => x.s.dias < 0) ? 'atrasadas ou ' : ''}perto do prazo</h3>
+    <ul class="lista-prazo">${lista.map(({ c, s }) => `<li>
+      <a href="#" data-route="cotacao" data-id="${c.id}"><b>Cotação nº ${esc(c.numero)}</b></a>
+      <span class="badge ${s.dias < 0 ? 'danger' : 'warn'}">${textoPrazo(s.dias)}</span>
+      <span class="small">faltam: ${s.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</span>
+    </li>`).join('')}</ul>
+  </section>`;
+}
+
 function renderCotacoes() {
   const abertas = db.cotacoes.filter(c => c.status === 'aberta');
   const aguardando = abertas.reduce((s, c) => s + c.fornecedores.filter(f => !f.respondidoEm).length, 0);
@@ -2078,11 +2256,87 @@ function renderCotacoes() {
       </select>
     </div>
   </section>
+  ${avisosPrazo()}
   <section class="card table-wrap">
     <table>
       <thead><tr><th>Nº</th><th>Data</th><th>Título</th><th class="c">Itens</th><th class="c">Respostas</th><th class="r">Melhor total</th><th>Status</th></tr></thead>
       <tbody id="tbCot">${linhasCotacoes()}</tbody>
     </table>
+  </section>`;
+}
+
+function textoSel(c) {
+  const n = c.fornecedores.filter(f => ui.sel?.ids.has(f.fornecedorId)).length;
+  return n ? `${n} de ${c.fornecedores.length} marcado(s)` : 'Marque os fornecedores na primeira coluna';
+}
+
+function fornecedoresMarcados(c) {
+  return c.fornecedores.map((f, fi) => ({ f, fi })).filter(x => ui.sel?.ids.has(x.f.fornecedorId));
+}
+
+/** Painel de envio (ou cobrança) para vários fornecedores. */
+function painelLote(c) {
+  const L = ui.lote;
+  const cob = L.tipo === 'cobranca';
+  const lista = L.ids.map(id => c.fornecedores.findIndex(f => f.fornecedorId === id)).filter(fi => fi >= 0);
+  if (!lista.length) return '';
+  const feito = fi => (cob ? c.fornecedores[fi].cobradoEm && c.fornecedores[fi].cobradoEm >= L.inicio : c.fornecedores[fi].enviadoEm);
+  const atual = lista.find(fi => !feito(fi) && c.fornecedores[fi].email) ?? -1;
+  const nFeitos = lista.filter(feito).length;
+  const semEmail = lista.filter(fi => !c.fornecedores[fi].email);
+  const grupo = dadosEmailGrupo(c, lista.map(fi => c.fornecedores[fi]), L.tipo);
+  const pasta = !nuvem.downloads && typeof window.showDirectoryPicker === 'function';
+  return `
+  <section class="card envio" id="painelLote">
+    <div class="row-between">
+      <h3>${cob ? 'Cobrar resposta' : 'Enviar a cotação'} · ${lista.length} fornecedor(es)</h3>
+      <button class="sm" data-act="fecharLote">Fechar</button>
+    </div>
+    <div class="lote-opcao">
+      <h4>Opção 1 · Um e-mail para cada fornecedor <span class="small muted">(${nFeitos} de ${lista.length} ${cob ? 'cobrado(s)' : 'enviado(s)'})</span></h4>
+      ${!cob ? `<p class="small" style="margin:4px 0 8px">Primeiro baixe as planilhas. Cada uma já vem com o nome do fornecedor.</p>
+      <div class="row" style="margin-bottom:10px">
+        <button class="sm primary" data-act="zipLote">⬇ Baixar as ${lista.length} planilhas (.zip)</button>
+        ${pasta ? '<button class="sm" data-act="pastaLote" title="Grava todas as planilhas numa pasta do computador">📁 Salvar numa pasta</button>' : ''}
+        <span class="small muted">No .zip: botão direito → <b>Extrair tudo</b>, e anexe a planilha de cada um.</span>
+      </div>` : '<p class="small" style="margin:4px 0 8px">O e-mail de lembrete já vai preenchido. Se o fornecedor pedir, reenvie a planilha (⬇ Excel).</p>'}
+      <div class="table-wrap"><table class="tab-lote">
+        <thead><tr><th></th><th>Fornecedor</th><th>E-mail</th><th>Abrir o e-mail ${cob ? '' : '(e anexar a planilha)'}</th><th></th></tr></thead>
+        <tbody>${lista.map(fi => {
+          const f = c.fornecedores[fi];
+          const m = dadosEmail(c, f, L.tipo);
+          const ok = feito(fi);
+          const marca = `data-marca-envio="${fi}" data-tipo="${L.tipo}"`;
+          return `<tr class="${fi === atual ? 'atual' : ''} ${ok ? 'feito' : ''}">
+            <td class="c">${ok ? '<span class="ok-mark">✓</span>' : fi === atual ? '▶' : ''}</td>
+            <td><b>${esc(f.nome)}</b>${ok ? `<br><span class="small muted">${cob ? 'cobrado' : 'enviado'} em ${fmtData(cob ? f.cobradoEm : f.enviadoEm)}</span>` : ''}</td>
+            <td class="small">${f.email ? `${esc(f.email)} <button class="sm link" data-act="copiarTexto" data-texto="${esc(f.email)}" title="Copiar o e-mail">⧉</button>` : '<span class="badge warn">sem e-mail</span>'}</td>
+            <td class="actions-cell">${f.email ? `
+              <a class="btn sm${fi === atual ? ' btn-primary' : ''}" href="${esc(m.gmail)}" target="_blank" rel="noopener" ${marca}>Gmail</a>
+              <a class="btn sm" href="${esc(m.outlook)}" target="_blank" rel="noopener" ${marca}>Outlook</a>
+              <a class="btn sm" href="${esc(m.mailto)}" ${marca}>Programa</a>` : '<span class="small muted">cadastre o e-mail em Fornecedores</span>'}</td>
+            <td class="actions-cell">
+              <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="${esc(nomePlanilha(c, f))}">⬇ Excel</button>
+              ${ok ? '' : `<button class="sm" data-act="marcarLote" data-f="${fi}" title="Marcar como ${cob ? 'cobrado' : 'enviado'} sem abrir o e-mail">✓</button>`}
+            </td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+      <p class="small muted" style="margin:6px 0 0">Ao abrir o e-mail de um fornecedor, ele fica marcado como ${cob ? 'cobrado' : 'enviado'} e o próximo da lista é destacado.</p>
+    </div>
+    <div class="lote-opcao">
+      <h4>Opção 2 · Um e-mail só para todos, em cópia oculta</h4>
+      <p class="small" style="margin:4px 0 8px">Mais rápido: um único e-mail, e um fornecedor não vê o endereço dos outros.
+        ${cob ? '' : 'Anexe a <b>planilha da cotação</b> (sem nome): cada fornecedor escreve o nome dele no campo "Fornecedor". Se vier em branco, o sistema pergunta de quem é na hora de importar.'}</p>
+      ${grupo.emails.length ? `<div class="row">
+        ${cob ? '' : '<button class="sm" data-act="baixarGeral">⬇ Planilha da cotação</button>'}
+        <a class="btn sm btn-primary" href="${esc(grupo.gmail)}" target="_blank" rel="noopener" data-marca-grupo data-tipo="${L.tipo}">Abrir no Gmail</a>
+        <a class="btn sm" href="${esc(grupo.mailto)}" data-marca-grupo data-tipo="${L.tipo}">Programa de e-mail</a>
+        <button class="sm" data-act="copiarTexto" data-texto="${esc(grupo.emails.join(', '))}">Copiar os ${grupo.emails.length} e-mails</button>
+        <button class="sm" data-act="copiarTexto" data-texto="${esc(grupo.corpo)}">Copiar o texto</button>
+      </div>` : '<p class="small muted">Nenhum destes fornecedores tem e-mail cadastrado.</p>'}
+    </div>
+    ${semEmail.length ? `<p class="small aviso-alertas" style="margin-top:10px">Sem e-mail cadastrado: ${semEmail.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}. Mande pelo WhatsApp ou cadastre o e-mail em Fornecedores.</p>` : ''}
   </section>`;
 }
 
@@ -2093,13 +2347,21 @@ function renderCotacao(id) {
   const naLista = new Set(c.fornecedores.map(f => f.fornecedorId));
   const disponiveis = db.fornecedores.filter(f => !naLista.has(f.id)).sort((a, b) => a.nome.localeCompare(b.nome));
 
+  if (!ui.sel || ui.sel.cotId !== c.id) {
+    // começa com os fornecedores que ainda não receberam a cotação
+    ui.sel = { cotId: c.id, ids: new Set(c.fornecedores.filter(f => !f.enviadoEm).map(f => f.fornecedorId)) };
+  }
+  const prazo = situacaoPrazo(c);
+  const nf = c.fornecedores.length;
   const fornRows = c.fornecedores.map((f, fi) => {
     const t = comp.totais[fi];
+    const atrasado = prazo && prazo.pendentes.includes(fi);
     return `<tr>
+      <td class="c"><input type="checkbox" class="sel-forn" data-sel-forn="${esc(f.fornecedorId)}" ${ui.sel.ids.has(f.fornecedorId) ? 'checked' : ''} aria-label="Marcar ${esc(f.nome)}"></td>
       <td><b>${esc(f.nome)}</b>${f.contato ? `<br><span class="small muted">${esc(f.contato)}</span>` : ''}</td>
       <td class="small">${esc(f.email || '—')}</td>
       <td>${f.enviadoEm ? `<span class="badge ok">${fmtData(f.enviadoEm)}</span>` : '<span class="badge">não enviada</span>'}</td>
-      <td>${f.respondidoEm ? `<span class="badge ok">${t.cotados}/${c.itens.length} itens</span>` : '<span class="badge warn">aguardando</span>'}</td>
+      <td>${f.respondidoEm ? `<span class="badge ok">${t.cotados}/${c.itens.length} itens</span>` : `<span class="badge ${atrasado ? (prazo.dias < 0 ? 'danger' : 'warn') : 'warn'}">${atrasado ? 'aguardando · ' + textoPrazo(prazo.dias) : 'aguardando'}</span>`}${f.cobradoEm && !f.respondidoEm ? `<br><span class="small muted">cobrado em ${fmtData(f.cobradoEm)}</span>` : ''}</td>
       <td class="r">${f.respondidoEm ? fmtMoeda(t.total) : '—'}</td>
       <td class="actions-cell">
         <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="Baixar a planilha Excel deste fornecedor">⬇ Excel</button>
@@ -2174,8 +2436,9 @@ function renderCotacao(id) {
     </section>`;
   }
 
+  if (ui.lote && ui.lote.cotId === c.id) painel = painelLote(c);
+
   const temResposta = comp.itensCotados > 0;
-  const nf = c.fornecedores.length;
   const ultimos = temResposta ? ultimosPrecos(c.id) : {};
   const chips = avs => avs.map(a => `<span class="alerta-preco ${a.tipo}" title="${esc(a.texto)}">⚠ ${esc(a.curto)}</span>`).join('');
   let qtdAlertas = 0;
@@ -2257,7 +2520,9 @@ function renderCotacao(id) {
         </select>
       </div>
     </div>
-    <p class="muted" style="margin:0">Criada em ${fmtData(c.data)} · Responder até ${fmtData(c.prazoResposta)} · ${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
+    <p class="muted" style="margin:0">Criada em ${fmtData(c.data)} · <label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"></label> · ${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
+    ${prazo ? `<p class="aviso-prazo ${prazo.dias < 0 ? 'vencido' : ''}">⏰ O prazo de resposta ${textoPrazo(prazo.dias)} (${fmtData(c.prazoResposta)}) e ${prazo.pendentes.length === 1 ? 'falta 1 fornecedor responder' : `faltam ${prazo.pendentes.length} fornecedores responderem`}: <b>${prazo.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</b>.
+      <button class="sm" data-act="cobrarPendentes">📣 Cobrar quem falta</button></p>` : ''}
     ${c.titulo ? `<p style="margin:6px 0 0"><b>${esc(c.titulo)}</b></p>` : ''}
     ${c.obs ? `<p class="small" style="margin:6px 0 0;white-space:pre-wrap">${esc(c.obs)}</p>` : ''}
   </section>
@@ -2265,16 +2530,22 @@ function renderCotacao(id) {
   <section class="card">
     <h3>Fornecedores</h3>
     ${nf ? `<div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th><th>E-mail</th><th>Envio</th><th>Resposta</th><th class="r">Total</th><th>Ações</th></tr></thead>
+      <thead><tr><th class="c"><input type="checkbox" class="sel-forn" data-sel-todos ${nf && ui.sel.ids.size === nf ? 'checked' : ''} title="Marcar todos" aria-label="Marcar todos"></th><th>Fornecedor</th><th>E-mail</th><th>Envio</th><th>Resposta</th><th class="r">Total</th><th>Ações</th></tr></thead>
       <tbody>${fornRows}</tbody></table></div>` : '<p class="empty">Nenhum fornecedor nesta cotação.</p>'}
     <div class="row" style="margin-top:10px">
       ${disponiveis.length ? `<select id="addFornCot" style="width:auto;max-width:280px">${disponiveis.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select>
       <button class="sm" data-act="addFornCot">+ Adicionar fornecedor</button>` : ''}
       <button class="sm" data-act="baixarGeral" title="Planilha da cotação sem nome de fornecedor">⬇ Planilha da cotação</button>
       <label class="btn sm" style="margin:0" title="Importar uma planilha preenchida pelo fornecedor">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx,.xls" data-import-cot></label>
-      ${nf > 1 ? '<button class="sm" data-act="baixarTodas">⬇ Baixar todas as planilhas</button>' : ''}
     </div>
-    <p class="tip"><b>Como enviar:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
+    ${nf ? `<div class="row barra-lote">
+      <span class="small muted" id="qtdSel">${textoSel(c)}</span>
+      <button class="sm primary" data-act="envioLote" data-sel-btn>✉ Enviar para os marcados</button>
+      <button class="sm" data-act="zipMarcados" data-sel-btn title="Um arquivo .zip com a planilha de cada fornecedor marcado">⬇ Planilhas dos marcados (.zip)</button>
+      <button class="sm" data-act="cobrarMarcados" data-sel-btn title="E-mail de lembrete para quem ainda não respondeu">📣 Cobrar os marcados</button>
+    </div>` : ''}
+    <p class="tip"><b>Para vários de uma vez:</b> marque os fornecedores e clique em <b>✉ Enviar para os marcados</b>: você baixa todas as planilhas num .zip e abre os e-mails um atrás do outro (ou um e-mail só, com todos em cópia oculta).<br>
+    <b>Para um só:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
     Quando o fornecedor devolver a planilha preenchida, use <b>📥 Importar</b> para lançar os preços automaticamente.</p>
   </section>
 
@@ -2575,6 +2846,11 @@ function renderConfig() {
       <p class="muted small">Você pode usar: {fornecedor} {numero} {loja} {comprador} {telefone} {email} {prazo} {titulo}</p>
       <label>Assunto<input name="assuntoEmail" value="${esc(c.assuntoEmail)}"></label>
       <label>Texto<textarea name="corpoEmail" rows="9">${esc(c.corpoEmail)}</textarea></label>
+      <h3 style="margin-top:16px">Cobrança de resposta</h3>
+      <label style="max-width:360px">Avisar quantos dias antes do prazo<input name="diasAviso" type="number" min="0" max="30" value="${esc(c.diasAviso ?? 1)}"></label>
+      <p class="muted small">Com 0, o aviso aparece só no dia do prazo e depois dele. O modelo do lembrete usa os mesmos campos acima.</p>
+      <label>Assunto do lembrete<input name="assuntoCobranca" value="${esc(c.assuntoCobranca)}"></label>
+      <label>Texto do lembrete<textarea name="corpoCobranca" rows="7">${esc(c.corpoCobranca)}</textarea></label>
       <div class="actions"><button class="primary">Salvar configurações</button></div>
     </form>
   </section>
@@ -2605,6 +2881,7 @@ function ir(nome, id = null) {
   navegacao.id = id;
   ui.digitando = null;
   ui.enviando = null;
+  ui.lote = null;
   render();
   window.scrollTo(0, 0);
 }
@@ -2632,6 +2909,11 @@ function render() {
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
+  const navCot = $('#nav a[data-route="cotacoes"]');
+  if (navCot) {
+    const n = cotacoesComPrazo().length;
+    navCot.innerHTML = `Cotações${n ? ` <span class="nav-alerta" title="${n} cotação(ões) com resposta atrasada ou perto do prazo">${n}</span>` : ''}`;
+  }
 }
 
 document.addEventListener('click', e => {
@@ -2652,7 +2934,18 @@ document.addEventListener('click', e => {
   const envio = e.target.closest('[data-marca-envio]');
   if (envio) {
     const c = cotAtual();
-    if (c) { marcarEnviado(c, +envio.dataset.marcaEnvio); setTimeout(render, 400); }
+    if (c) { marcarEnviado(c, +envio.dataset.marcaEnvio, envio.dataset.tipo); setTimeout(render, 400); }
+  }
+  const grupo = e.target.closest('[data-marca-grupo]');
+  if (grupo && ui.lote) {
+    const c = cotAtual();
+    if (c) {
+      for (const id of ui.lote.ids) {
+        const fi = c.fornecedores.findIndex(f => f.fornecedorId === id);
+        if (fi >= 0 && c.fornecedores[fi].email) marcarEnviado(c, fi, grupo.dataset.tipo);
+      }
+      setTimeout(render, 400);
+    }
   }
 });
 
@@ -2854,23 +3147,54 @@ const acoes = {
     await baixarWorkbook(await gerarPlanilha(c, null), nomePlanilha(c, null));
   },
 
-  baixarTodas: async () => {
-    const c = cotAtual();
-    for (let fi = 0; fi < c.fornecedores.length; fi++) {
-      await baixarPlanilha(c, fi);
-      await new Promise(r => setTimeout(r, 400));
-    }
-    toast(`${c.fornecedores.length} planilhas baixadas.`);
-  },
-
   enviar: el => {
     const c = cotAtual();
     ui.enviando = { cotId: c.id, fi: +el.dataset.f };
     ui.digitando = null;
+    ui.lote = null;
     render();
     $('#painelEnvio')?.scrollIntoView({ behavior: 'smooth' });
   },
   fecharEnvio: () => { ui.enviando = null; render(); },
+
+  envioLote: () => {
+    const c = cotAtual();
+    const m = fornecedoresMarcados(c);
+    if (!m.length) return avisar('Marque os fornecedores que vão receber a cotação (primeira coluna da tabela).');
+    abrirLote(c, m.map(x => x.fi), 'cotacao');
+  },
+  cobrarMarcados: () => {
+    const c = cotAtual();
+    const m = fornecedoresMarcados(c);
+    if (!m.length) return avisar('Marque os fornecedores que você quer cobrar (primeira coluna da tabela).');
+    const pend = m.filter(x => !respondeu(x.f));
+    if (!pend.length) return avisar('Todos os fornecedores marcados já responderam.');
+    abrirLote(c, pend.map(x => x.fi), 'cobranca');
+  },
+  cobrarPendentes: () => {
+    const c = cotAtual();
+    const pend = c.fornecedores.map((f, fi) => (respondeu(f) ? -1 : fi)).filter(fi => fi >= 0);
+    if (!pend.length) return avisar('Todos os fornecedores já responderam.');
+    abrirLote(c, pend, 'cobranca');
+  },
+  fecharLote: () => { ui.lote = null; render(); },
+  marcarLote: el => {
+    marcarEnviado(cotAtual(), +el.dataset.f, ui.lote?.tipo);
+    render();
+  },
+  zipMarcados: () => {
+    const c = cotAtual();
+    return salvarZip(c, fornecedoresMarcados(c).map(x => x.fi));
+  },
+  zipLote: () => {
+    const c = cotAtual();
+    return salvarZip(c, ui.lote.ids.map(id => c.fornecedores.findIndex(f => f.fornecedorId === id)).filter(fi => fi >= 0));
+  },
+  pastaLote: () => {
+    const c = cotAtual();
+    return salvarNaPasta(c, ui.lote.ids.map(id => c.fornecedores.findIndex(f => f.fornecedorId === id)).filter(fi => fi >= 0));
+  },
+  copiarTexto: el => copiar(el.dataset.texto, el),
   marcarEnviado: el => { marcarEnviado(cotAtual(), +el.dataset.f); render(); toast('Marcada como enviada.'); },
   copiar: el => {
     const c = cotAtual();
@@ -2883,6 +3207,7 @@ const acoes = {
     const c = cotAtual();
     ui.digitando = { cotId: c.id, fi: +el.dataset.f };
     ui.enviando = null;
+    ui.lote = null;
     render();
     $('#painelDigitar')?.scrollIntoView({ behavior: 'smooth' });
   },
@@ -3084,6 +3409,7 @@ const formularios = {
     const d = formDados(form);
     Object.assign(db.config, d, {
       proxNumero: Math.max(1, parseInt(d.proxNumero, 10) || 1),
+      diasAviso: Math.max(0, Math.min(30, parseInt(d.diasAviso, 10) || 0)),
       protegerPlanilha: form.protegerPlanilha.checked,
     });
     salvar();
@@ -3280,6 +3606,23 @@ document.addEventListener('change', async e => {
   } else if (t.id === 'statusCot') {
     ui.statusCot = t.value;
     $('#tbCot').innerHTML = linhasCotacoes();
+  } else if (t.dataset.selForn || t.hasAttribute('data-sel-todos')) {
+    const c = cotAtual();
+    if (!c || !ui.sel) return;
+    if (t.hasAttribute('data-sel-todos')) {
+      ui.sel.ids = new Set(t.checked ? c.fornecedores.map(f => f.fornecedorId) : []);
+      document.querySelectorAll('[data-sel-forn]').forEach(x => { x.checked = t.checked; });
+    } else {
+      if (t.checked) ui.sel.ids.add(t.dataset.selForn); else ui.sel.ids.delete(t.dataset.selForn);
+      const todos = $('[data-sel-todos]');
+      if (todos) todos.checked = ui.sel.ids.size === c.fornecedores.length;
+    }
+    const q = $('#qtdSel');
+    if (q) q.textContent = textoSel(c);
+  } else if (t.dataset.change === 'prazoCot') {
+    cotAtual().prazoResposta = t.value;
+    salvar();
+    render();
   } else if (t.dataset.change === 'statusCot') {
     cotAtual().status = t.value;
     salvar();

@@ -719,3 +719,22 @@ tr.hist-linha > td { background: var(--card-2); padding: 12px; }
 .stat b.ok { color: var(--ok); }
 .barra { display: inline-block; width: 60px; height: 6px; background: var(--line); border-radius: 3px; margin-right: 8px; vertical-align: middle; overflow: hidden; }
 .barra span { display: block; height: 100%; background: var(--ok); }
+
+/* envio em lote e prazo */
+.barra-lote { margin-top: 8px; padding: 8px 10px; background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; }
+.sel-forn { width: 17px; height: 17px; margin: 0; cursor: pointer; }
+.lote-opcao { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 10px; background: var(--card); }
+.lote-opcao h4 { margin: 0; font-size: 15px; }
+.tab-lote tr.atual td { background: var(--blue-bg); }
+.tab-lote tr.feito td { color: var(--muted); }
+.ok-mark { color: var(--ok); font-weight: 700; }
+button.link { border: 0; background: none; padding: 0 3px; color: var(--primary-2); cursor: pointer; }
+.prazo-inline { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: inherit; font-size: inherit; }
+.prazo-inline input { width: auto; padding: 2px 6px; font-size: 14px; }
+.aviso-prazo { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
+.aviso-prazo.vencido { background: var(--danger-bg); color: var(--danger); }
+.aviso-prazo button { margin-left: 6px; }
+.aviso-prazo-card { border-left: 4px solid var(--warn); }
+.lista-prazo { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 6px; }
+.lista-prazo li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.nav-alerta { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #d9822b; color: #fff; font-size: 11px; font-weight: 700; text-align: center; line-height: 18px; margin-left: 2px; }

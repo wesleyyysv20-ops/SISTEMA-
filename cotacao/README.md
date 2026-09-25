@@ -73,3 +73,15 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
 - **Relatórios:** por período, mostra o total comprado, a economia em relação à média e ao preço
   mais caro recebido, a diferença média entre o 1º e o 2º preço, quais fornecedores ganham mais itens
   e o resumo de cada cotação. As cotações canceladas não entram.
+
+## Envio para vários fornecedores e cobrança
+
+- Na cotação, marque os fornecedores (primeira coluna) e use **✉ Enviar para os marcados**:
+  - **Opção 1:** baixe todas as planilhas num **.zip** (cada uma com o nome do fornecedor) e abra os
+    e-mails em sequência; o fornecedor da vez fica destacado e é marcado como enviado ao abrir o e-mail.
+  - **Opção 2:** um e-mail só com todos em **cópia oculta** e a planilha da cotação sem nome.
+- **⬇ Planilhas dos marcados (.zip)** baixa só as planilhas.
+- **Prazo:** o prazo de resposta pode ser alterado na própria cotação. Quando ele vence (ou falta o
+  número de dias definido em Configurações), a cotação mostra quem falta responder, a lista de
+  cotações ganha um aviso e o menu *Cotações* mostra um número. **📣 Cobrar quem falta** abre o
+  e-mail de lembrete (modelo editável em Configurações) para cada um ou para todos juntos.
