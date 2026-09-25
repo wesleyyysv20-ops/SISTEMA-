@@ -773,3 +773,6 @@ td.marca-errada .chip-marca, td.marca-errada .small { text-decoration: none; dis
 .stat.stat-atencao { border-color: var(--warn); background: var(--warn-bg); }
 .sel-vinc { max-width: 320px; font-size: 13px; padding: 3px 6px; }
 button.link.small { font-size: 12px; }
+
+/* envio dos pedidos */
+.formato-pedido { margin: 8px 0 0; padding: 8px 10px; background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; gap: 14px; }

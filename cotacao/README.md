@@ -116,6 +116,15 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
   sugere arquivar as canceladas e as finalizadas com mais de 60 dias; *Ver só as arquivadas* mostra as
   arquivadas, e **↩ Desarquivar** (na cotação) traz de volta.
 
+## Enviar os pedidos de compra por e-mail
+
+- Em *Pedidos de compra*, **✉ Enviar pedidos por e-mail** abre o envio em sequência: cada fornecedor
+  recebe uma planilha só com o pedido dele (uma aba por loja, ou as lojas juntas), e o e-mail já vai
+  com o total e as lojas/endereços de entrega. Falta só anexar a planilha.
+- **⬇ Baixar os pedidos (.zip)** traz todas as planilhas de uma vez. Ao abrir o e-mail, o pedido fica
+  marcado como enviado; quem não tem e-mail pode ser marcado com ✓ depois de mandar pelo WhatsApp.
+- O texto do e-mail fica em Configurações (campos {totalPedido} {itensPedido} {entrega} {pagamento}).
+
 ## Conferência da nota fiscal (NF-e)
 
 - **🧾 Conferir NF-e (XML)** (na lista de cotações ou nos pedidos da cotação): o sistema lê o XML da

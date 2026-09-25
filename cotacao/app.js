@@ -26,6 +26,13 @@ const DEFAULT_DB = {
     diasAviso: 1,
     backupDias: 7, // lembrar do backup a cada N dias (0 = não lembrar)
     arquivarDias: 60, // sugerir arquivar finalizadas com mais de N dias
+    assuntoPedido: 'Pedido de compra - cotação nº {numero} - {loja}',
+    corpoPedido:
+      'Olá, {fornecedor}!\n\n' +
+      'Segue em anexo o nosso pedido de compra da cotação nº {numero}: {itensPedido} item(ns), total de {totalPedido}.\n\n' +
+      '{entrega}\n\n' +
+      'Por favor, confirme o recebimento do pedido e o prazo de entrega.\n\n' +
+      'Obrigado,\n{comprador}\n{loja}\n{telefone}',
     marcaErradaNaoGanha: true,
     marcasEquivalentes: {}, // marca pedida (normalizada) → abreviações aceitas
     marcasDiferentes: {}, // marca pedida (normalizada) → respostas que NÃO são a mesma marca
@@ -801,9 +808,10 @@ function alertasPreco(p, ultimo, precos) {
   return avisos;
 }
 
-function preencherModelo(tpl, c, f) {
+function preencherModelo(tpl, c, f, extra = {}) {
   const cfg = db.config;
   const vars = {
+    ...extra,
     fornecedor: f ? f.contato || f.nome : '',
     numero: c.numero,
     loja: cfg.loja,
@@ -2444,11 +2452,15 @@ async function importarProdutos(file) {
 /* ---------------- e-mail ---------------- */
 
 /** Links e textos do e-mail. tipo: 'cotacao' (padrão) ou 'cobranca'. */
-function dadosEmail(c, f, tipo = 'cotacao') {
+function dadosEmail(c, f, tipo = 'cotacao', formato = 'lojas') {
   const cfg = db.config;
-  const cob = tipo === 'cobranca';
-  const assunto = preencherModelo(cob ? cfg.assuntoCobranca || DEFAULT_DB.config.assuntoCobranca : cfg.assuntoEmail, c, f);
-  const corpo = preencherModelo(cob ? cfg.corpoCobranca || DEFAULT_DB.config.corpoCobranca : cfg.corpoEmail, c, f);
+  const D = DEFAULT_DB.config;
+  const [tplA, tplC] = tipo === 'cobranca' ? [cfg.assuntoCobranca || D.assuntoCobranca, cfg.corpoCobranca || D.corpoCobranca]
+    : tipo === 'pedido' ? [cfg.assuntoPedido || D.assuntoPedido, cfg.corpoPedido || D.corpoPedido]
+      : [cfg.assuntoEmail, cfg.corpoEmail];
+  const extra = tipo === 'pedido' && f ? varsPedido(c, f.fornecedorId, formato) : {};
+  const assunto = preencherModelo(tplA, c, f, extra);
+  const corpo = preencherModelo(tplC, c, f, extra);
   return {
     assunto,
     corpo,
@@ -2511,6 +2523,7 @@ function marcarEnviado(c, fi, tipo = 'cotacao') {
   const f = c.fornecedores[fi];
   if (!f) return;
   if (tipo === 'cobranca') f.cobradoEm = new Date().toISOString();
+  else if (tipo === 'pedido') f.pedidoEnviadoEm = new Date().toISOString();
   else f.enviadoEm = new Date().toISOString();
   salvar();
 }
@@ -2875,9 +2888,124 @@ function fornecedoresMarcados(c) {
   return c.fornecedores.map((f, fi) => ({ f, fi })).filter(x => ui.sel?.ids.has(x.f.fornecedorId));
 }
 
+/* ---------------- envio dos pedidos de compra ---------------- */
+
+function nomeAbaSeguro(nome, usados) {
+  const base = String(nome || 'Pedido').replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 28) || 'Pedido';
+  let n = base, k = 2;
+  while (usados.has(n.toLowerCase())) n = `${base.slice(0, 26)} ${k++}`;
+  usados.add(n.toLowerCase());
+  return n;
+}
+
+/**
+ * Planilha do pedido de um fornecedor: uma aba por loja (formato 'lojas', cada uma com o
+ * endereço de entrega) ou uma aba com as lojas juntas. Sem quantidades por loja, uma aba só.
+ */
+async function gerarPedidoFornecedor(c, fornecedorId, formato = 'lojas') {
+  const f = c.fornecedores.find(x => x.fornecedorId === fornecedorId);
+  if (!f) return null;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = db.config.loja || 'Sistema de Cotação';
+  wb.created = new Date();
+  const usados = new Set();
+  if (comparar(c).porLoja && formato !== 'juntas') {
+    for (const lj of lojas()) {
+      const ped = pedidosPorFornecedor(c, lj.id).find(p => p.f.fornecedorId === fornecedorId);
+      if (ped) abaPedido(wb, c, ped, nomeAbaSeguro(lj.nome, usados), lj);
+    }
+  } else {
+    const ped = pedidosPorFornecedor(c).find(p => p.f.fornecedorId === fornecedorId);
+    if (ped) abaPedido(wb, c, ped, nomeAbaSeguro(f.nome, usados));
+  }
+  return wb.worksheets.length ? { wb, nome: nomePedido(c, f) } : null;
+}
+
+/** Campos do e-mail do pedido: {totalPedido} {itensPedido} {entrega} {pagamento}. */
+function varsPedido(c, fornecedorId, formato = 'lojas') {
+  const ped = pedidosPorFornecedor(c).find(p => p.f.fornecedorId === fornecedorId);
+  if (!ped) return { totalPedido: fmtMoeda(0), itensPedido: '0', entrega: '', pagamento: '' };
+  let entrega = '';
+  if (ped.porLoja) {
+    const linhas = lojas().map(lj => {
+      const itens = ped.itens.filter(x => x.qtds[lj.id] > 0);
+      if (!itens.length) return '';
+      const total = itens.reduce((s, x) => s + x.preco * x.qtds[lj.id], 0);
+      return `- ${lj.nome}${lj.endereco ? ' (' + lj.endereco + ')' : ''}: ${itens.length} item(ns), ${fmtMoeda(total)}`;
+    }).filter(Boolean);
+    entrega = (formato === 'juntas'
+      ? 'Entregar nas lojas (a quantidade de cada loja está na planilha):\n'
+      : 'O pedido está separado por loja, uma aba para cada:\n') + linhas.join('\n');
+  } else if (db.config.endereco) entrega = `Entregar em: ${db.config.endereco}`;
+  return {
+    totalPedido: fmtMoeda(ped.total),
+    itensPedido: String(ped.itens.length),
+    entrega,
+    pagamento: ped.f.cond?.pagamento || '',
+  };
+}
+
+function painelEnvioPedidos(c) {
+  const L = ui.lote;
+  const porLoja = comparar(c).porLoja;
+  const peds = pedidosPorFornecedor(c).filter(p => L.ids.includes(p.f.fornecedorId));
+  if (!peds.length) return '';
+  const atual = peds.find(p => !p.f.pedidoEnviadoEm && p.f.email);
+  const feitos = peds.filter(p => p.f.pedidoEnviadoEm).length;
+  const semEmail = peds.filter(p => !p.f.email);
+  const pasta = !nuvem.downloads && typeof window.showDirectoryPicker === 'function';
+  return `
+  <section class="card envio" id="painelLote">
+    <div class="row-between">
+      <h3>Enviar pedidos de compra · ${peds.length} fornecedor(es)</h3>
+      <button class="sm" data-act="fecharLote">Fechar</button>
+    </div>
+    ${porLoja ? `<div class="row formato-pedido">
+      <span class="small"><b>Planilha do pedido:</b></span>
+      <label class="check-inline"><input type="radio" name="formatoPedido" value="lojas" ${L.formato !== 'juntas' ? 'checked' : ''}> uma aba para cada loja</label>
+      <label class="check-inline"><input type="radio" name="formatoPedido" value="juntas" ${L.formato === 'juntas' ? 'checked' : ''}> lojas juntas (uma coluna de quantidade por loja)</label>
+    </div>` : ''}
+    <div class="lote-opcao">
+      <h4>Um e-mail para cada fornecedor <span class="small muted">(${feitos} de ${peds.length} enviado(s))</span></h4>
+      <p class="small" style="margin:4px 0 8px">Cada fornecedor recebe uma planilha só com o pedido dele. O e-mail já vai com o total${porLoja ? ' e as lojas de entrega' : ''}; falta anexar a planilha.</p>
+      <div class="row" style="margin-bottom:10px">
+        <button class="sm primary" data-act="zipPedidos">⬇ Baixar os ${peds.length} pedidos (.zip)</button>
+        <span class="small muted">Ou baixe o de cada um na linha dele (⬇ Pedido).</span>
+      </div>
+      <div class="table-wrap"><table class="tab-lote">
+        <thead><tr><th></th><th>Fornecedor</th><th class="r">Pedido</th><th>E-mail</th><th>Abrir o e-mail (e anexar o pedido)</th><th></th></tr></thead>
+        <tbody>${peds.map(p => {
+          const f = p.f, fi = p.fi;
+          const m = dadosEmail(c, f, 'pedido', L.formato);
+          const ok = !!f.pedidoEnviadoEm;
+          const marca = `data-marca-envio="${fi}" data-tipo="pedido"`;
+          return `<tr class="${p === atual ? 'atual' : ''} ${ok ? 'feito' : ''}">
+            <td class="c">${ok ? '<span class="ok-mark">✓</span>' : p === atual ? '▶' : ''}</td>
+            <td><b>${esc(f.nome)}</b>${ok ? `<br><span class="small muted">enviado em ${fmtData(f.pedidoEnviadoEm)}</span>` : ''}</td>
+            <td class="r">${fmtMoeda(p.total)}<br><span class="small muted">${p.itens.length} item(ns)</span></td>
+            <td class="small">${f.email ? `${esc(f.email)} <button class="sm link" data-act="copiarTexto" data-texto="${esc(f.email)}" title="Copiar o e-mail">⧉</button>` : '<span class="badge warn">sem e-mail</span>'}</td>
+            <td class="actions-cell">${f.email ? `
+              <a class="btn sm${p === atual ? ' btn-primary' : ''}" href="${esc(m.gmail)}" target="_blank" rel="noopener" ${marca}>Gmail</a>
+              <a class="btn sm" href="${esc(m.outlook)}" target="_blank" rel="noopener" ${marca}>Outlook</a>
+              <a class="btn sm" href="${esc(m.mailto)}" ${marca}>Programa</a>
+              <button class="sm link" data-act="copiarTexto" data-texto="${esc(m.corpo)}" title="Copiar o texto do e-mail">⧉ texto</button>` : '<span class="small muted">cadastre o e-mail em Fornecedores</span>'}</td>
+            <td class="actions-cell">
+              <button class="sm" data-act="baixarPedidoForn" data-forn="${esc(f.fornecedorId)}" title="${esc(nomePedido(c, f))}">⬇ Pedido</button>
+              ${ok ? '' : `<button class="sm" data-act="marcarLote" data-f="${fi}" title="Marcar como enviado sem abrir o e-mail (ex.: mandou pelo WhatsApp)">✓</button>`}
+            </td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+      <p class="small muted" style="margin:6px 0 0">Ao abrir o e-mail de um fornecedor, o pedido fica marcado como enviado e o próximo da lista é destacado. O texto do e-mail pode ser mudado em Configurações.</p>
+    </div>
+    ${semEmail.length ? `<p class="small aviso-alertas" style="margin-top:10px">Sem e-mail cadastrado: ${semEmail.map(p => esc(p.f.nome)).join(', ')}. Baixe o pedido e mande pelo WhatsApp; depois marque com ✓.</p>` : ''}
+  </section>`;
+}
+
 /** Painel de envio (ou cobrança) para vários fornecedores. */
 function painelLote(c) {
   const L = ui.lote;
+  if (L.tipo === 'pedido') return painelEnvioPedidos(c);
   const cob = L.tipo === 'cobranca';
   const lista = L.ids.map(id => c.fornecedores.findIndex(f => f.fornecedorId === id)).filter(fi => fi >= 0);
   if (!lista.length) return '';
@@ -2997,15 +3125,16 @@ function secaoPedidos(c, comp) {
       <h3>Pedidos de compra</h3>
       <div class="row">
         ${comp.porLoja ? LJ.map(lj => `<button class="sm" data-act="baixarPedidos" data-loja="${esc(lj.id)}" title="Um arquivo com os pedidos de ${esc(lj.nome)}, uma aba por fornecedor">⬇ Todos de ${esc(lj.nome)}</button>`).join('') : ''}
+        <button class="sm primary" data-act="enviarPedidos" title="Mandar o pedido de cada fornecedor por e-mail">✉ Enviar pedidos por e-mail</button>
         <label class="btn sm" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">📥 Conferir NF-e (XML)<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-cot></label>
-        ${peds.length > 1 || comp.porLoja ? `<button class="sm primary" data-act="baixarPedidos" title="Um arquivo Excel com uma aba para cada fornecedor${comp.porLoja ? ', com a quantidade de cada loja' : ''}">⬇ Todos os pedidos${comp.porLoja ? ' (lojas juntas)' : ' (um arquivo)'}</button>` : ''}
+        ${peds.length > 1 || comp.porLoja ? `<button class="sm" data-act="baixarPedidos" title="Um arquivo Excel com uma aba para cada fornecedor${comp.porLoja ? ', com a quantidade de cada loja' : ''}">⬇ Todos os pedidos${comp.porLoja ? ' (lojas juntas)' : ' (um arquivo)'}</button>` : ''}
       </div>
     </div>
     <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th><th>Pagamento / entrega</th><th>Recebimento</th><th></th></tr></thead>
       <tbody>${peds.map(p => `<tr>
-        <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span></td>
+        <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span>${p.f.pedidoEnviadoEm ? `<br><span class="badge ok">✉ pedido enviado ${fmtData(p.f.pedidoEnviadoEm)}</span>` : ''}</td>
         ${comp.porLoja ? LJ.map(lj => `<td class="r">${itensLoja(p, lj) ? `${fmtMoeda(totLoja(p, lj))}<br><span class="small muted">${itensLoja(p, lj)} item(ns)</span>` : '<span class="muted">—</span>'}</td>`).join('') : ''}
         <td class="r"><b>${fmtMoeda(p.total)}</b></td>
         <td class="small">${esc([p.f.cond?.pagamento, p.f.cond?.prazo].filter(Boolean).join(' · ') || '—')}</td>
@@ -3611,6 +3740,10 @@ function renderConfig() {
       <p class="muted small">Você pode usar: {fornecedor} {numero} {loja} {comprador} {telefone} {email} {prazo} {titulo}</p>
       <label>Assunto<input name="assuntoEmail" value="${esc(c.assuntoEmail)}"></label>
       <label>Texto<textarea name="corpoEmail" rows="9">${esc(c.corpoEmail)}</textarea></label>
+      <h3 style="margin-top:16px">E-mail do pedido de compra</h3>
+      <p class="muted small">Além dos campos acima: {totalPedido} {itensPedido} {entrega} (lojas e endereços de entrega) {pagamento}</p>
+      <label>Assunto do pedido<input name="assuntoPedido" value="${esc(c.assuntoPedido)}"></label>
+      <label>Texto do pedido<textarea name="corpoPedido" rows="9">${esc(c.corpoPedido)}</textarea></label>
       <h3 style="margin-top:16px">Cobrança de resposta</h3>
       <label style="max-width:360px">Avisar quantos dias antes do prazo<input name="diasAviso" type="number" min="0" max="30" value="${esc(c.diasAviso ?? 1)}"></label>
       <p class="muted small">Com 0, o aviso aparece só no dia do prazo e depois dele. O modelo do lembrete usa os mesmos campos acima.</p>
@@ -3947,6 +4080,32 @@ const acoes = {
     abrirLote(c, pend, 'cobranca');
   },
   fecharLote: () => { ui.lote = null; render(); },
+  enviarPedidos: () => {
+    const c = cotAtual();
+    const peds = pedidosPorFornecedor(c);
+    if (!peds.length) return avisar('Ainda não há pedidos: digite as quantidades no comparativo.');
+    ui.lote = { cotId: c.id, tipo: 'pedido', ids: peds.map(p => p.f.fornecedorId), inicio: new Date().toISOString(), formato: ui.formatoPedido || 'lojas' };
+    ui.enviando = null; ui.digitando = null; ui.conferindo = null;
+    render();
+    $('#painelLote')?.scrollIntoView({ behavior: 'smooth' });
+  },
+  baixarPedidoForn: async el => {
+    const c = cotAtual();
+    const g = await gerarPedidoFornecedor(c, el.dataset.forn, ui.lote?.formato);
+    if (g) await baixarWorkbook(g.wb, g.nome);
+  },
+  zipPedidos: async () => {
+    const c = cotAtual();
+    const ok = await salvarComo(`Pedidos_${c.numero}.zip`, async () => {
+      const arquivos = [];
+      for (const id of ui.lote.ids) {
+        const g = await gerarPedidoFornecedor(c, id, ui.lote.formato);
+        if (g) arquivos.push({ nome: g.nome, dados: new Uint8Array(await g.wb.xlsx.writeBuffer()) });
+      }
+      return criarZip(arquivos);
+    }, TIPO_ZIP);
+    if (ok && nuvem.downloads) toast('Pedidos baixados no arquivo .zip.');
+  },
   marcarLote: el => {
     marcarEnviado(cotAtual(), +el.dataset.f, ui.lote?.tipo);
     render();
@@ -4544,6 +4703,10 @@ document.addEventListener('change', async e => {
     }
     const q = $('#qtdSel');
     if (q) q.textContent = textoSel(c);
+  } else if (t.name === 'formatoPedido') {
+    ui.formatoPedido = t.value;
+    if (ui.lote) ui.lote.formato = t.value;
+    render();
   } else if (t.dataset.change === 'prazoCot') {
     cotAtual().prazoResposta = t.value;
     salvar();

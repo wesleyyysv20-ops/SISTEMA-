@@ -14,6 +14,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `07-backup-arquivo` | lembrete de backup e cotações arquivadas |
 | `08-telas` | todas as telas abrem sem erro e sem rolagem lateral (1366 e 1024 px) |
 | `09-nfe` | conferência da nota fiscal (XML da NF-e) com o pedido: fornecedor, loja, divergências, vínculos |
+| `10-enviar-pedidos` | envio dos pedidos de compra por e-mail (texto, lojas de entrega, .zip, uma aba por loja ou lojas juntas) |
 
 ## Rodar
 
