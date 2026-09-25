@@ -36,6 +36,13 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
    de qual cotação e fornecedor é o arquivo). Também é possível **✎ Digitar** os preços.
 7. **Comparar:** o comparativo mostra os preços lado a lado, o menor preço de cada item em
    verde, o total de cada fornecedor e o total da melhor combinação. Dá para exportar em Excel.
+   - **Escolher o vencedor na mão:** clique no preço de outro fornecedor para comprar dele
+     aquele item (clique de novo para voltar ao menor preço).
+   - **Aviso de preço fora do normal:** preços com mais de 30% de diferença do último preço pago
+     (em cotações anteriores não canceladas), ou muito diferentes dos outros fornecedores, ganham um ⚠.
+8. **Pedidos de compra:** a seção *Pedidos de compra* gera uma planilha por fornecedor só com os
+   itens que ele ganhou (código, similar, QTD, marca oferecida, valor e total), ou um arquivo único
+   com uma aba por fornecedor.
 
 ## A planilha enviada ao fornecedor
 

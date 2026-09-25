@@ -450,7 +450,11 @@ function novoFornCot(f) {
   };
 }
 
-/** Monta o comparativo de preços de uma cotação. */
+/**
+ * Monta o comparativo de preços de uma cotação.
+ * O vencedor de cada item é o menor preço, a não ser que a pessoa tenha escolhido outro fornecedor
+ * (c.escolhas[i] = fornecedorId). l.preco é o preço do vencedor; l.min continua sendo o menor preço.
+ */
 function comparar(c) {
   const linhas = c.itens.map((it, i) => {
     const precos = c.fornecedores.map(f => {
@@ -459,37 +463,79 @@ function comparar(c) {
     });
     const validos = precos.filter(p => p != null);
     const min = validos.length ? Math.min(...validos) : null;
-    const vencedor = min == null ? -1 : precos.indexOf(min);
-    return { it, i, precos, min, vencedor };
+    let vencedor = min == null ? -1 : precos.indexOf(min);
+    let manual = false;
+    const escolhido = c.escolhas?.[i];
+    if (escolhido) {
+      const j = c.fornecedores.findIndex(f => f.fornecedorId === escolhido);
+      if (j >= 0 && precos[j] != null) { vencedor = j; manual = precos[j] !== min; }
+    }
+    const preco = vencedor >= 0 ? precos[vencedor] : null;
+    return { it, i, precos, min, vencedor, preco, manual };
   });
   const totais = c.fornecedores.map((f, fi) => {
-    let total = 0, cotados = 0, vencidos = 0;
+    let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
     for (const l of linhas) {
       const p = l.precos[fi];
       if (p == null) continue;
       total += p * l.it.quantidade;
       cotados++;
-      if (p === l.min) vencidos++;
+      if (l.vencedor === fi) { vencidos++; valorVencido += p * l.it.quantidade; }
     }
-    return { total, cotados, vencidos };
+    return { total, cotados, vencidos, valorVencido };
   });
-  const melhor = linhas.reduce((s, l) => s + (l.min != null ? l.min * l.it.quantidade : 0), 0);
+  const melhor = linhas.reduce((s, l) => s + (l.preco != null ? l.preco * l.it.quantidade : 0), 0);
+  const menorPossivel = linhas.reduce((s, l) => s + (l.min != null ? l.min * l.it.quantidade : 0), 0);
   const itensCotados = linhas.filter(l => l.min != null).length;
-  return { linhas, totais, melhor, itensCotados };
+  const escolhasManuais = linhas.filter(l => l.manual).length;
+  return { linhas, totais, melhor, menorPossivel, itensCotados, escolhasManuais };
 }
 
-/** Último melhor preço de cada produto (pela cotação mais recente que teve resposta). */
-function ultimosPrecos() {
+/**
+ * Último preço pago de cada produto (pelo vencedor da cotação mais recente que teve resposta).
+ * `excluirId` deixa uma cotação de fora (para comparar a cotação aberta com as anteriores).
+ */
+function ultimosPrecos(excluirId) {
   const map = {};
-  const cots = [...db.cotacoes].sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
+  const cots = [...db.cotacoes].filter(c => c.id !== excluirId && c.status !== 'cancelada')
+    .sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
   for (const c of cots) {
     const { linhas } = comparar(c);
     for (const l of linhas) {
-      if (!l.it.produtoId || l.min == null) continue;
-      map[l.it.produtoId] = { preco: l.min, fornecedor: c.fornecedores[l.vencedor].nome, data: c.data, numero: c.numero };
+      if (!l.it.produtoId || l.preco == null) continue;
+      map[l.it.produtoId] = { preco: l.preco, fornecedor: c.fornecedores[l.vencedor].nome, data: c.data, numero: c.numero };
     }
   }
   return map;
+}
+
+/** Diferença acima da qual um preço é destacado (30%). */
+const LIMITE_ALERTA = 0.3;
+
+/**
+ * Avisos de preço fora do normal para o preço `p` de um item: comparado com o último preço pago
+ * e com a mediana dos preços dos fornecedores nesta cotação (quando há 3 ou mais preços).
+ */
+function alertasPreco(p, ultimo, precos) {
+  const avisos = [];
+  if (p == null) return avisos;
+  if (ultimo && ultimo.preco > 0) {
+    const d = p / ultimo.preco - 1;
+    if (Math.abs(d) >= LIMITE_ALERTA) {
+      avisos.push({ tipo: d > 0 ? 'alto' : 'baixo', curto: `${d > 0 ? '↑' : '↓'}${Math.round(Math.abs(d) * 100)}% vs último`,
+        texto: `${d > 0 ? 'Acima' : 'Abaixo'} do último preço pago: ${fmtMoeda(ultimo.preco)} (${ultimo.fornecedor}, cotação nº ${ultimo.numero})` });
+    }
+  }
+  const validos = precos.filter(x => x != null).sort((a, b) => a - b);
+  if (validos.length >= 3) {
+    const m = validos.length % 2 ? validos[(validos.length - 1) / 2] : (validos[validos.length / 2 - 1] + validos[validos.length / 2]) / 2;
+    const d = p / m - 1;
+    if (d >= 1 || d <= -0.5) {
+      avisos.push({ tipo: d > 0 ? 'alto' : 'baixo', curto: d > 0 ? 'muito acima dos outros' : 'muito abaixo dos outros',
+        texto: `${d > 0 ? 'Muito acima' : 'Muito abaixo'} dos outros fornecedores (mediana ${fmtMoeda(m)}). Confira se o valor foi digitado certo.` });
+    }
+  }
+  return avisos;
 }
 
 function preencherModelo(tpl, c, f) {
@@ -832,7 +878,7 @@ async function exportarComparativo(c) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Comparativo', { pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   const nf = c.fornecedores.length;
-  const cab = ['Item', 'Código', 'Descrição', 'Unid.', 'Qtd.', ...c.fornecedores.map(f => f.nome), 'Melhor preço', 'Fornecedor', 'Total (melhor)'];
+  const cab = ['Item', 'Código', 'Descrição', 'Unid.', 'Qtd.', ...c.fornecedores.map(f => f.nome), 'Preço escolhido', 'Fornecedor', 'Total'];
   ws.columns = [6, 14, 44, 8, 10, ...c.fornecedores.map(() => 18), 16, 24, 18].map(width => ({ width }));
 
   ws.mergeCells(1, 1, 1, cab.length);
@@ -855,14 +901,14 @@ async function exportarComparativo(c) {
     row.values = [
       k + 1, l.it.codigo || '', l.it.descricao, l.it.unidade || '', l.it.quantidade,
       ...l.precos.map(p => p ?? ''),
-      l.min ?? '', l.vencedor >= 0 ? c.fornecedores[l.vencedor].nome : 'sem preço',
-      l.min != null ? l.min * l.it.quantidade : '',
+      l.preco ?? '', l.vencedor >= 0 ? c.fornecedores[l.vencedor].nome + (l.manual ? ' (escolhido)' : '') : 'sem preço',
+      l.preco != null ? l.preco * l.it.quantidade : '',
     ];
     for (let col = 1; col <= cab.length; col++) row.getCell(col).border = XL.borda;
     for (let j = 0; j < nf; j++) {
       const cell = row.getCell(6 + j);
       cell.numFmt = XL.moeda;
-      if (l.precos[j] != null && l.precos[j] === l.min) { cell.fill = XL.verde; cell.font = { bold: true, color: { argb: 'FF1E7B4A' } }; }
+      if (j === l.vencedor) { cell.fill = XL.verde; cell.font = { bold: true, color: { argb: 'FF1E7B4A' } }; }
     }
     row.getCell(6 + nf).numFmt = XL.moeda;
     row.getCell(8 + nf).numFmt = XL.moeda;
@@ -878,8 +924,8 @@ async function exportarComparativo(c) {
   for (let col = 1; col <= cab.length; col++) { tr.getCell(col).fill = XL.cinza; tr.getCell(col).border = XL.borda; }
 
   const ir = ws.getRow(5 + linhas.length);
-  ir.getCell(3).value = 'Itens cotados / itens mais baratos';
-  totais.forEach((t, j) => { ir.getCell(6 + j).value = `${t.cotados}/${linhas.length} · ${t.vencidos} mais barato(s)`; });
+  ir.getCell(3).value = 'Itens cotados / itens ganhos';
+  totais.forEach((t, j) => { ir.getCell(6 + j).value = `${t.cotados}/${linhas.length} · ${t.vencidos} ganho(s)`; });
 
   let r = 7 + linhas.length;
   for (const [k, label] of COND_CAMPOS) {
@@ -890,6 +936,153 @@ async function exportarComparativo(c) {
   }
   ws.views = [{ state: 'frozen', ySplit: 3, xSplit: 3 }];
   await baixarWorkbook(wb, `Comparativo_${c.numero}.xlsx`);
+}
+
+/* ---------------- Excel: pedidos de compra ---------------- */
+
+/** Itens que cada fornecedor ganhou: [{ fi, f, itens: [{ it, i, preco, marca }], total }]. */
+function pedidosPorFornecedor(c) {
+  const { linhas } = comparar(c);
+  return c.fornecedores.map((f, fi) => {
+    const itens = linhas.filter(l => l.vencedor === fi).map(l => ({
+      it: l.it, i: l.i, preco: l.preco, marca: f.respostas?.[l.i]?.marca || l.it.marca || '',
+    }));
+    return { fi, f, itens, total: itens.reduce((s, x) => s + x.preco * x.it.quantidade, 0) };
+  }).filter(p => p.itens.length);
+}
+
+/** Monta uma aba "Pedido de compra" para um fornecedor no workbook `wb`. */
+function abaPedido(wb, c, ped, nomeAba) {
+  const cfg = db.config;
+  const { f, itens } = ped;
+  const ws = wb.addWorksheet(nomeAba, {
+    pageSetup: { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+  });
+  const ULT = 'H';
+  ws.mergeCells(`A1:${ULT}1`);
+  const titulo = ws.getCell('A1');
+  titulo.value = 'PEDIDO DE COMPRA';
+  titulo.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  titulo.fill = XL.azul;
+  titulo.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 21;
+
+  const info = (row, label, value, label2, value2) => {
+    ws.mergeCells(`A${row}:B${row}`);
+    ws.getCell(`A${row}`).value = label;
+    ws.getCell(`A${row}`).font = { bold: true };
+    ws.mergeCells(`C${row}:E${row}`);
+    ws.getCell(`C${row}`).value = value || '';
+    if (label2) {
+      ws.getCell(`F${row}`).value = label2;
+      ws.getCell(`F${row}`).font = { bold: true };
+      ws.mergeCells(`G${row}:H${row}`);
+      ws.getCell(`G${row}`).value = value2 || '';
+      ws.getCell(`G${row}`).alignment = { horizontal: 'left' };
+    }
+  };
+  info(2, 'Comprador:', cfg.loja, 'Data:', fmtData(hojeISO()));
+  info(3, 'CNPJ:', cfg.cnpj, 'Cotação nº:', c.numero);
+  info(4, 'Contato:', [cfg.comprador, cfg.telefone].filter(Boolean).join(' - '), 'Referência:', c.titulo || '');
+  info(5, 'E-mail:', cfg.email);
+  info(6, 'Endereço:', cfg.endereco);
+
+  ws.mergeCells('A7:B7');
+  ws.getCell('A7').value = 'Fornecedor:';
+  ws.getCell('A7').font = { bold: true };
+  ws.mergeCells(`C7:${ULT}7`);
+  ws.getCell('C7').value = [f.nome, f.contato].filter(Boolean).join(' — ');
+  ws.getCell('C7').font = { bold: true, size: 12 };
+
+  const conds = COND_CAMPOS.filter(([k]) => f.cond?.[k]);
+  let r = 8;
+  for (const [k, label] of conds) {
+    ws.mergeCells(`A${r}:B${r}`);
+    ws.getCell(`A${r}`).value = label + ':';
+    ws.getCell(`A${r}`).font = { bold: true };
+    ws.mergeCells(`C${r}:${ULT}${r}`);
+    ws.getCell(`C${r}`).value = f.cond[k];
+    r++;
+  }
+
+  const HEADER = r + 1;
+  const FIRST = HEADER + 1;
+  const cab = ['Item', 'Código', 'Similar', 'QTD', 'Marca', 'Descrição', 'Valor unit.', 'Total'];
+  const hr = ws.getRow(HEADER);
+  cab.forEach((txt, k) => {
+    const cell = hr.getCell(k + 1);
+    cell.value = txt;
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = XL.azul;
+    cell.border = XL.borda;
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+
+  itens.forEach((x, k) => {
+    const n = FIRST + k;
+    const row = ws.getRow(n);
+    row.values = [k + 1, x.it.codigo || '', x.it.similar || '', x.it.quantidade, x.marca, x.it.descricao, x.preco, { formula: `D${n}*G${n}`, result: x.preco * x.it.quantidade }];
+    for (let col = 1; col <= 8; col++) {
+      row.getCell(col).border = XL.borda;
+      row.getCell(col).alignment = { vertical: 'middle' };
+    }
+    row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+    row.getCell(7).numFmt = XL.moeda;
+    row.getCell(8).numFmt = XL.moeda;
+  });
+
+  const LAST = FIRST + itens.length - 1;
+  const TOTAL = LAST + 1;
+  ws.mergeCells(`A${TOTAL}:G${TOTAL}`);
+  ws.getCell(`A${TOTAL}`).value = `TOTAL DO PEDIDO (${itens.length} ${itens.length === 1 ? 'item' : 'itens'})`;
+  ws.getCell(`A${TOTAL}`).alignment = { horizontal: 'right' };
+  ws.getCell(`H${TOTAL}`).value = { formula: `SUM(H${FIRST}:H${LAST})`, result: ped.total };
+  ws.getCell(`H${TOTAL}`).numFmt = XL.moeda;
+  for (const col of ['A', 'H']) {
+    ws.getCell(`${col}${TOTAL}`).font = { bold: true };
+    ws.getCell(`${col}${TOTAL}`).fill = XL.cinza;
+    ws.getCell(`${col}${TOTAL}`).border = XL.borda;
+  }
+
+  const larguras = cab.map((h, k) => {
+    let m = String(h).length;
+    itens.forEach((x, j) => {
+      const v = [String(j + 1), x.it.codigo || '', x.it.similar || '', String(x.it.quantidade), x.marca, x.it.descricao || ''][k];
+      if (v != null) m = Math.max(m, String(v).length);
+    });
+    return m + 2;
+  });
+  larguras[0] = Math.max(5, larguras[0]);
+  larguras[6] = Math.max(13, larguras[6]);
+  larguras[7] = Math.max(14, larguras[7]);
+  ws.columns = larguras.map(width => ({ width: Math.min(width, 80) }));
+  ws.views = [{ state: 'frozen', ySplit: HEADER }];
+  return ws;
+}
+
+function nomePedido(c, f) {
+  return `Pedido_${c.numero}_${slug(f.nome)}.xlsx`;
+}
+
+/** Baixa o pedido de um fornecedor (fi) ou, sem fi, um arquivo com uma aba por fornecedor. */
+async function baixarPedidos(c, fi) {
+  const peds = pedidosPorFornecedor(c).filter(p => fi == null || p.fi === fi);
+  if (!peds.length) { avisar('Nenhum item foi ganho por este fornecedor.'); return; }
+  const wb = new ExcelJS.Workbook();
+  wb.creator = db.config.loja || 'Sistema de Cotação';
+  wb.created = new Date();
+  const usados = new Set();
+  for (const p of peds) {
+    // nome da aba: até 31 caracteres, sem caracteres proibidos, sem repetir
+    let base = p.f.nome.replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 28) || 'Fornecedor';
+    let nome = base, n = 2;
+    while (usados.has(nome.toLowerCase())) nome = `${base.slice(0, 26)} ${n++}`;
+    usados.add(nome.toLowerCase());
+    abaPedido(wb, c, p, nome);
+  }
+  const arquivo = fi != null ? nomePedido(c, peds[0].f) : `Pedidos_${c.numero}.xlsx`;
+  await baixarWorkbook(wb, arquivo);
 }
 
 async function exportarProdutos() {
@@ -1916,31 +2109,44 @@ function renderCotacao(id) {
 
   const temResposta = comp.itensCotados > 0;
   const nf = c.fornecedores.length;
+  const ultimos = temResposta ? ultimosPrecos(c.id) : {};
+  const chips = avs => avs.map(a => `<span class="alerta-preco ${a.tipo}" title="${esc(a.texto)}">⚠ ${esc(a.curto)}</span>`).join('');
+  let qtdAlertas = 0;
   const tabelaComp = `
-    <div class="table-wrap"><table>
+    <div class="table-wrap"><table class="tab-comp">
       <thead><tr>
         <th class="c">#</th><th>Produto</th><th class="r">Qtd.</th>
         ${c.fornecedores.map(f => `<th class="r">${esc(f.nome)}</th>`).join('')}
-        ${temResposta ? '<th class="r">Melhor</th><th>Fornecedor</th><th class="r">Total</th>' : ''}
+        ${temResposta ? '<th class="r">Preço escolhido</th><th>Fornecedor</th><th class="r">Total</th>' : ''}
       </tr></thead>
       <tbody>
-        ${comp.linhas.map(l => `<tr>
+        ${comp.linhas.map(l => {
+          const ult = l.it.produtoId ? ultimos[l.it.produtoId] : null;
+          const celulas = l.precos.map((p, j) => {
+            const o = c.fornecedores[j].respostas?.[l.i];
+            const extra = [o?.marca && `Marca: ${o.marca}`, o?.prazo, o?.obs].filter(Boolean).join(' · ');
+            const avs = alertasPreco(p, ult, l.precos);
+            if (avs.length) qtdAlertas++;
+            const venc = j === l.vencedor && (nf > 1 || l.manual);
+            const cls = ['r', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : ''].filter(Boolean).join(' ');
+            const dica = p == null ? '' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
+            const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
+            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
+          }).join('');
+          return `<tr>
           <td class="c">${l.i + 1}</td>
           <td>${esc(l.it.descricao)}<br><span class="small muted">${esc([l.it.codigo, l.it.similar && 'sim. ' + l.it.similar, l.it.marca].filter(Boolean).join(' · '))}</span></td>
           <td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>
-          ${l.precos.map((p, j) => {
-            const o = c.fornecedores[j].respostas?.[l.i];
-            const extra = [o?.marca && `Marca: ${o.marca}`, o?.prazo, o?.obs].filter(Boolean).join(' · ');
-            return `<td class="r ${p != null && p === l.min && nf > 1 ? 'best' : ''}" title="${esc(extra)}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}</td>`;
-          }).join('')}
-          ${temResposta ? `<td class="r"><b>${fmtMoeda(l.min)}</b></td>
-            <td>${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) : '<span class="muted">sem preço</span>'}</td>
-            <td class="r">${l.min != null ? fmtMoeda(l.min * l.it.quantidade) : '—'}</td>` : ''}
-        </tr>`).join('')}
+          ${celulas}
+          ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : '—'}</b>${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
+            <td>${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.manual ? `<br><span class="small muted">+${fmtMoeda((l.preco - l.min) * l.it.quantidade)} vs menor</span>` : '') : '<span class="muted">sem preço</span>'}</td>
+            <td class="r">${l.preco != null ? fmtMoeda(l.preco * l.it.quantidade) : '—'}</td>` : ''}
+        </tr>`;
+        }).join('')}
         ${temResposta ? `<tr class="total">
           <td></td><td>Total dos itens cotados</td><td></td>
-          ${comp.totais.map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} mais barato(s)</span></td>`).join('')}
-          <td></td><td>Melhor combinação</td><td class="r">${fmtMoeda(comp.melhor)}</td>
+          ${comp.totais.map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
+          <td></td><td>${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td><td class="r">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
         </tr>
         ${COND_CAMPOS.map(([k, label]) => c.fornecedores.some(f => f.cond?.[k]) ? `<tr>
           <td></td><td class="small muted">${label}</td><td></td>
@@ -1948,6 +2154,29 @@ function renderCotacao(id) {
           <td colspan="3"></td></tr>` : '').join('')}` : ''}
       </tbody>
     </table></div>`;
+
+  const peds = temResposta ? pedidosPorFornecedor(c) : [];
+  const semVencedor = comp.linhas.filter(l => l.vencedor < 0).length;
+  const secaoPedidos = peds.length ? `
+  <section class="card">
+    <div class="row-between">
+      <h3>Pedidos de compra</h3>
+      ${peds.length > 1 ? '<button class="sm primary" data-act="baixarPedidos" title="Um arquivo Excel com uma aba para cada fornecedor">⬇ Todos os pedidos (um arquivo)</button>' : ''}
+    </div>
+    <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço e não entram em nenhum pedido.` : ''}</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Fornecedor</th><th class="c">Itens</th><th class="r">Total do pedido</th><th>Pagamento / entrega</th><th></th></tr></thead>
+      <tbody>${peds.map(p => `<tr>
+        <td><b>${esc(p.f.nome)}</b></td>
+        <td class="c">${p.itens.length}</td>
+        <td class="r">${fmtMoeda(p.total)}</td>
+        <td class="small">${esc([p.f.cond?.pagamento, p.f.cond?.prazo].filter(Boolean).join(' · ') || '—')}</td>
+        <td class="actions-cell"><button class="sm" data-act="baixarPedido" data-f="${p.fi}">⬇ Pedido</button></td>
+      </tr>`).join('')}
+      <tr class="total"><td>Total</td><td class="c">${peds.reduce((s, p) => s + p.itens.length, 0)}</td><td class="r">${fmtMoeda(comp.melhor)}</td><td colspan="2"></td></tr>
+      </tbody>
+    </table></div>
+  </section>` : '';
 
   return `
   <section class="card">
@@ -1989,8 +2218,12 @@ function renderCotacao(id) {
       ${temResposta ? '<button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button>' : ''}
     </div>
     ${!temResposta ? '<p class="muted small">Assim que os fornecedores responderem, os preços aparecem aqui lado a lado, com o menor preço de cada item em verde.</p>' : ''}
+    ${temResposta && nf > 1 ? `<p class="muted small" style="margin-top:0">O vencedor de cada item fica em verde. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço.${comp.escolhasManuais ? ` <button class="sm" data-act="limparEscolhas">Desfazer as ${comp.escolhasManuais} escolha(s)</button>` : ''}</p>` : ''}
+    ${qtdAlertas ? `<p class="aviso-alertas small">⚠ ${qtdAlertas} preço(s) fora do normal: mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso para ver os detalhes.</p>` : ''}
     ${tabelaComp}
   </section>
+
+  ${secaoPedidos}
 
   <div class="actions">
     <button data-act="duplicarCot">Duplicar como nova cotação</button>
@@ -2467,6 +2700,31 @@ const acoes = {
   },
 
   exportarComparativo: () => exportarComparativo(cotAtual()),
+
+  escolherVencedor: el => {
+    const c = cotAtual();
+    const i = +el.dataset.i, fi = +el.dataset.f;
+    const f = c.fornecedores[fi];
+    if (!f) return;
+    const l = comparar(c).linhas[i];
+    c.escolhas = { ...(c.escolhas || {}) };
+    // clicar no vencedor escolhido (ou no menor preço) volta ao automático
+    if (l.vencedor === fi) delete c.escolhas[i];
+    else c.escolhas[i] = f.fornecedorId;
+    salvar();
+    render();
+  },
+
+  limparEscolhas: async () => {
+    const c = cotAtual();
+    if (!(await confirmar('Desfazer todas as escolhas feitas na mão e voltar ao menor preço em todos os itens?'))) return;
+    c.escolhas = {};
+    salvar();
+    render();
+  },
+
+  baixarPedido: el => baixarPedidos(cotAtual(), +el.dataset.f),
+  baixarPedidos: () => baixarPedidos(cotAtual()),
 
   duplicarCot: async () => {
     const c = cotAtual();
