@@ -40,6 +40,8 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
      aquele item (clique de novo para voltar ao menor preço).
    - **Aviso de preço fora do normal:** preços com mais de 30% de diferença do último preço pago
      (em cotações anteriores não canceladas), ou muito diferentes dos outros fornecedores, ganham um ⚠.
+   - **Dif. 1º × 2º:** em cada item, quanto o 2º melhor preço é mais caro que o melhor (em %), e de
+     qual fornecedor é o 2º preço. Também sai no comparativo em Excel.
 8. **Pedidos de compra:** a seção *Pedidos de compra* gera uma planilha por fornecedor só com os
    itens que ele ganhou (código, similar, QTD, marca oferecida, valor e total), ou um arquivo único
    com uma aba por fornecedor.
@@ -61,3 +63,13 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
 | `app.js` | Toda a lógica (cadastros, cotações, Excel, e-mail) |
 | `style.css` | Visual |
 | `vendor/exceljs.min.js` | Biblioteca [ExcelJS](https://github.com/exceljs/exceljs) 4.4.0 (licença MIT) usada para gerar e ler as planilhas |
+
+## Histórico de preços e relatórios
+
+- **Produtos:** a coluna *Último preço pago* mostra um mini gráfico da evolução e a variação para a
+  compra anterior. O botão 📈 abre o histórico completo do produto: gráfico, cada cotação com o
+  fornecedor, o preço pago, a diferença 1º × 2º e todos os preços recebidos. *Só com preço* filtra os
+  produtos que já apareceram em cotações.
+- **Relatórios:** por período, mostra o total comprado, a economia em relação à média e ao preço
+  mais caro recebido, a diferença média entre o 1º e o 2º preço, quais fornecedores ganham mais itens
+  e o resumo de cada cotação. As cotações canceladas não entram.

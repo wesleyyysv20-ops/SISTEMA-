@@ -45,7 +45,9 @@ const STATUS = {
 };
 
 let db = carregar();
-const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '' };
+let versaoDados = 0; // muda a cada gravação (invalida caches)
+let cacheHist = null;
+const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '' };
 
 /* ---------------- persistência ---------------- */
 
@@ -86,6 +88,7 @@ function gravarLocal() {
 /** Salva sem travar a digitação: grava depois de uma pequena pausa. */
 function salvar() {
   cacheBusca = null;
+  versaoDados++;
   clearTimeout(timerLocal);
   timerLocal = setTimeout(gravarLocal, 400);
   agendarSincronia();
@@ -251,6 +254,10 @@ function fmtData(iso) {
 
 function fmtMoeda(v) {
   return v == null || isNaN(v) ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function fmtPct(v, dec = 1) {
+  return v == null || isNaN(v) ? '—' : (v * 100).toLocaleString('pt-BR', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + '%';
 }
 
 function fmtNum(v, dec = 3) {
@@ -471,7 +478,11 @@ function comparar(c) {
       if (j >= 0 && precos[j] != null) { vencedor = j; manual = precos[j] !== min; }
     }
     const preco = vencedor >= 0 ? precos[vencedor] : null;
-    return { it, i, precos, min, vencedor, preco, manual };
+    // segundo melhor preço (de outro fornecedor) e a diferença em % para o melhor
+    const ordem = precos.map((p, j) => [p, j]).filter(([p]) => p != null).sort((x, y) => x[0] - y[0]);
+    const [seg, segIdx] = ordem.length > 1 ? ordem[1] : [null, -1];
+    const difSegundo = seg != null && min > 0 ? seg / min - 1 : null;
+    return { it, i, precos, min, vencedor, preco, manual, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -507,6 +518,59 @@ function ultimosPrecos(excluirId) {
     }
   }
   return map;
+}
+
+/**
+ * Histórico de preços de cada produto nas cotações com resposta (não canceladas), da mais antiga
+ * para a mais recente: produtoId → [{ cotId, numero, data, preco, fornecedor, min, segundo, difSegundo, precos }].
+ */
+function historicoPrecos() {
+  if (cacheHist && cacheHist.db === db && cacheHist.v === versaoDados) return cacheHist.map;
+  const map = {};
+  const cots = db.cotacoes.filter(c => c.status !== 'cancelada')
+    .sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
+  for (const c of cots) {
+    for (const l of comparar(c).linhas) {
+      if (!l.it.produtoId || l.preco == null) continue;
+      (map[l.it.produtoId] ||= []).push({
+        cotId: c.id, numero: c.numero, data: c.data, preco: l.preco, fornecedor: c.fornecedores[l.vencedor].nome,
+        manual: l.manual, min: l.min, segundo: l.segundo, difSegundo: l.difSegundo,
+        precos: l.precos.map((p, j) => ({ nome: c.fornecedores[j].nome, preco: p })).filter(x => x.preco != null).sort((a, b) => a.preco - b.preco),
+      });
+    }
+  }
+  cacheHist = { db, v: versaoDados, map };
+  return map;
+}
+
+/** Gráfico de linha (SVG) com a evolução dos preços pagos. */
+function graficoPrecos(hist, grande) {
+  const W = grande ? 560 : 90, H = grande ? 150 : 26, PX = grande ? 56 : 3, PY = grande ? 16 : 4;
+  const vals = hist.map(h => h.preco);
+  const mn = Math.min(...vals), mx = Math.max(...vals);
+  const x = k => hist.length === 1 ? W / 2 : PX + k * (W - PX - (grande ? 16 : 3)) / (hist.length - 1);
+  const y = v => mx === mn ? H / 2 : PY + (mx - v) * (H - 2 * PY - (grande ? 18 : 0)) / (mx - mn);
+  const pts = hist.map((h, k) => `${x(k).toFixed(1)},${y(h.preco).toFixed(1)}`).join(' ');
+  const dots = hist.map((h, k) => `<circle cx="${x(k).toFixed(1)}" cy="${y(h.preco).toFixed(1)}" r="${grande ? 4 : (k === hist.length - 1 ? 2.5 : 0)}"><title>${esc(`${fmtData(h.data)} · nº ${h.numero} · ${h.fornecedor} · ${fmtMoeda(h.preco)}`)}</title></circle>`).join('');
+  const eixo = grande ? `
+    <text x="${PX - 6}" y="${y(mx) + 4}" text-anchor="end">${esc(fmtMoeda(mx))}</text>
+    ${mx !== mn ? `<text x="${PX - 6}" y="${y(mn) + 4}" text-anchor="end">${esc(fmtMoeda(mn))}</text>` : ''}
+    ${hist.map((h, k) => `<text x="${x(k).toFixed(1)}" y="${H - 2}" text-anchor="middle">${esc(fmtData(h.data).slice(0, 5))}</text>`).join('')}` : '';
+  return `<svg class="graf-preco${grande ? ' grande' : ''}" viewBox="0 0 ${W} ${H}" width="${grande ? '100%' : W}" height="${H}" role="img" aria-label="Evolução do preço">
+    ${hist.length > 1 ? `<polyline points="${pts}" />` : ''}${dots}${eixo}</svg>`;
+}
+
+/** Variação entre o último preço pago e o anterior. */
+function variacaoPreco(hist) {
+  if (hist.length < 2) return null;
+  const a = hist[hist.length - 2].preco, b = hist[hist.length - 1].preco;
+  return a > 0 ? b / a - 1 : null;
+}
+
+function setaVariacao(v) {
+  if (v == null) return '';
+  if (Math.abs(v) < 0.0005) return '<span class="var-preco">= igual</span>';
+  return `<span class="var-preco ${v > 0 ? 'sobe' : 'desce'}">${v > 0 ? '↑' : '↓'} ${fmtPct(Math.abs(v))}</span>`;
 }
 
 /** Diferença acima da qual um preço é destacado (30%). */
@@ -878,8 +942,8 @@ async function exportarComparativo(c) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Comparativo', { pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   const nf = c.fornecedores.length;
-  const cab = ['Item', 'Código', 'Descrição', 'Unid.', 'Qtd.', ...c.fornecedores.map(f => f.nome), 'Preço escolhido', 'Fornecedor', 'Total'];
-  ws.columns = [6, 14, 44, 8, 10, ...c.fornecedores.map(() => 18), 16, 24, 18].map(width => ({ width }));
+  const cab = ['Item', 'Código', 'Descrição', 'Unid.', 'Qtd.', ...c.fornecedores.map(f => f.nome), 'Preço escolhido', 'Fornecedor', 'Total', '2º melhor preço', 'Dif. 1º × 2º'];
+  ws.columns = [6, 14, 44, 8, 10, ...c.fornecedores.map(() => 18), 16, 24, 18, 16, 12].map(width => ({ width }));
 
   ws.mergeCells(1, 1, 1, cab.length);
   ws.getCell('A1').value = `Comparativo da cotação nº ${c.numero}${c.titulo ? ' — ' + c.titulo : ''} (${fmtData(c.data)})`;
@@ -903,6 +967,7 @@ async function exportarComparativo(c) {
       ...l.precos.map(p => p ?? ''),
       l.preco ?? '', l.vencedor >= 0 ? c.fornecedores[l.vencedor].nome + (l.manual ? ' (escolhido)' : '') : 'sem preço',
       l.preco != null ? l.preco * l.it.quantidade : '',
+      l.segundo ?? '', l.difSegundo ?? '',
     ];
     for (let col = 1; col <= cab.length; col++) row.getCell(col).border = XL.borda;
     for (let j = 0; j < nf; j++) {
@@ -912,6 +977,8 @@ async function exportarComparativo(c) {
     }
     row.getCell(6 + nf).numFmt = XL.moeda;
     row.getCell(8 + nf).numFmt = XL.moeda;
+    row.getCell(9 + nf).numFmt = XL.moeda;
+    row.getCell(10 + nf).numFmt = '0.0%';
     row.getCell(3).alignment = { wrapText: true };
   });
 
@@ -2117,7 +2184,7 @@ function renderCotacao(id) {
       <thead><tr>
         <th class="c">#</th><th>Produto</th><th class="r">Qtd.</th>
         ${c.fornecedores.map(f => `<th class="r">${esc(f.nome)}</th>`).join('')}
-        ${temResposta ? '<th class="r">Preço escolhido</th><th>Fornecedor</th><th class="r">Total</th>' : ''}
+        ${temResposta ? `<th class="r">Preço escolhido</th>${nf > 1 ? '<th class="r" title="Quanto o 2º melhor preço é mais caro que o melhor">Dif. 1º × 2º</th>' : ''}<th>Fornecedor</th><th class="r">Total</th>` : ''}
       </tr></thead>
       <tbody>
         ${comp.linhas.map(l => {
@@ -2139,6 +2206,7 @@ function renderCotacao(id) {
           <td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>
           ${celulas}
           ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : '—'}</b>${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
+            ${nf > 1 ? `<td class="r">${l.difSegundo != null ? `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}">${fmtPct(l.difSegundo)}</span><br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>` : '<span class="muted">—</span>'}</td>` : ''}
             <td>${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.manual ? `<br><span class="small muted">+${fmtMoeda((l.preco - l.min) * l.it.quantidade)} vs menor</span>` : '') : '<span class="muted">sem preço</span>'}</td>
             <td class="r">${l.preco != null ? fmtMoeda(l.preco * l.it.quantidade) : '—'}</td>` : ''}
         </tr>`;
@@ -2146,12 +2214,12 @@ function renderCotacao(id) {
         ${temResposta ? `<tr class="total">
           <td></td><td>Total dos itens cotados</td><td></td>
           ${comp.totais.map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
-          <td></td><td>${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td><td class="r">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
+          <td></td>${nf > 1 ? '<td></td>' : ''}<td>${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td><td class="r">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
         </tr>
         ${COND_CAMPOS.map(([k, label]) => c.fornecedores.some(f => f.cond?.[k]) ? `<tr>
           <td></td><td class="small muted">${label}</td><td></td>
           ${c.fornecedores.map(f => `<td class="r small">${esc(f.cond?.[k] || '—')}</td>`).join('')}
-          <td colspan="3"></td></tr>` : '').join('')}` : ''}
+          <td colspan="${nf > 1 ? 4 : 3}"></td></tr>` : '').join('')}` : ''}
       </tbody>
     </table></div>`;
 
@@ -2233,30 +2301,61 @@ function renderCotacao(id) {
 
 function linhasProdutos() {
   const q = semAcento(ui.filtroProd);
-  const precos = ultimosPrecos();
+  const hist = historicoPrecos();
   const termos = q ? q.split(/\s+/) : [];
-  const lista = indiceBusca().filter(([, t]) => termos.every(w => t.includes(w))).map(([p]) => p)
+  const lista = indiceBusca().filter(([p, t]) => (!ui.soComPreco || hist[p.id]) && termos.every(w => t.includes(w))).map(([p]) => p)
     .sort((a, b) => COLLATOR.compare(a.descricao, b.descricao));
   const LIMITE = 300;
   const extra = lista.length > LIMITE
     ? `<tr><td colspan="7" class="empty">Mostrando ${LIMITE} de ${lista.length.toLocaleString('pt-BR')} produtos. Use a busca para encontrar o que precisa.</td></tr>`
     : '';
-  if (!lista.length) return `<tr><td colspan="7" class="empty">${db.produtos.length ? 'Nenhum produto encontrado.' : 'Nenhum produto cadastrado. Cadastre acima ou importe de uma planilha.'}</td></tr>`;
+  if (!lista.length) return `<tr><td colspan="7" class="empty">${db.produtos.length ? (ui.soComPreco ? 'Nenhum produto com preço nas cotações.' : 'Nenhum produto encontrado.') : 'Nenhum produto cadastrado. Cadastre acima ou importe de uma planilha.'}</td></tr>`;
   return lista.slice(0, LIMITE).map(p => {
-    const u = precos[p.id];
-    return `<tr>
+    const h = hist[p.id];
+    const u = h?.[h.length - 1];
+    const aberto = ui.histProd === p.id && h;
+    return `<tr${aberto ? ' class="hist-aberto"' : ''}>
       <td>${esc(p.codigo || '—')}${p.similar ? `<br><span class="small muted">sim. ${esc(p.similar)}</span>` : ''}</td>
       <td>${esc(p.descricao)}${p.obs ? `<br><span class="small muted">${esc(p.obs)}</span>` : ''}</td>
       <td class="c">${esc(p.unidade)}</td>
       <td>${esc(p.marca)}</td>
       <td>${esc(p.categoria)}</td>
-      <td class="r">${u ? `${fmtMoeda(u.preco)}<br><span class="small muted">${esc(u.fornecedor)} · nº ${esc(u.numero)}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="r">${u ? `<div class="ult-preco">
+          ${graficoPrecos(h, false)}
+          <div>${fmtMoeda(u.preco)} ${setaVariacao(variacaoPreco(h))}<br><span class="small muted">${esc(u.fornecedor)} · ${fmtData(u.data)}</span></div>
+        </div>` : '<span class="muted">—</span>'}</td>
       <td class="actions-cell">
+        ${h ? `<button class="sm${aberto ? ' primary' : ''}" data-act="verHistorico" data-id="${p.id}" title="Ver todos os preços deste produto">📈 ${h.length}</button>` : ''}
         <button class="sm" data-act="editarProd" data-id="${p.id}">Editar</button>
         <button class="sm danger" data-act="excluirProd" data-id="${p.id}">✕</button>
       </td>
-    </tr>`;
+    </tr>${aberto ? `<tr class="hist-linha"><td colspan="7">${painelHistorico(h)}</td></tr>` : ''}`;
   }).join('') + extra;
+}
+
+function painelHistorico(h) {
+  const vals = h.map(x => x.preco);
+  const primeiro = h[0].preco, ultimo = h[h.length - 1].preco;
+  return `<div class="hist-painel">
+    <div class="hist-resumo">
+      <div><span class="muted small">Último pago</span><b>${fmtMoeda(ultimo)}</b></div>
+      <div><span class="muted small">Menor pago</span><b>${fmtMoeda(Math.min(...vals))}</b></div>
+      <div><span class="muted small">Maior pago</span><b>${fmtMoeda(Math.max(...vals))}</b></div>
+      ${h.length > 1 ? `<div><span class="muted small">Desde a 1ª cotação</span><b>${setaVariacao(primeiro > 0 ? ultimo / primeiro - 1 : null)}</b></div>` : ''}
+    </div>
+    ${h.length > 1 ? graficoPrecos(h, true) : ''}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Cotação</th><th>Comprado de</th><th class="r">Preço pago</th><th class="r">Dif. 1º × 2º</th><th>Todos os preços recebidos</th></tr></thead>
+      <tbody>${[...h].reverse().map(x => `<tr>
+        <td>${fmtData(x.data)}</td>
+        <td><a href="#" data-route="cotacao" data-id="${x.cotId}">nº ${esc(x.numero)}</a></td>
+        <td>${esc(x.fornecedor)}${x.manual ? ' <span class="badge blue">escolhido</span>' : ''}</td>
+        <td class="r"><b>${fmtMoeda(x.preco)}</b></td>
+        <td class="r">${x.difSegundo != null ? fmtPct(x.difSegundo) : '—'}</td>
+        <td class="small">${x.precos.map(y => `${esc(y.nome)} ${fmtMoeda(y.preco)}`).join(' · ')}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+  </div>`;
 }
 
 function renderProdutos() {
@@ -2283,17 +2382,126 @@ function renderProdutos() {
   <section class="card">
     <div class="row-between" style="margin-bottom:10px">
       <input class="grow" id="filtroProd" placeholder="Buscar produto…" value="${esc(ui.filtroProd)}">
+      <label class="check-inline"><input type="checkbox" id="soComPreco" ${ui.soComPreco ? 'checked' : ''}> Só com preço</label>
       <div class="row">
         <label class="btn sm" style="margin:0" title="Colunas: Código, Descrição, Unidade, Marca, Categoria">📥 Importar Excel/CSV<input type="file" class="hidden" accept=".xlsx,.csv,.txt" data-import-produtos></label>
         <button class="sm" data-act="exportarProdutos">⬇ Exportar Excel</button>
       </div>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Código</th><th>Descrição</th><th class="c">Unid.</th><th>Marca</th><th>Categoria</th><th class="r">Último melhor preço</th><th></th></tr></thead>
+      <thead><tr><th>Código</th><th>Descrição</th><th class="c">Unid.</th><th>Marca</th><th>Categoria</th><th class="r">Último preço pago</th><th></th></tr></thead>
       <tbody id="tbProd">${linhasProdutos()}</tbody>
     </table></div>
     <p class="tip">Para importar sua lista de produtos, use uma planilha com as colunas <b>Código, Descrição, Unidade, Similar, Marca, Categoria</b> (a primeira linha é o cabeçalho). Produtos com o mesmo código são atualizados.</p>
   </section>`;
+}
+
+/* ---------------- relatórios ---------------- */
+
+const PERIODOS = [['', 'Todo o período'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['365', 'Últimos 12 meses']];
+
+function dadosRelatorio() {
+  let desde = '';
+  if (ui.periodoRel) {
+    const d = new Date();
+    d.setDate(d.getDate() - Number(ui.periodoRel));
+    desde = d.toISOString().slice(0, 10);
+  }
+  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde))
+    .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
+  const forn = {};
+  const porCot = [];
+  const res = { cotacoes: 0, itens: 0, total: 0, media: 0, maior: 0, difs: [] };
+  for (const c of cots) {
+    const comp = comparar(c);
+    if (!comp.itensCotados) continue;
+    const r = { c, itens: 0, total: 0, media: 0, maior: 0, comparaveis: 0 };
+    for (const l of comp.linhas) {
+      if (l.preco == null) continue;
+      const q = l.it.quantidade || 1;
+      const validos = l.precos.filter(p => p != null);
+      r.itens++;
+      r.total += l.preco * q;
+      if (validos.length > 1) {
+        // economia só faz sentido onde houve concorrência (2 ou mais preços)
+        r.comparaveis++;
+        r.media += (validos.reduce((a, b) => a + b, 0) / validos.length - l.preco) * q;
+        r.maior += (Math.max(...validos) - l.preco) * q;
+        res.difs.push(l.difSegundo);
+      }
+    }
+    c.fornecedores.forEach((f, fi) => {
+      const k = f.fornecedorId || f.nome;
+      const x = forn[k] ||= { nome: f.nome, participou: 0, respondeu: 0, cotados: 0, ganhos: 0, valor: 0, difs: [] };
+      x.participou++;
+      if (f.respondidoEm || comp.totais[fi].cotados) x.respondeu++;
+      x.cotados += comp.totais[fi].cotados;
+      x.ganhos += comp.totais[fi].vencidos;
+      x.valor += comp.totais[fi].valorVencido;
+      for (const l of comp.linhas) if (l.vencedor === fi && !l.manual && l.difSegundo != null) x.difs.push(l.difSegundo);
+    });
+    porCot.push(r);
+    res.cotacoes++;
+    res.itens += r.itens;
+    res.total += r.total;
+    res.media += r.media;
+    res.maior += r.maior;
+  }
+  const fornecedores = Object.values(forn).sort((a, b) => b.ganhos - a.ganhos || b.valor - a.valor || COLLATOR.compare(a.nome, b.nome));
+  return { res, porCot, fornecedores };
+}
+
+const media = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+
+function renderRelatorios() {
+  const { res, porCot, fornecedores } = dadosRelatorio();
+  const pct = (v, base) => base > 0 ? fmtPct(v / base) : '—';
+  return `
+  <section class="card">
+    <div class="row-between">
+      <h2>Relatórios</h2>
+      <select id="periodoRel" style="width:auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${ui.periodoRel === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    </div>
+    ${res.cotacoes ? `<div class="stats">
+      <div class="stat"><span class="muted small">Cotações com resposta</span><b>${res.cotacoes}</b></div>
+      <div class="stat"><span class="muted small">Itens comprados</span><b>${res.itens}</b></div>
+      <div class="stat"><span class="muted small">Total das compras</span><b>${fmtMoeda(res.total)}</b></div>
+      <div class="stat" title="Diferença entre a média dos preços recebidos e o preço escolhido, nos itens com 2 ou mais preços"><span class="muted small">Economia vs média dos preços</span><b class="ok">${fmtMoeda(res.media)}</b><span class="small muted">${pct(res.media, res.total + res.media)} a menos</span></div>
+      <div class="stat" title="Diferença entre o preço mais caro recebido e o preço escolhido"><span class="muted small">Economia vs preço mais caro</span><b class="ok">${fmtMoeda(res.maior)}</b><span class="small muted">${pct(res.maior, res.total + res.maior)} a menos</span></div>
+      <div class="stat" title="Em média, quanto o 2º melhor preço é mais caro que o melhor"><span class="muted small">Dif. média 1º × 2º</span><b>${fmtPct(media(res.difs))}</b></div>
+    </div>` : '<p class="empty">Ainda não há cotações com preços neste período. Os relatórios aparecem assim que os fornecedores responderem (as cotações canceladas não entram).</p>'}
+  </section>
+  ${fornecedores.length && res.cotacoes ? `<section class="card">
+    <h3>Fornecedores</h3>
+    <p class="muted small" style="margin-top:0">Quem ganha mais itens. "Vantagem média" é quanto, em média, o 2º colocado estava mais caro nos itens que o fornecedor ganhou pelo menor preço.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Fornecedor</th><th class="c">Cotações</th><th class="c">Respondeu</th><th class="r">Itens cotados</th><th class="r">Itens ganhos</th><th class="r">% ganhos</th><th class="r">Valor ganho</th><th class="r">Vantagem média</th></tr></thead>
+      <tbody>${fornecedores.map(f => `<tr>
+        <td><b>${esc(f.nome)}</b></td>
+        <td class="c">${f.participou}</td>
+        <td class="c">${f.respondeu}/${f.participou}</td>
+        <td class="r">${f.cotados}</td>
+        <td class="r">${f.ganhos}</td>
+        <td class="r"><div class="barra"><span style="width:${f.cotados ? Math.round(100 * f.ganhos / f.cotados) : 0}%"></span></div>${pct(f.ganhos, f.cotados)}</td>
+        <td class="r">${fmtMoeda(f.valor)}</td>
+        <td class="r">${fmtPct(media(f.difs))}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+  </section>
+  <section class="card">
+    <h3>Por cotação</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Nº</th><th>Data</th><th class="r">Itens</th><th class="r">Total comprado</th><th class="r">Economia vs média</th><th class="r">Economia vs mais caro</th></tr></thead>
+      <tbody>${porCot.map(r => `<tr>
+        <td><a href="#" data-route="cotacao" data-id="${r.c.id}"><b>${esc(r.c.numero)}</b></a> ${statusBadge(r.c.status)}</td>
+        <td>${fmtData(r.c.data)}</td>
+        <td class="r">${r.itens}</td>
+        <td class="r">${fmtMoeda(r.total)}</td>
+        <td class="r">${r.comparaveis ? `${fmtMoeda(r.media)} <span class="small muted">(${pct(r.media, r.total + r.media)})</span>` : '—'}</td>
+        <td class="r">${r.comparaveis ? `${fmtMoeda(r.maior)} <span class="small muted">(${pct(r.maior, r.total + r.maior)})</span>` : '—'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+  </section>` : ''}`;
 }
 
 function linhasFornecedores() {
@@ -2410,6 +2618,7 @@ function render() {
     cotacao: () => renderCotacao(id),
     produtos: renderProdutos,
     fornecedores: renderFornecedores,
+    relatorios: renderRelatorios,
     config: renderConfig,
   };
   try {
@@ -2751,6 +2960,11 @@ const acoes = {
     ir('cotacoes');
   },
 
+  verHistorico: el => {
+    ui.histProd = ui.histProd === el.dataset.id ? null : el.dataset.id;
+    $('#tbProd').innerHTML = linhasProdutos();
+  },
+
   editarProd: el => { ui.editProd = el.dataset.id; render(); window.scrollTo(0, 0); },
   cancelarProd: () => { ui.editProd = null; render(); },
   excluirProd: async el => {
@@ -3057,6 +3271,12 @@ document.addEventListener('change', async e => {
     Object.assign(ui.datacar, { pos: 0, gcur: 0, grupoAberto: null });
     renderSoDataCar();
     focarDataCar();
+  } else if (t.id === 'soComPreco') {
+    ui.soComPreco = t.checked;
+    $('#tbProd').innerHTML = linhasProdutos();
+  } else if (t.id === 'periodoRel') {
+    ui.periodoRel = t.value;
+    render();
   } else if (t.id === 'statusCot') {
     ui.statusCot = t.value;
     $('#tbCot').innerHTML = linhasCotacoes();
