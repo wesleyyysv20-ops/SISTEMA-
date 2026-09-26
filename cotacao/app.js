@@ -21,9 +21,10 @@ const DEFAULT_DB = {
     corpoEmail:
       'Olá, {fornecedor}!\n\n' +
       'Segue em anexo a planilha da cotação nº {numero}.\n' +
-      'Por favor, preencha os preços unitários (campos em amarelo) e nos devolva a planilha por e-mail até {prazo}.\n\n' +
+      'Por favor, preencha as colunas VALOR (preço unitário) e MARCA e nos devolva a planilha por e-mail até {prazo}.\n\n' +
       'Obrigado,\n{comprador}\n{loja}\n{telefone}',
     diasAviso: 1,
+    tituloPlanilha: 'COTAÇÃO GERAL DISPPAR',
     duvidasCabecalho: 'Segue a relação dos itens em dúvida para avaliação:',
     backupDias: 7, // lembrar do backup a cada N dias (0 = não lembrar)
     arquivarDias: 60, // sugerir arquivar finalizadas com mais de N dias
@@ -865,143 +866,109 @@ const XL = {
 };
 
 /**
- * Planilha da cotação (layout v3): Item, Código, Similar, QTD (sempre 1), Marca, Descrição e,
- * no final, as colunas VALOR e MARCA para o fornecedor preencher.
- * `f` pode ser nulo: planilha genérica, sem nome de fornecedor.
+ * Planilha da cotação no modelo "COTAÇÃO GERAL DISPPAR" (layout v4), igual à aba PLANILHA da
+ * COTAÇÃO COMPLETA.xlsm depois da macro EXPORTAR:
+ * linha 1: título, QTDE DE ITENS e data; linha 2: SEQ, CÓDIGO DO PRODUTO, SIMILAR, MARCA EXIGIDA,
+ * QTD, DESCRIÇÃO, VALOR, MARCA; a partir da linha 3, os itens (QTD sempre 1, "INFORMAR MARCA").
+ * `f` pode ser nulo: planilha genérica, sem fornecedor (a resposta é identificada ao importar).
  */
+const PLANILHA_V4 = {
+  titulo: 'FFA6CAEC', // Azul-escuro, Texto 2, 75% mais claro
+  laranja: 'FFC04F15', // Laranja, Ênfase 2, 25% mais escuro
+  cinza: 'FFE8E8E8', // Cinza, Plano de fundo 2
+  cinzaEscuro: 'FFAEAEAE', // Cinza, Plano de fundo 2, 25% mais escuro
+  azul: 'FF0F9ED5', // cabeçalho do estilo de tabela "Clara 12"
+  fonte: 'Aptos Narrow',
+};
+
 async function gerarPlanilha(c, f) {
   const cfg = db.config;
+  const T = PLANILHA_V4;
+  const solido = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+  const fina = { style: 'thin', color: { argb: T.azul } };
   const wb = new ExcelJS.Workbook();
   wb.creator = cfg.loja || 'Sistema de Cotação';
   wb.created = new Date();
-
   const ws = wb.addWorksheet('Cotação', {
     pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });
-  const COLS = 8; // A..H
-  const ULT = 'H';
+  const HEADER = 2;
+  const FIRST = 3;
+  const n = c.itens.length;
 
-  ws.mergeCells(`A1:${ULT}1`);
+  // linha 1: título, quantidade de itens e data
+  ws.mergeCells('A1:E1');
   const titulo = ws.getCell('A1');
-  titulo.value = 'SOLICITAÇÃO DE COTAÇÃO';
-  titulo.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-  titulo.fill = XL.azul;
+  titulo.value = (cfg.tituloPlanilha || DEFAULT_DB.config.tituloPlanilha).toUpperCase();
+  titulo.font = { name: T.fonte, size: 18, bold: true, color: { argb: 'FF000000' } };
+  titulo.fill = solido(T.titulo);
   titulo.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(1).height = 21;
+  titulo.border = { left: { style: 'medium' }, top: { style: 'medium' } };
+  const lbl = ws.getCell('F1');
+  lbl.value = 'QTDE DE ITENS:';
+  lbl.font = { name: T.fonte, size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+  lbl.fill = solido(T.laranja);
+  lbl.alignment = { horizontal: 'left', vertical: 'middle' };
+  lbl.border = { top: { style: 'medium' } };
+  const qtd = ws.getCell('G1');
+  qtd.value = n;
+  qtd.font = { name: 'Calibri', size: 22, bold: true, italic: true, color: { argb: 'FFFF0000' } };
+  qtd.fill = solido(T.cinza);
+  qtd.alignment = { horizontal: 'center', vertical: 'middle' };
+  qtd.border = { top: { style: 'medium' } };
+  const data = ws.getCell('H1');
+  const [ano, mes, dia] = (c.data || hojeISO()).split('-').map(Number);
+  data.value = new Date(Date.UTC(ano, mes - 1, dia));
+  data.numFmt = 'dd/mm/yyyy';
+  data.font = { name: T.fonte, size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+  data.fill = solido(T.laranja);
+  data.alignment = { horizontal: 'center', vertical: 'middle' };
+  data.border = { top: { style: 'medium' }, right: { style: 'medium' } };
+  ws.getRow(1).height = 28.5;
 
-  const info = (row, label, value, label2, value2) => {
-    ws.mergeCells(`A${row}:B${row}`);
-    ws.getCell(`A${row}`).value = label;
-    ws.getCell(`A${row}`).font = { bold: true };
-    ws.mergeCells(`C${row}:E${row}`);
-    ws.getCell(`C${row}`).value = value || '';
-    if (label2) {
-      ws.getCell(`F${row}`).value = label2;
-      ws.getCell(`F${row}`).font = { bold: true };
-      ws.mergeCells(`G${row}:H${row}`);
-      ws.getCell(`G${row}`).value = value2 || '';
-      ws.getCell(`G${row}`).alignment = { horizontal: 'left' };
-    }
-  };
-  info(2, 'Solicitante:', cfg.loja, 'Cotação nº:', c.numero);
-  info(3, 'CNPJ:', cfg.cnpj, 'Data:', fmtData(c.data));
-  info(4, 'Contato:', [cfg.comprador, cfg.telefone].filter(Boolean).join(' - '), 'Responder até:', c.prazoResposta ? fmtData(c.prazoResposta) : '');
-  info(5, 'E-mail:', cfg.email, 'Referência:', c.titulo || '');
-  info(6, 'Endereço:', cfg.endereco);
-
-  ws.mergeCells('A7:B7');
-  ws.getCell('A7').value = 'Fornecedor:';
-  ws.getCell('A7').font = { bold: true };
-  ws.mergeCells(`C7:${ULT}7`);
-  const cf = ws.getCell('C7');
-  cf.value = f ? f.nome : '';
-  cf.font = { bold: true, size: 12 };
-  if (!f) { cf.fill = XL.amarelo; cf.protection = { locked: false }; }
-
-  ws.mergeCells('A8:B8');
-  ws.getCell('A8').value = 'Observações:';
-  ws.getCell('A8').font = { bold: true };
-  ws.getCell('A8').alignment = { vertical: 'top' };
-  ws.mergeCells(`C8:${ULT}8`);
-  ws.getCell('C8').value = c.obs || '';
-  ws.getCell('C8').alignment = { vertical: 'top', wrapText: !!c.obs };
-  if (c.obs && (c.obs.length > 120 || c.obs.includes('\n'))) ws.getRow(8).height = Math.min(120, 15 * Math.ceil(c.obs.length / 120 + (c.obs.match(/\n/g) || []).length));
-
-  ws.mergeCells(`A9:${ULT}9`);
-  const instr = ws.getCell('A9');
-  instr.value = 'Preencha as colunas em AMARELO: VALOR (preço unitário) e MARCA (marca que você vai fornecer). Depois devolva esta planilha por e-mail.';
-  instr.font = { italic: true, color: { argb: 'FF7F6000' } };
-  instr.fill = XL.amarelo;
-  instr.alignment = { vertical: 'middle' };
-
-  const HEADER = 11;
-  const FIRST = HEADER + 1;
-  const cab = ['Item', 'Código', 'Similar', 'QTD', 'Marca', 'Descrição', 'VALOR', 'MARCA'];
-  const hr = ws.getRow(HEADER);
-  cab.forEach((txt, i) => {
-    const cell = hr.getCell(i + 1);
+  // linha 2: cabeçalho
+  const cab = ['SEQ', 'CÓDIGO DO PRODUTO', 'SIMILAR', 'MARCA EXIGIDA', 'QTD', 'DESCRIÇÃO', 'VALOR', 'MARCA'];
+  const centro = new Set([1, 5, 6, 7, 8]);
+  cab.forEach((txt, k) => {
+    const cell = ws.getRow(HEADER).getCell(k + 1);
     cell.value = txt;
-    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = XL.azul;
-    cell.border = XL.borda;
-    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.font = { name: T.fonte, size: 11, bold: true, color: { argb: 'FF000000' } };
+    cell.fill = solido(k >= 6 ? T.cinzaEscuro : T.azul);
+    cell.alignment = { horizontal: centro.has(k + 1) ? 'center' : 'left' };
+    cell.border = { top: fina, bottom: fina, left: k === 0 ? fina : undefined, right: k === 7 ? fina : undefined };
   });
 
+  // itens
   c.itens.forEach((it, i) => {
     const r = FIRST + i;
     const row = ws.getRow(r);
-    row.values = [i + 1, it.codigo || '', it.similar || '', 1, it.marca || '', it.descricao];
-    for (let col = 1; col <= COLS; col++) {
+    row.values = [String(i + 1), it.codigo || '', it.similar || '', it.marca || '', 1, it.descricao, null, 'INFORMAR MARCA'];
+    for (let col = 1; col <= 8; col++) {
       const cell = row.getCell(col);
-      cell.border = XL.borda;
-      cell.alignment = { vertical: 'middle' };
+      cell.font = { name: T.fonte, size: 11, bold: col === 8, color: { argb: 'FF000000' } };
+      cell.alignment = { horizontal: col === 1 || col === 5 ? 'center' : 'left' };
+      if (col !== 3) cell.numFmt = '@';
+      cell.border = { bottom: fina, left: col === 1 ? fina : undefined, right: col === 8 ? fina : undefined };
     }
-    row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
-    row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
-    const valor = row.getCell(7);
-    valor.numFmt = XL.moeda;
-    valor.dataValidation = {
-      type: 'decimal',
-      operator: 'greaterThanOrEqual',
-      formulae: [0],
-      allowBlank: true,
-      showErrorMessage: true,
-      errorTitle: 'Valor inválido',
-      error: 'Digite apenas o valor (número).',
-    };
-    for (const col of [7, 8]) {
-      row.getCell(col).fill = XL.amarelo;
-      row.getCell(col).protection = { locked: false };
-    }
+    row.getCell(7).fill = solido(T.cinza);
+    row.getCell(8).fill = solido(T.cinzaEscuro);
+    for (const col of [7, 8]) row.getCell(col).protection = { locked: false };
   });
 
-  const LAST = FIRST + c.itens.length - 1;
-  const TOTAL = LAST + 1;
-  ws.mergeCells(`A${TOTAL}:F${TOTAL}`);
-  ws.getCell(`A${TOTAL}`).value = 'TOTAL';
-  ws.getCell(`A${TOTAL}`).alignment = { horizontal: 'right' };
-  ws.getCell(`G${TOTAL}`).value = { formula: `SUM(G${FIRST}:G${LAST})` };
-  ws.getCell(`G${TOTAL}`).numFmt = XL.moeda;
-  for (const col of ['A', 'G', 'H']) {
-    ws.getCell(`${col}${TOTAL}`).font = { bold: true };
-    ws.getCell(`${col}${TOTAL}`).fill = XL.cinza;
-    ws.getCell(`${col}${TOTAL}`).border = XL.borda;
-  }
-
-  // Larguras ajustadas ao conteúdo (como "Auto Ajuste" do Excel), no padrão definido pela loja.
-  const larguras = cab.map((h, i) => {
-    let m = String(h).length;
-    c.itens.forEach(it => {
-      const v = [String(c.itens.indexOf(it) + 1), it.codigo || '', it.similar || '', '1', it.marca || '', it.descricao || ''][i];
-      if (v != null) m = Math.max(m, String(v).length);
+  // larguras ajustadas ao conteúdo (a macro EXPORTAR faz "AutoAjuste" das colunas)
+  const larguras = cab.map((h, k) => {
+    let m = h.length;
+    c.itens.forEach((it, i) => {
+      const v = [String(i + 1), it.codigo || '', it.similar || '', it.marca || '', '1', it.descricao || '', '', 'INFORMAR MARCA'][k];
+      m = Math.max(m, String(v).length);
     });
     return m + 2;
   });
-  larguras[0] = Math.max(5, larguras[0]);
-  larguras[6] = Math.max(12, larguras[6]); // VALOR: espaço para "R$ 1.234,56" sem virar ####
+  larguras[5] = Math.max(larguras[5], 16); // "QTDE DE ITENS:" em fonte 18
+  larguras[6] = Math.max(larguras[6], 12);
+  larguras[7] = Math.max(larguras[7], 18); // data em fonte 18
   ws.columns = larguras.map(width => ({ width: Math.min(width, 80) }));
 
-  ws.views = [{ state: 'frozen', ySplit: HEADER }];
   if (cfg.protegerPlanilha) {
     await ws.protect('', { selectLockedCells: true, selectUnlockedCells: true, formatColumns: true, formatRows: true });
   }
@@ -1009,7 +976,7 @@ async function gerarPlanilha(c, f) {
   // Aba oculta usada para reconhecer a planilha quando o fornecedor devolver.
   const meta = wb.addWorksheet('_dados', { state: 'veryHidden' });
   [
-    'sistema-cotacao', c.id, f ? f.fornecedorId : '', HEADER, FIRST, c.itens.length, 0, c.numero, 3,
+    'sistema-cotacao', c.id, f ? f.fornecedorId : '', HEADER, FIRST, n, 0, c.numero, 4,
   ].forEach((v, i) => { meta.getCell(`A${i + 1}`).value = v; });
 
   return wb;
@@ -1065,6 +1032,7 @@ function aplicarResposta(c, fi, ws, meta) {
     // Planilha sem aba de controle: procura o cabeçalho "VALOR" (v2) ou "Preço Unit." (v1).
     for (let r = 1; r <= 60 && !first; r++) {
       // procura a linha de cabeçalho (coluna A = "Item"); a faixa de instruções também cita VALOR/preço
+      if (/^seq$/i.test(cellTexto(ws.getCell(`A${r}`))) && /^valor$/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 4; continue; }
       if (!/^item$/i.test(cellTexto(ws.getCell(`A${r}`)))) continue;
       if (/^valor$/i.test(cellTexto(ws.getCell(`G${r}`)))) { first = r + 1; versao = 3; }
       else if (/^valor$/i.test(cellTexto(ws.getCell(`F${r}`)))) { first = r + 1; versao = 2; }
@@ -1083,7 +1051,8 @@ function aplicarResposta(c, fi, ws, meta) {
     const i = Number.isInteger(idx) && idx >= 1 && idx <= c.itens.length ? idx - 1 : k;
     if (i >= c.itens.length) break;
     const preco = parseNum(cellValue(ws.getCell(`${colPreco}${r}`)));
-    const marca = colMarca ? cellTexto(ws.getCell(`${colMarca}${r}`)) : '';
+    let marca = colMarca ? cellTexto(ws.getCell(`${colMarca}${r}`)) : '';
+    if (/^informar marca$/i.test(marca)) marca = ''; // o fornecedor não preencheu
     const prazo = versao >= 2 ? '' : cellTexto(ws.getCell(`I${r}`));
     const obs = versao >= 2 ? '' : cellTexto(ws.getCell(`J${r}`));
     if (preco != null || marca || prazo || obs) respostas[i] = { preco, marca, prazo, obs };
@@ -4072,7 +4041,8 @@ function renderConfig() {
       </div>
       <label>Endereço<input name="endereco" value="${esc(c.endereco)}"></label>
       <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" name="protegerPlanilha" ${c.protegerPlanilha ? 'checked' : ''}>
-        Proteger a planilha (o fornecedor só consegue editar os campos amarelos)</label>
+        Proteger a planilha (o fornecedor só consegue editar as colunas VALOR e MARCA)</label>
+      <label>Título da planilha enviada aos fornecedores<input name="tituloPlanilha" value="${esc(c.tituloPlanilha ?? DEFAULT_DB.config.tituloPlanilha)}"></label>
       <h3 style="margin-top:16px">Lojas</h3>
       <p class="muted small">A compra é dividida entre estas lojas: no comparativo aparece uma coluna de quantidade para cada uma, e os pedidos saem separados. O endereço vai no pedido como local de entrega.</p>
       <div class="table-wrap"><table class="tab-lojas">

@@ -44,7 +44,7 @@ test('itens repetidos (mesmo código) aparecem no painel e dá para tirar só um
   await s.fechar();
 });
 
-test('criar cotação salva a planilha no formato da loja (QTD 1, VALOR e MARCA em amarelo)', async () => {
+test('criar cotação salva a planilha no modelo COTAÇÃO GERAL DISPPAR', async () => {
   const s = await abrir(base({ fornecedores: [{ id: 'f1', nome: 'Auto Mix', email: 'a@x.com' }] }));
   const { page } = s;
   await page.click('nav [data-route=nova]');
@@ -58,11 +58,22 @@ test('criar cotação salva a planilha no formato da loja (QTD 1, VALOR e MARCA 
   assert.match(arq.nome, /^Cotacao_\d{4}\.xlsx$/);
   const wb = await lerXlsx(arq.buffer);
   const ws = wb.getWorksheet('Cotação');
-  assert.equal(valor(ws.getCell('A1')), 'SOLICITAÇÃO DE COTAÇÃO');
-  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8].map(c => valor(ws.getRow(11).getCell(c))),
-    ['Item', 'Código', 'Similar', 'QTD', 'Marca', 'Descrição', 'VALOR', 'MARCA']);
-  for (let r = 12; r < 17; r++) assert.equal(valor(ws.getCell(`D${r}`)), 1, 'QTD sempre 1');
-  assert.equal(ws.getCell('G12').fill.fgColor.argb, 'FFFFF2CC', 'VALOR em amarelo');
+  assert.equal(valor(ws.getCell('A1')), 'COTAÇÃO GERAL DISPPAR');
+  assert.equal(valor(ws.getCell('F1')), 'QTDE DE ITENS:');
+  assert.equal(valor(ws.getCell('G1')), 5);
+  assert.ok(ws.getCell('H1').value instanceof Date);
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8].map(c => valor(ws.getRow(2).getCell(c))),
+    ['SEQ', 'CÓDIGO DO PRODUTO', 'SIMILAR', 'MARCA EXIGIDA', 'QTD', 'DESCRIÇÃO', 'VALOR', 'MARCA']);
+  for (let r = 3; r < 8; r++) {
+    assert.equal(valor(ws.getCell(`A${r}`)), String(r - 2));
+    assert.equal(valor(ws.getCell(`E${r}`)), 1, 'QTD sempre 1');
+    assert.equal(valor(ws.getCell(`H${r}`)), 'INFORMAR MARCA');
+  }
+  assert.equal(ws.getCell('A1').fill.fgColor.argb, 'FFA6CAEC');
+  assert.equal(ws.getCell('F1').fill.fgColor.argb, 'FFC04F15');
+  assert.equal(ws.getCell('G3').fill.fgColor.argb, 'FFE8E8E8', 'VALOR em cinza claro');
+  assert.equal(ws.getCell('H3').fill.fgColor.argb, 'FFAEAEAE');
+  assert.equal(ws.getCell('H3').font.bold, true);
   const meta = wb.getWorksheet('_dados');
   assert.equal(valor(meta.getCell('A1')), 'sistema-cotacao');
   // a cotação foi criada

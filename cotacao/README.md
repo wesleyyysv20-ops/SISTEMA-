@@ -48,12 +48,14 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
 
 ## A planilha enviada ao fornecedor
 
-- Cabeçalho com os dados da loja, nº da cotação, data, prazo de resposta e observações.
-- Colunas: Item, Código, Descrição, Marca/Ref., Unid., Qtd., **Preço Unit.**, Total (fórmula),
-  **Prazo Entrega**, **Observação**.
-- Campos para **condição de pagamento, prazo de entrega, frete, validade e vendedor**.
-- Só os campos em amarelo ficam editáveis (proteção sem senha, pode ser desligada em Configurações).
-- Uma aba oculta (`_dados`) identifica a cotação e o fornecedor na hora da importação.
+Modelo **COTAÇÃO GERAL DISPPAR** (o mesmo da aba PLANILHA da COTAÇÃO COMPLETA.xlsm após a macro EXPORTAR):
+
+- Linha 1: título (editável em Configurações), **QTDE DE ITENS** e a data.
+- Linha 2: SEQ, CÓDIGO DO PRODUTO, SIMILAR, MARCA EXIGIDA, QTD, DESCRIÇÃO, **VALOR**, **MARCA**.
+- Itens a partir da linha 3, com QTD sempre 1 e "INFORMAR MARCA" na coluna MARCA.
+- Só VALOR e MARCA ficam editáveis (proteção sem senha, pode ser desligada em Configurações).
+- Uma aba oculta (`_dados`) identifica a cotação e o fornecedor na hora da importação. As planilhas no
+  modelo anterior (Item, Código, …, VALOR, MARCA) continuam sendo importadas normalmente.
 
 ## Arquivos
 

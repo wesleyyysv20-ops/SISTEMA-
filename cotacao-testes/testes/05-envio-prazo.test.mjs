@@ -51,7 +51,7 @@ test('planilhas dos marcados num .zip, cada uma com o nome do fornecedor', async
   const nomes = Object.keys(zip.files).sort();
   assert.deepEqual(nomes, ['Cotacao_0005_auto_mix.xlsx', 'Cotacao_0005_dist_sul.xlsx', 'Cotacao_0005_via_pecas.xlsx']);
   const wb = await lerXlsx(await zip.file('Cotacao_0005_via_pecas.xlsx').async('nodebuffer'));
-  assert.equal(valor(wb.getWorksheet('Cotação').getCell('C7')), 'Via Peças');
+  assert.equal(valor(wb.getWorksheet('_dados').getCell('A3')), 'f2', 'a planilha sabe de qual fornecedor é');
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
