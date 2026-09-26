@@ -24,6 +24,7 @@ const DEFAULT_DB = {
       'Por favor, preencha os preços unitários (campos em amarelo) e nos devolva a planilha por e-mail até {prazo}.\n\n' +
       'Obrigado,\n{comprador}\n{loja}\n{telefone}',
     diasAviso: 1,
+    duvidasCabecalho: 'Segue a relação dos itens em dúvida para avaliação:',
     backupDias: 7, // lembrar do backup a cada N dias (0 = não lembrar)
     arquivarDias: 60, // sugerir arquivar finalizadas com mais de N dias
     assuntoPedido: 'Pedido de compra - cotação nº {numero} - {loja}',
@@ -37,8 +38,8 @@ const DEFAULT_DB = {
     marcasEquivalentes: {}, // marca pedida (normalizada) → abreviações aceitas
     marcasDiferentes: {}, // marca pedida (normalizada) → respostas que NÃO são a mesma marca
     lojas: [
-      { id: 'sao-sebastiao', nome: 'São Sebastião', cnpj: '', endereco: '' },
-      { id: 'paranoa', nome: 'Paranoá', cnpj: '', endereco: '' },
+      { id: 'sao-sebastiao', nome: 'São Sebastião', sigla: 'DSS', cnpj: '', endereco: '' },
+      { id: 'paranoa', nome: 'Paranoá', sigla: 'DPR', cnpj: '', endereco: '' },
     ],
     assuntoCobranca: 'Lembrete: cotação nº {numero} - {loja}',
     corpoCobranca:
@@ -51,6 +52,7 @@ const DEFAULT_DB = {
   fornecedores: [],
   cotacoes: [],
   rascunho: null,
+  duvidas: [],
 };
 
 const COND_CAMPOS = [
@@ -93,6 +95,7 @@ function normalizar(d) {
     produtos: d.produtos || [],
     fornecedores: d.fornecedores || [],
     cotacoes: d.cotacoes || [],
+    duvidas: Array.isArray(d.duvidas) ? d.duvidas : [],
   };
 }
 
@@ -134,7 +137,7 @@ const nuvem = { db: null, downloads: null, enviado: {}, timer: null, gravando: f
 function docsDoEstado() {
   const docs = {
     'sistema/config': db.config,
-    'sistema/extra': { rascunho: db.rascunho || null, ultimoBackup: db.ultimoBackup || null, backupAdiadoAte: db.backupAdiadoAte || null },
+    'sistema/extra': { rascunho: db.rascunho || null, ultimoBackup: db.ultimoBackup || null, backupAdiadoAte: db.backupAdiadoAte || null, duvidas: db.duvidas || [] },
   };
   for (const col of ['produtos', 'fornecedores']) {
     const lista = [...db[col]].sort((a, b) => a.id.localeCompare(b.id));
@@ -205,6 +208,7 @@ async function carregarNuvem() {
   return normalizar({
     config: mapa['sistema/config'] || {},
     rascunho: mapa['sistema/extra']?.rascunho || null,
+    duvidas: mapa['sistema/extra']?.duvidas || [],
     ultimoBackup: mapa['sistema/extra']?.ultimoBackup || null,
     backupAdiadoAte: mapa['sistema/extra']?.backupAdiadoAte || null,
     produtos: structuredClone(prods.flatMap(([, d]) => d.itens || [])),
@@ -552,8 +556,18 @@ function normMarca(v) {
 }
 
 /** A marca pedida pode ter mais de uma opção: "NSK/SKF", "COFAP ou MONROE". */
+/**
+ * Marcas aceitas pela marca exigida, no padrão do banco do DISPPAR:
+ * "QUALQUER" (também "KIT CIA QUALQUER", "APLIC QUALQUER") = sem exigência;
+ * "SÓ COFAP" = só COFAP; "ALB-NAK-KAY-PERF-MONR" = qualquer uma da lista (abreviadas).
+ * Também separa por "/", ",", ";", "+" e " OU ".
+ */
 function opcoesMarca(pedida) {
-  return String(pedida || '').split(/[\/,;|+]|\s+OU\s+/i).map(normMarca).filter(Boolean);
+  const txt = semAcento(pedida).toUpperCase().trim();
+  if (!txt || /\b(QUALQUER|QQR|QQ)\b/.test(txt)) return [];
+  return [...new Set(txt.split(/\s*[-\/,;|+]\s*|\s+OU\s+/)
+    .map(p => normMarca(p).replace(/^(SO|SOMENTE|APENAS)\s+/, ''))
+    .filter(Boolean))];
 }
 
 const PESO_MARCA = { ok: 4, abrev: 3, duvida: 2, errada: 1 };
@@ -632,6 +646,14 @@ function aprenderMarca(pedida, resposta, decisao) {
 function lojas() {
   const l = (db.config.lojas || []).filter(x => x && x.id);
   return l.length ? l : DEFAULT_DB.config.lojas;
+}
+
+/** Sigla da loja (DSS, DPR…), usada na lista de dúvidas. */
+function siglaLoja(l) {
+  if (l.sigla) return l.sigla;
+  if (l.id === 'sao-sebastiao') return 'DSS';
+  if (l.id === 'paranoa') return 'DPR';
+  return semAcento(l.nome).toUpperCase().split(/\s+/).map(w => w[0]).join('').slice(0, 4);
 }
 
 /** true quando já foi digitada alguma quantidade por loja nesta cotação. */
@@ -1239,7 +1261,7 @@ function pedidosPorFornecedor(c, lojaId = null) {
 
 /** Marca que vai no pedido: a pedida por extenso quando a resposta é ela (ou abreviação dela). */
 function marcaPedido(pedida, resposta, status) {
-  if ((status === 'ok' || status === 'abrev') && opcoesMarca(pedida).length === 1) return pedida;
+  if ((status === 'ok' || status === 'abrev') && opcoesMarca(pedida).length === 1) return opcoesMarca(pedida)[0];
   return resposta || pedida || '';
 }
 
@@ -1822,11 +1844,11 @@ async function exportarProdutos() {
 }
 
 const MAPA_COLUNAS = {
-  codigo: ['codigo', 'cod', 'cod.', 'sku', 'referencia interna', 'ref interna'],
+  codigo: ['codigo', 'cod', 'cod.', 'sku', 'referencia interna', 'ref interna', 'codigo do produto', 'nr_fabrica', 'nr fabrica'],
   descricao: ['descricao', 'produto', 'nome', 'item', 'descricao do produto'],
   unidade: ['unidade', 'un', 'und', 'unid', 'unid.', 'un.'],
   similar: ['similar', 'similares', 'equivalente', 'codigo similar', 'cod similar'],
-  marca: ['marca', 'fabricante', 'referencia', 'ref', 'marca/ref.', 'marca/ref', 'brand'],
+  marca: ['marca', 'marca exigida', 'fabricante', 'referencia', 'ref', 'marca/ref.', 'marca/ref', 'brand'],
   categoria: ['categoria', 'grupo', 'departamento', 'secao'],
   obs: ['observacao', 'obs', 'observacoes'],
 };
@@ -2070,6 +2092,37 @@ function proximoGrupoPendente(depois) {
   return gs.length; // linha "Concluir"
 }
 
+/* Regras do DISPPAR para a OBS do DataCar: palavras que sugerem se o grupo vai ou não para a cotação. */
+const REGRAS_OBS = [
+  ['nao', ['cortar', 'retirar', 'descartar', 'desconsiderar', 'cancelado', 'cancelada', 'nao cotar', 'nao comprar', 'nao usar']],
+  ['revisar', ['duvida', 'duvidas', 'confirmar', 'conferir', 'verificar', 'revisar', 'avaliar', 'analisar', 'aguardar', 'pendente']],
+  ['vai', ['ok', 'manter', 'aprovado', 'conferido', 'liberado']],
+];
+
+/** Sugestão para um grupo pela OBS: { tipo: 'vai' | 'nao' | 'revisar', palavra } ou null. */
+function sugestaoObs(texto) {
+  const t = ` ${semAcento(texto).replace(/[^a-z0-9]+/g, ' ').trim()} `;
+  if (!t.trim()) return null;
+  for (const [tipo, palavras] of REGRAS_OBS) {
+    const achou = palavras.find(w => t.includes(` ${w} `));
+    if (achou) return { tipo, palavra: achou };
+  }
+  return null;
+}
+
+function aplicarSugestoesDataCar() {
+  const gs = gruposDataCar();
+  let n = 0;
+  for (const g of gs) {
+    const sug = sugestaoObs(g.rotulo);
+    if (!sug || sug.tipo === 'revisar' || estadoGrupo(g).estado !== 'pendente') continue;
+    for (const l of g.itens) { l.decisao = sug.tipo; l.sel = sug.tipo === 'vai'; }
+    n++;
+  }
+  desenharConferencia();
+  toast(n ? `Sugestão aplicada em ${n} grupo(s).` : 'Nenhum grupo pendente com sugestão.');
+}
+
 function decidirGrupoDataCar(gi, decisao) {
   const d = ui.datacar;
   const g = gruposDataCar()[gi];
@@ -2273,7 +2326,7 @@ function conteudoGrupos() {
     const e = estadoGrupo(g);
     const amostra = g.itens.slice(0, 3).map(l => (d.colDesc >= 0 && l.cels[d.colDesc]) || l.codigo).filter(Boolean);
     return `<div class="conf-grupo est-${e.estado} ${i === d.gcur ? 'atual' : ''}" data-g-idx="${i}">
-      <div class="cg-obs"><b>${esc(g.rotulo)}</b><span>${e.n} ${e.n === 1 ? 'item' : 'itens'}</span></div>
+      <div class="cg-obs"><b>${esc(g.rotulo)}</b><span>${e.n} ${e.n === 1 ? 'item' : 'itens'}</span>${(sug => (sug ? `<span class="sug-obs ${sug.tipo}" title="A OBS diz &quot;${esc(sug.palavra)}&quot;">${{ vai: 'sugestão: vai', nao: 'sugestão: não vai', revisar: 'revisar' }[sug.tipo]}</span>` : ''))(sugestaoObs(g.rotulo))}</div>
       <div class="cg-amostra small">${amostra.map(esc).join(' · ')}${e.n > 3 ? ` <span class="muted">+${e.n - 3}</span>` : ''}</div>
       <div class="cg-estado"><span class="badge ${e.estado === 'vai' ? 'ok' : e.estado === 'nao' ? 'danger' : e.estado === 'pendente' ? '' : 'warn'}">${rotEstado[e.estado]}${e.estado === 'misto' || e.estado === 'incompleto' ? ` · ${e.vai} vão` : ''}</span></div>
       <div class="cg-acoes">
@@ -2285,7 +2338,9 @@ function conteudoGrupos() {
   }).join('');
   const pend = gs.filter(g => ['pendente', 'incompleto'].includes(estadoGrupo(g).estado)).length;
   const c = contagemDataCar();
+  const nSug = gs.filter(g => estadoGrupo(g).estado === 'pendente' && ['vai', 'nao'].includes(sugestaoObs(g.rotulo)?.tipo)).length;
   return `${progressoDataCar()}
+    ${nSug ? `<div class="conf-sugestoes small">A OBS de ${nSug} grupo(s) já diz o que fazer (ex.: "CORTAR", "NÃO COTAR", "OK"). <button type="button" class="sm" data-act="dcSugestoes">Aplicar sugestões</button></div>` : ''}
     <div class="conf-grupos" role="listbox" aria-label="Grupos de ${esc(d.cab[d.col])}">
       ${linhas}
       <div class="conf-grupo conf-concluir ${d.gcur === gs.length ? 'atual' : ''}" data-g-idx="${gs.length}">
@@ -2403,7 +2458,8 @@ async function importarProdutos(file) {
     } else {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(await file.arrayBuffer());
-      const ws = wb.worksheets[0];
+      // a planilha COTAÇÃO COMPLETA tem o banco na aba "BANCO DE DADOS"
+      const ws = wb.worksheets.find(w => /^banco/i.test(w.name.trim())) || wb.worksheets[0];
       linhas = [];
       ws.eachRow({ includeEmpty: false }, row => {
         const vals = [];
@@ -2413,14 +2469,20 @@ async function importarProdutos(file) {
     }
     if (!linhas.length) throw new Error('Arquivo vazio.');
 
-    const cab = linhas[0].map(semAcento);
-    const idx = {};
-    for (const [campo, nomes] of Object.entries(MAPA_COLUNAS)) {
-      const i = cab.findIndex(h => nomes.includes(h));
-      if (i >= 0) idx[campo] = i;
-    }
+    // o cabeçalho pode não estar na 1ª linha (ex.: título "BANCO DE DADOS" em cima)
+    const lerCab = l => {
+      const cab = l.map(semAcento);
+      const idx = {};
+      for (const [campo, nomes] of Object.entries(MAPA_COLUNAS)) {
+        const i = cab.findIndex(h => nomes.includes(h));
+        if (i >= 0) idx[campo] = i;
+      }
+      return idx;
+    };
+    let linhaCab = linhas.slice(0, 10).findIndex(l => lerCab(l).descricao != null);
+    const idx = lerCab(linhas[Math.max(0, linhaCab)]);
     let dados = linhas;
-    if (idx.descricao != null) dados = linhas.slice(1);
+    if (linhaCab >= 0) dados = linhas.slice(linhaCab + 1);
     else Object.assign(idx, { codigo: 0, descricao: 1, unidade: 2, marca: 3, categoria: 4, obs: 5 });
 
     const porCodigo = Object.fromEntries(db.produtos.filter(p => p.codigo).map(p => [semAcento(p.codigo), p]));
@@ -2714,6 +2776,12 @@ function renderNova() {
       <input id="buscaProd" placeholder="Buscar por código, similar, descrição ou marca… (Enter adiciona o primeiro)" autocomplete="off">
       <div id="resultadosProd" class="results"></div>
     </div>
+    <details class="colar-codigos">
+      <summary>📋 Colar lista de códigos (como a aba MONTAGEM da planilha)</summary>
+      <p class="small muted" style="margin:6px 0">Cole os códigos, um por linha (pode colar direto do Excel ou do DataCar). O sistema busca cada um no banco e já traz similar, marca exigida e descrição. Códigos que não estão no banco são cadastrados para você completar depois.</p>
+      <textarea id="colarCodigos" rows="6" placeholder="27321/HG33036&#10;GP33366/AMD4100&#10;GB48167"></textarea>
+      <div class="actions" style="justify-content:flex-start"><button type="button" class="primary sm" data-act="colarCodigos">Adicionar à cotação</button></div>
+    </details>
     <details>
       <summary>+ Cadastrar produto novo e adicionar</summary>
       <form data-form="produtoRapido" class="grid">
@@ -3406,7 +3474,7 @@ function renderCotacao(id) {
           ${celulas}
           ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : '—'}</b>${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
             ${nf > 1 ? `<td class="r">${l.difSegundo != null ? `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}">${fmtPct(l.difSegundo)}</span><br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>` : '<span class="muted">—</span>'}</td>` : ''}
-            <td>${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : '<span class="muted">sem preço</span>'}</td>
+            <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : '<span class="muted">sem preço</span>'}</td>
             ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${qtdLoja(c, l.i, lj.id) || ''}" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
@@ -3553,7 +3621,7 @@ function renderProdutos() {
       <label style="grid-column:span 2">Descrição *<input name="descricao" required value="${esc(v.descricao)}"></label>
       <label>Unidade<input name="unidade" value="${esc(v.unidade)}" placeholder="UN, CX, KG, M…"></label>
       <label>Similar (códigos equivalentes)<input name="similar" value="${esc(v.similar)}"></label>
-      <label>Marca / Referência<input name="marca" value="${esc(v.marca)}"></label>
+      <label>Marca exigida <span class="muted small">(QUALQUER, SÓ COFAP, NAK-COF-TRW…)</span><input name="marca" value="${esc(v.marca)}"></label>
       <label>Categoria<input name="categoria" value="${esc(v.categoria)}" list="categorias"></label>
       <label style="grid-column:1/-1">Observação<input name="obs" value="${esc(v.obs)}"></label>
       <datalist id="categorias">${[...new Set(db.produtos.map(x => x.categoria).filter(Boolean))].sort().map(cat => `<option value="${esc(cat)}">`).join('')}</datalist>
@@ -3573,7 +3641,7 @@ function renderProdutos() {
       </div>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Código</th><th>Descrição</th><th class="c">Unid.</th><th>Marca</th><th>Categoria</th><th class="r">Último preço pago</th><th></th></tr></thead>
+      <thead><tr><th>Código</th><th>Descrição</th><th class="c">Unid.</th><th>Marca exigida</th><th>Categoria</th><th class="r">Último preço pago</th><th></th></tr></thead>
       <tbody id="tbProd">${linhasProdutos()}</tbody>
     </table></div>
     <p class="tip">Para importar sua lista de produtos, use uma planilha com as colunas <b>Código, Descrição, Unidade, Similar, Marca, Categoria</b> (a primeira linha é o cabeçalho). Produtos com o mesmo código são atualizados.</p>
@@ -3741,7 +3809,7 @@ function linhasFornecedores() {
     const n = db.cotacoes.filter(c => c.fornecedores.some(x => x.fornecedorId === f.id)).length;
     return `<tr>
       <td><b>${esc(f.nome)}</b>${f.obs ? `<br><span class="small muted">${esc(f.obs)}</span>` : ''}${f.pedidoMinimo || f.frete ? `<br><span class="small">${[f.pedidoMinimo && `mínimo ${fmtMoeda(f.pedidoMinimo)}`, f.frete && `frete ${fmtMoeda(f.frete)}${f.freteGratisAcima ? ` (grátis acima de ${fmtMoeda(f.freteGratisAcima)})` : ''}`].filter(Boolean).join(' · ')}</span>` : ''}</td>
-      <td>${esc(f.contato || '—')}</td>
+      <td>${esc(f.contato || '—')}${f.substituto ? `<br><span class="small muted">subst.: ${esc(f.substituto)}</span>` : ''}</td>
       <td>${f.email ? `<a href="mailto:${esc(f.email)}">${esc(f.email)}</a>` : '—'}</td>
       <td>${esc(f.telefone || '—')}</td>
       <td class="c">${n}</td>
@@ -3753,6 +3821,175 @@ function linhasFornecedores() {
   }).join('');
 }
 
+/* ---------------- início: o que fazer agora ---------------- */
+
+/** Pendências de todas as cotações ativas, na ordem do fluxo. */
+function pendencias() {
+  const lista = [];
+  const add = (nivel, texto, detalhe, rota, id, botao) => lista.push({ nivel, texto, detalhe, rota, id, botao });
+  const r = db.rascunho;
+  if (r && r.itens?.length) add('info', `Nova cotação em andamento com ${r.itens.length} item(ns)`, 'Ainda não foi criada.', 'nova', null, 'Continuar');
+  const ativas = db.cotacoes.filter(c => !c.arquivada && c.status !== 'cancelada')
+    .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
+  for (const c of ativas) {
+    const nome = `Cotação nº ${c.numero}${c.titulo ? ' · ' + c.titulo : ''}`;
+    const comp = comparar(c);
+    const naoEnviados = c.fornecedores.filter(f => !f.enviadoEm && !respondeu(f));
+    const prazo = situacaoPrazo(c);
+    if (c.status === 'aberta' && !c.fornecedores.length) add('aviso', `${nome}: nenhum fornecedor escolhido`, 'Adicione os fornecedores e envie a planilha.', 'cotacao', c.id, 'Abrir');
+    else if (c.status === 'aberta' && naoEnviados.length) add('aviso', `${nome}: ${naoEnviados.length} fornecedor(es) ainda sem a planilha`, naoEnviados.map(f => f.nome).join(', '), 'cotacao', c.id, 'Enviar');
+    if (prazo) add(prazo.dias < 0 ? 'urgente' : 'aviso', `${nome}: prazo de resposta ${textoPrazo(prazo.dias)}`, `Faltam responder: ${prazo.pendentes.map(fi => c.fornecedores[fi].nome).join(', ')}`, 'cotacao', c.id, 'Cobrar');
+    if (!comp.itensCotados) continue;
+    if (!comp.porLoja) { add('aviso', `${nome}: respostas chegaram, faltam as quantidades das lojas`, `${comp.itensCotados} item(ns) com preço.`, 'cotacao', c.id, 'Definir quantidades'); continue; }
+    const peds = pedidosPorFornecedor(c);
+    const semEnvio = peds.filter(p => !p.f.pedidoEnviadoEm);
+    if (semEnvio.length) add('aviso', `${nome}: ${semEnvio.length} pedido(s) de compra não enviado(s)`, semEnvio.map(p => `${p.f.nome} ${fmtMoeda(p.total)}`).join(' · '), 'cotacao', c.id, 'Enviar pedidos');
+    const an = analisarMinimos(c, comp);
+    const abaixo = an.lista.filter(x => x.abaixo && !x.ignorado);
+    if (abaixo.length) add('aviso', `${nome}: ${abaixo.length} pedido(s) abaixo do mínimo`, abaixo.map(x => x.p.f.nome).join(', '), 'cotacao', c.id, 'Ver');
+    const aguardando = [], divergencia = [];
+    let cobrar = 0;
+    for (const p of peds) {
+      if (!p.f.pedidoEnviadoEm) continue;
+      const lojasP = lojas().filter(lj => p.itens.some(x => x.qtds[lj.id] > 0));
+      const sits = [situacaoRecebimento(c, p.f.fornecedorId, null), ...lojasP.map(lj => situacaoRecebimento(c, p.f.fornecedorId, lj.id))];
+      const recebeu = sits.some(x => x.recs.length);
+      if (!recebeu) aguardando.push(p.f.nome);
+      if (sits.some(x => x.estado === 'divergencia')) divergencia.push(p.f.nome);
+      cobrar += sits.reduce((t, x) => t + (x.cobrar || 0), 0);
+    }
+    if (divergencia.length) add('urgente', `${nome}: nota(s) com divergência${cobrar ? ` — cobrar ${fmtMoeda(cobrar)}` : ''}`, divergencia.join(', '), 'cotacao', c.id, 'Ver notas');
+    if (aguardando.length) add('info', `${nome}: aguardando nota fiscal`, aguardando.join(', '), 'cotacao', c.id, 'Conferir NF-e');
+  }
+  if (db.duvidas.length) add('aviso', `${db.duvidas.length} item(ns) em dúvida esperando a resposta da loja`, 'Copie o texto e mande no WhatsApp.', 'duvidas', null, 'Abrir Dúvidas');
+  const ordem = { urgente: 0, aviso: 1, info: 2 };
+  return lista.sort((a, b) => ordem[a.nivel] - ordem[b.nivel]);
+}
+
+function renderInicio() {
+  const pend = pendencias();
+  const ativas = db.cotacoes.filter(c => !c.arquivada && c.status === 'aberta');
+  const icone = { urgente: '🔴', aviso: '🟡', info: '🔵' };
+  return `
+  <section class="card">
+    <div class="row-between">
+      <h2>Início</h2>
+      <div class="row">
+        <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
+        <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
+        <label class="btn" style="margin:0">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx,.xls" data-import-geral></label>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><span class="muted small">Itens no banco</span><b>${db.produtos.length.toLocaleString('pt-BR')}</b></div>
+      <div class="stat"><span class="muted small">Cotações abertas</span><b>${ativas.length}</b></div>
+      <div class="stat"><span class="muted small">Itens em dúvida</span><b>${db.duvidas.length}</b></div>
+      <div class="stat${pend.some(p => p.nivel === 'urgente') ? ' stat-ruim' : ''}"><span class="muted small">Pendências</span><b>${pend.length}</b></div>
+    </div>
+  </section>
+  <section class="card">
+    <h3>O que fazer agora</h3>
+    ${pend.length ? `<ul class="lista-pend">${pend.map(p => `<li class="pend-${p.nivel}">
+      <span class="pend-icone">${icone[p.nivel]}</span>
+      <div class="pend-texto"><b>${esc(p.texto)}</b>${p.detalhe ? `<br><span class="small muted">${esc(p.detalhe)}</span>` : ''}</div>
+      <a class="btn sm" href="#" data-route="${p.rota}"${p.id ? ` data-id="${esc(p.id)}"` : ''}>${esc(p.botao)} →</a>
+    </li>`).join('')}</ul>` : '<p class="empty">Tudo em dia. 🎉</p>'}
+  </section>`;
+}
+
+/* ---------------- dúvidas (texto para o WhatsApp, padrão do DISPPAR) ---------------- */
+
+function empresasDuvida() {
+  return [...lojas().map(siglaLoja), 'N/A'];
+}
+
+/** Um item no formato do DISPPAR: "- *CÓDIGO. OBS*" / "R$ 10,00 - MARCA" / "*PEDE 2 DSS ?*". */
+function textoItemDuvida(x) {
+  const cod = String(x.codigo || '').toUpperCase().trim() || '-';
+  const obs = String(x.obs || '').toUpperCase().trim();
+  const marca = String(x.marca || '').toUpperCase().trim() || '-';
+  const emp = String(x.empresa || '').toUpperCase().trim();
+  return [
+    `- *${obs ? `${cod}. ${obs}` : cod}*`,
+    `${fmtMoeda(Number(x.valor) || 0)} - ${marca}`,
+    `*PEDE ${x.qtd || 1}${emp && emp !== 'N/A' ? ' ' + emp : ''} ?*`,
+  ].join('\n');
+}
+
+function textoDuvidas() {
+  const cab = (db.config.duvidasCabecalho ?? DEFAULT_DB.config.duvidasCabecalho).trim();
+  return [cab, ...db.duvidas.map(textoItemDuvida)].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Leva um item do comparativo para as dúvidas: preço e marca do fornecedor `fi`
+ * (ou do vencedor), uma dúvida por loja que tem quantidade.
+ */
+function duvidasDoItem(c, i, fi) {
+  const comp = comparar(c);
+  const l = comp.linhas[i];
+  const j = fi ?? l.vencedor;
+  const f = c.fornecedores[j];
+  if (!l || !f || l.precos[j] == null) return 0;
+  const o = f.respostas?.[i] || {};
+  const base = { codigo: l.it.codigo || '', valor: l.precos[j], marca: o.marca || '', obs: '', origem: { cotId: c.id, numero: c.numero, fornecedor: f.nome, marcaExigida: l.it.marca || '' } };
+  const novas = [];
+  if (comp.porLoja) {
+    for (const lj of lojas()) {
+      const q = qtdLoja(c, i, lj.id);
+      if (q > 0) novas.push({ ...base, id: uid(), empresa: siglaLoja(lj), qtd: q });
+    }
+  }
+  if (!novas.length) novas.push({ ...base, id: uid(), empresa: 'N/A', qtd: l.q || 1 });
+  db.duvidas = [...db.duvidas, ...novas];
+  salvar();
+  return novas.length;
+}
+
+function renderDuvidas() {
+  const ed = ui.editDuvida ? db.duvidas.find(x => x.id === ui.editDuvida) : null;
+  const v = ed || { empresa: ui.ultimaEmpresa || empresasDuvida()[0], qtd: 1 };
+  return `
+  <section class="card">
+    <h2>Dúvidas <span class="badge">${db.duvidas.length}</span></h2>
+    <p class="muted small" style="margin-top:0">Itens que dependem da confirmação da loja antes de fechar a compra (marca diferente, preço estranho…). Monte a lista e copie o texto para o WhatsApp. No comparativo, o botão <b>❓</b> de cada item traz o item para cá já preenchido.</p>
+    <form data-form="duvida" class="grid form-duvida">
+      <label>Empresa<select name="empresa">${empresasDuvida().map(e => `<option ${v.empresa === e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></label>
+      <label>Código do produto<input name="codigo" required value="${esc(v.codigo)}" autocomplete="off"></label>
+      <label>Quantidade<input name="qtd" inputmode="numeric" value="${esc(v.qtd)}"></label>
+      <label>Valor (R$)<input name="valor" inputmode="decimal" value="${v.valor ? esc(fmtNum(v.valor, 2)) : ''}"></label>
+      <label>Marca<input name="marca" value="${esc(v.marca)}"></label>
+      <label style="grid-column:span 2">Observação<input name="obs" value="${esc(v.obs)}" placeholder="Ex.: MARCA DIFERENTE, SÓ TEM ESSA"></label>
+      <div class="actions" style="grid-column:1/-1">
+        ${ed ? '<button type="button" data-act="cancelarDuvida">Cancelar edição</button>' : ''}
+        <button class="primary">${ed ? 'Salvar alteração' : '+ Inserir item'}</button>
+      </div>
+    </form>
+  </section>
+  <div class="duvidas-grid">
+    <section class="card">
+      <div class="row-between"><h3>Fila de dúvidas</h3>${db.duvidas.length ? '<button class="sm danger" data-act="limparDuvidas">Limpar tudo</button>' : ''}</div>
+      ${db.duvidas.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Empresa</th><th>Código</th><th class="r">Qtd</th><th class="r">Valor</th><th>Marca</th><th>Observação</th><th></th></tr></thead>
+        <tbody>${db.duvidas.map(x => `<tr class="${ui.editDuvida === x.id ? 'hist-aberto' : ''}">
+          <td><b>${esc(x.empresa)}</b></td>
+          <td>${esc(x.codigo)}${x.origem ? `<br><span class="small muted">nº ${esc(x.origem.numero)} · ${esc(x.origem.fornecedor)}${x.origem.marcaExigida ? ' · exigida ' + esc(x.origem.marcaExigida) : ''}</span>` : ''}</td>
+          <td class="r">${esc(x.qtd)}</td>
+          <td class="r">${fmtMoeda(Number(x.valor) || 0)}</td>
+          <td>${esc(x.marca || '—')}</td>
+          <td class="small">${esc(x.obs || '')}</td>
+          <td class="actions-cell"><button class="sm" data-act="editarDuvida" data-id="${x.id}">Editar</button> <button class="sm danger" data-act="removerDuvida" data-id="${x.id}" title="Resolvido">✕</button></td>
+        </tr>`).join('')}</tbody>
+      </table></div>` : '<p class="empty">Nenhum item em dúvida.</p>'}
+    </section>
+    <section class="card">
+      <div class="row-between"><h3>Texto para WhatsApp</h3><button class="sm primary" data-act="copiarDuvidas" ${db.duvidas.length ? '' : 'disabled'}>⧉ Copiar para o WhatsApp</button></div>
+      <label>Texto fixo no topo<input id="duvidasCabecalho" value="${esc(db.config.duvidasCabecalho ?? DEFAULT_DB.config.duvidasCabecalho)}"></label>
+      <pre class="texto-whats" id="textoDuvidas">${esc(textoDuvidas())}</pre>
+    </section>
+  </div>`;
+}
+
 function renderFornecedores() {
   const f = ui.editForn ? db.fornecedores.find(x => x.id === ui.editForn) : null;
   const v = f || {};
@@ -3761,7 +3998,8 @@ function renderFornecedores() {
     <h2>${f ? 'Editar fornecedor' : 'Fornecedores'} <span class="badge">${db.fornecedores.length}</span></h2>
     <form data-form="fornecedor" class="grid">
       <label>Nome / empresa *<input name="nome" required value="${esc(v.nome)}"></label>
-      <label>Contato (pessoa)<input name="contato" value="${esc(v.contato)}"></label>
+      <label>Atendente (pessoa)<input name="contato" value="${esc(v.contato)}"></label>
+      <label>Substituto <span class="muted small">(quando o atendente falta)</span><input name="substituto" value="${esc(v.substituto)}"></label>
       <label>E-mail<input name="email" type="email" value="${esc(v.email)}"></label>
       <label>Telefone / WhatsApp<input name="telefone" value="${esc(v.telefone)}"></label>
       <label>CNPJ <span class="muted small">(para reconhecer a NF-e)</span><input name="cnpj" value="${esc(v.cnpj)}"></label>
@@ -3787,6 +4025,7 @@ function renderFornecedores() {
 function linhaLojaCfg(l) {
   return `<tr class="loja-cfg" data-id="${esc(l.id)}">
     <td><input name="lj_nome" data-c="nome" value="${esc(l.nome)}" placeholder="Nome da loja"></td>
+    <td><input name="lj_sigla" data-c="sigla" value="${esc(siglaLoja(l))}" placeholder="DSS" style="width:80px;min-width:0"></td>
     <td><input name="lj_cnpj" data-c="cnpj" value="${esc(l.cnpj)}"></td>
     <td><input name="lj_end" data-c="endereco" value="${esc(l.endereco)}"></td>
     <td><button type="button" class="sm danger" data-act="removerLojaCfg" title="Remover loja">✕</button></td>
@@ -3837,7 +4076,7 @@ function renderConfig() {
       <h3 style="margin-top:16px">Lojas</h3>
       <p class="muted small">A compra é dividida entre estas lojas: no comparativo aparece uma coluna de quantidade para cada uma, e os pedidos saem separados. O endereço vai no pedido como local de entrega.</p>
       <div class="table-wrap"><table class="tab-lojas">
-        <thead><tr><th>Loja</th><th>CNPJ</th><th>Endereço de entrega</th><th></th></tr></thead>
+        <thead><tr><th>Loja</th><th>Sigla</th><th>CNPJ</th><th>Endereço de entrega</th><th></th></tr></thead>
         <tbody id="lojasCfg">${lojas().map(linhaLojaCfg).join('')}</tbody>
       </table></div>
       <button type="button" class="sm" data-act="addLojaCfg" style="margin-top:6px">+ Adicionar loja</button>
@@ -3879,7 +4118,7 @@ function renderConfig() {
 
 /* ---------------- roteamento ---------------- */
 
-const navegacao = { nome: 'cotacoes', id: null };
+const navegacao = { nome: 'inicio', id: null };
 
 function rota() {
   return navegacao;
@@ -3900,12 +4139,14 @@ function render() {
   const { nome, id } = rota();
   const app = $('#app');
   const views = {
+    inicio: renderInicio,
     nova: renderNova,
     cotacoes: renderCotacoes,
     cotacao: () => renderCotacao(id),
     produtos: renderProdutos,
     fornecedores: renderFornecedores,
     relatorios: renderRelatorios,
+    duvidas: renderDuvidas,
     config: renderConfig,
   };
   try {
@@ -3919,6 +4160,8 @@ function render() {
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
+  const navDuv = $('#nav a[data-route="duvidas"]');
+  if (navDuv) navDuv.innerHTML = `Dúvidas${db.duvidas.length ? ` <span class="nav-alerta nav-info">${db.duvidas.length}</span>` : ''}`;
   const navCot = $('#nav a[data-route="cotacoes"]');
   if (navCot) {
     const n = cotacoesComPrazo().length;
@@ -3980,11 +4223,47 @@ function adicionarItem(produtoId, quantidade = 1) {
   if (busca) busca.focus();
 }
 
+/** Aba MONTAGEM: adiciona uma lista de códigos colada, buscando cada um no banco. */
+function colarCodigos(texto) {
+  const r = rascunho();
+  const porCodigo = new Map(db.produtos.map(p => [chaveCodigo(String(p.codigo || '').toLowerCase()), p]));
+  const res = { achados: 0, novos: [], repetidos: 0 };
+  const naCotacao = new Set(r.itens.map(x => x.produtoId));
+  for (const linha of String(texto).split(/\r?\n/)) {
+    const codigo = linha.split(/\t|;/)[0].trim().toUpperCase();
+    if (!codigo || /^c[oó]d/i.test(codigo)) continue; // linha vazia ou cabeçalho
+    let p = porCodigo.get(chaveCodigo(codigo.toLowerCase()));
+    if (p && naCotacao.has(p.id)) { res.repetidos++; continue; }
+    if (!p) {
+      p = { id: uid(), codigo, descricao: '(sem descrição)', unidade: 'UN', similar: '', marca: '', categoria: '', obs: '' };
+      db.produtos.push(p);
+      porCodigo.set(chaveCodigo(codigo.toLowerCase()), p);
+      res.novos.push(codigo);
+    } else res.achados++;
+    naCotacao.add(p.id);
+    r.itens.push({ produtoId: p.id, quantidade: 1, codigoArquivo: codigo });
+  }
+  salvar();
+  return res;
+}
+
 const acoes = {
+  colarCodigos: () => {
+    const campo = $('#colarCodigos');
+    if (!campo || !campo.value.trim()) return;
+    const res = colarCodigos(campo.value);
+    render();
+    const partes = [`${res.achados} encontrado(s) no banco`];
+    if (res.novos.length) partes.push(`${res.novos.length} novo(s) cadastrado(s) sem descrição: ${res.novos.slice(0, 8).join(', ')}${res.novos.length > 8 ? '…' : ''}`);
+    if (res.repetidos) partes.push(`${res.repetidos} já estava(m) na cotação`);
+    avisar(partes.join('\n'));
+  },
+
   addItem: el => adicionarItem(el.dataset.id),
 
   dcDecidir: el => decidirDataCar(el.dataset.d),
   dcEditarMarca: () => editarMarcaDataCar(),
+  dcSugestoes: () => aplicarSugestoesDataCar(),
   dcGVai: el => decidirGrupoDataCar(+el.dataset.i, 'vai'),
   dcGNao: el => decidirGrupoDataCar(+el.dataset.i, 'nao'),
   dcGAbrir: el => abrirGrupoDataCar(+el.dataset.i),
@@ -4296,10 +4575,17 @@ const acoes = {
       [
         { txt: 'Cancelar', valor: undefined },
         { txt: 'Corrigir a marca…', valor: 'corrigir' },
+        { txt: '❓ Perguntar à loja', valor: 'duvida' },
         { txt: 'Não, é outra marca', valor: 'diferente', cls: 'danger' },
         { txt: `Sim, é ${it.marca}`, valor: 'igual', cls: 'primary' },
       ]);
     if (!escolha) return;
+    if (escolha === 'duvida') {
+      const n = duvidasDoItem(c, i, fi);
+      render();
+      toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila).`);
+      return;
+    }
     if (escolha === 'corrigir') {
       const nova = await pedirValor(`Qual é a marca correta que ${f.nome} vai fornecer? (O que ele escreveu: "${o.marca}")`, { valor: o.marca, ok: 'Salvar' });
       if (nova == null || nova.trim() === o.marca) return;
@@ -4427,6 +4713,30 @@ const acoes = {
     render();
   },
 
+  editarDuvida: el => { ui.editDuvida = el.dataset.id; render(); window.scrollTo(0, 0); },
+  cancelarDuvida: () => { ui.editDuvida = null; render(); },
+  removerDuvida: el => {
+    db.duvidas = db.duvidas.filter(x => x.id !== el.dataset.id);
+    if (ui.editDuvida === el.dataset.id) ui.editDuvida = null;
+    salvar();
+    render();
+  },
+  limparDuvidas: async () => {
+    if (!(await confirmar(`Remover os ${db.duvidas.length} itens em dúvida?`, 'Remover'))) return;
+    db.duvidas = [];
+    ui.editDuvida = null;
+    salvar();
+    render();
+  },
+  copiarDuvidas: el => copiar(textoDuvidas(), el).then(() => toast('Texto copiado para colar no WhatsApp.')),
+  duvidaItem: el => {
+    const c = cotAtual();
+    const n = duvidasDoItem(c, +el.dataset.i, el.dataset.f != null ? +el.dataset.f : null);
+    if (!n) return avisar('Este item ainda não tem preço.');
+    render();
+    toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila).`);
+  },
+
   editarProd: el => { ui.editProd = el.dataset.id; render(); window.scrollTo(0, 0); },
   cancelarProd: () => { ui.editProd = null; render(); },
   excluirProd: async el => {
@@ -4525,6 +4835,27 @@ const formularios = {
     form.ownerDocument.querySelector('[data-form=produto] input[name=codigo]')?.focus();
   },
 
+  duvida: form => {
+    const d = formDados(form);
+    if (!d.codigo) return avisar('Informe empresa e código do produto.');
+    const item = {
+      empresa: d.empresa || 'N/A', codigo: d.codigo.toUpperCase(), qtd: Math.max(1, parseInt(d.qtd, 10) || 1),
+      valor: parseNum(d.valor) || 0, marca: (d.marca || '').toUpperCase(), obs: d.obs || '',
+    };
+    ui.ultimaEmpresa = item.empresa;
+    if (ui.editDuvida) {
+      db.duvidas = db.duvidas.map(x => (x.id === ui.editDuvida ? { ...x, ...item } : x));
+      ui.editDuvida = null;
+      toast('Item duvidoso atualizado.');
+    } else {
+      db.duvidas = [...db.duvidas, { id: uid(), ...item }];
+      toast('Item duvidoso adicionado.');
+    }
+    salvar();
+    render();
+    form.ownerDocument.querySelector('[data-form=duvida] [name=codigo]')?.focus();
+  },
+
   fornecedor: form => {
     const d = formDados(form);
     if (!d.nome) return;
@@ -4579,6 +4910,7 @@ const formularios = {
     const novasLojas = [...form.querySelectorAll('.loja-cfg')].map(tr => ({
       id: tr.dataset.id,
       nome: tr.querySelector('[data-c=nome]').value.trim(),
+      sigla: tr.querySelector('[data-c=sigla]').value.trim().toUpperCase(),
       cnpj: tr.querySelector('[data-c=cnpj]').value.trim(),
       endereco: tr.querySelector('[data-c=endereco]').value.trim(),
     })).filter(l => l.nome);
@@ -4617,6 +4949,13 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'duvidasCabecalho') {
+    db.config.duvidasCabecalho = t.value;
+    salvar();
+    const pre = $('#textoDuvidas');
+    if (pre) pre.textContent = textoDuvidas();
+    return;
+  }
   if (t.dataset.qtdLoja != null) {
     // quantidade por loja no comparativo
     const c = cotAtual();

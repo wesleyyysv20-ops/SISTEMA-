@@ -782,3 +782,26 @@ button.link.small { font-size: 12px; }
 .aviso-minimo { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 8px; background: var(--danger-bg); color: var(--text); border-left: 4px solid var(--danger); font-size: 14px; }
 .aviso-minimo .row { flex-wrap: nowrap; }
 .aviso-frete { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
+
+/* sugestão pela OBS (regras do DISPPAR) */
+.sug-obs { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
+.sug-obs.vai { background: var(--ok-bg); color: var(--ok); }
+.sug-obs.nao { background: var(--danger-bg); color: var(--danger); }
+.sug-obs.revisar { background: var(--warn-bg); color: var(--warn); }
+.conf-sugestoes { display: flex; gap: 10px; align-items: center; margin: 6px 0; padding: 6px 10px; background: var(--blue-bg); border-radius: 8px; }
+
+/* dúvidas */
+.form-duvida { grid-template-columns: 110px 1.2fr 90px 120px 1fr 1fr 1fr; }
+.duvidas-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .duvidas-grid { grid-template-columns: 1fr; } .form-duvida { grid-template-columns: repeat(3, 1fr); } }
+.texto-whats { white-space: pre-wrap; font-family: var(--mono); font-size: 13px; background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0 0; max-height: 480px; overflow: auto; }
+.btn-duvida { font-size: 14px; padding: 0 2px; }
+.nav-alerta.nav-info { background: #5b8fd1; }
+.colar-codigos textarea { font-family: var(--mono); }
+
+/* início */
+.lista-pend { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.lista-pend li { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.lista-pend li.pend-urgente { border-color: var(--danger); background: var(--danger-bg); }
+.lista-pend li.pend-aviso { border-left: 4px solid var(--warn); }
+.pend-texto { flex: 1; min-width: 0; }

@@ -13,7 +13,7 @@ const dados = () => base({
     forn('f2', 'Via Peças', { 0: { preco: 90, marca: 'MONROE' }, 1: { preco: 55 } })], { qtds: { 0: { 'sao-sebastiao': 2 } } })],
 });
 
-const telas = [['cotacoes'], ['cotacao', 'c1'], ['nova'], ['produtos'], ['fornecedores'], ['relatorios'], ['config']];
+const telas = [['inicio'], ['duvidas'], ['cotacoes'], ['cotacao', 'c1'], ['nova'], ['produtos'], ['fornecedores'], ['relatorios'], ['config']];
 
 for (const largura of [1366, 1024]) {
   test(`todas as telas abrem sem erro e sem rolagem lateral (${largura}px)`, async () => {

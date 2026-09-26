@@ -147,6 +147,22 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
 - **Copiar texto para o fornecedor** e **Divergências (Excel)** para cobrar.
 - Os pedidos mostram a situação do recebimento por loja: aguardando nota, parcial, recebido ou divergência.
 
+## Padrão do DISPPAR e da planilha COTAÇÃO COMPLETA
+
+O sistema junta o programa DISPPAR (Python) e a planilha COTAÇÃO COMPLETA.xlsm:
+
+| Antes | Agora |
+| --- | --- |
+| Banco de Dados (DISPPAR) / aba BANCO DE DADOS | **Produtos** (importa a aba BANCO DE DADOS direto do .xlsm) |
+| Marca exigida: QUALQUER, SÓ COFAP, ALB-NAK-KAY-PERF-MONR | entendida na checagem da marca respondida (abreviações e listas com hífen) |
+| Planilhas: lote do DataCar e seleção por OBS | **Nova cotação → Abrir arquivo do DataCar**, com sugestão pela OBS (CORTAR, NÃO COTAR, OK, VERIFICAR…) |
+| Aba MONTAGEM (colar códigos e buscar no banco) | **Nova cotação → Colar lista de códigos** |
+| Aba PLANILHA (cotação para os fornecedores) | planilha gerada em **Criar cotação** |
+| Aba FORNECEDORES (atendente, substituto, check) | **Fornecedores** (atendente e substituto) e situação de envio/resposta na cotação |
+| Aba COMPRAS (menor preço, 2º e porcentagem) | **Comparativo** (vencedor, 2º melhor e Dif. 1º × 2º) |
+| Dúvidas (DPR/DSS, texto para WhatsApp) | **Dúvidas**, alimentada pelo botão ❓ do comparativo; siglas das lojas em Configurações |
+| Workspace principal | **Início** com as pendências de todas as cotações |
+
 ## Testes automáticos
 
 Ficam em `../cotacao-testes/` e rodam sozinhos no GitHub a cada alteração. Veja o README de lá para rodar no computador.

@@ -16,6 +16,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `09-nfe` | conferência da nota fiscal (XML da NF-e) com o pedido: fornecedor, loja, divergências, vínculos |
 | `10-enviar-pedidos` | envio dos pedidos de compra por e-mail (texto, lojas de entrega, .zip, uma aba por loja ou lojas juntas) |
 | `11-minimo-frete` | pedido mínimo e frete: avisos, sugestão de passar itens para o 2º colocado, cadastro |
+| `12-padrao-disppar` | padrão do DISPPAR e da COTAÇÃO COMPLETA: marca exigida, sugestão pela OBS, colar códigos, banco, dúvidas, início |
 
 ## Rodar
 
