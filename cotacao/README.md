@@ -32,7 +32,7 @@ Roda direto no navegador — não precisa instalar nada nem de servidor.
    e-mail não abrir, há botões para copiar destinatário, assunto e texto. (Navegadores não
    permitem anexar arquivos automaticamente em links de e-mail.)
 6. **Receber:** quando o fornecedor devolver a planilha preenchida, clique em **📥 Importar**
-   (ou use *Importar planilha respondida* na lista de cotações — o sistema reconhece sozinho
+   (ou use *Importar planilhas respondidas* no Início ou na lista de cotações, escolhendo várias de uma vez — o sistema reconhece sozinho
    de qual cotação e fornecedor é o arquivo). Também é possível **✎ Digitar** os preços.
 7. **Comparar:** o comparativo mostra os preços lado a lado, o menor preço de cada item em
    verde, o total de cada fornecedor e o total da melhor combinação. Dá para exportar em Excel.

@@ -1074,8 +1074,12 @@ function aplicarResposta(c, fi, ws, meta) {
   return qtd;
 }
 
-async function importarResposta(file, cotId, fiSugerido) {
-  try {
+/**
+ * Importa uma planilha respondida. Devolve { cotacao, fornecedor, qtd } ou null se a pessoa cancelou;
+ * erros são lançados (quem chama decide como avisar).
+ */
+async function importarRespostaArquivo(file, cotId, fiSugerido) {
+  {
     const { meta, ws } = await lerPlanilha(file);
     if (!ws) throw new Error('Planilha vazia.');
     let c = cotId ? db.cotacoes.find(x => x.id === cotId) : null;
@@ -1090,7 +1094,7 @@ async function importarResposta(file, cotId, fiSugerido) {
     if (!c) {
       const abertas = [...db.cotacoes].sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
       if (!abertas.length) throw new Error('Não há cotações no sistema para receber esta planilha.');
-      const id = await pedirValor('Não consegui identificar a cotação desta planilha. Escolha a cotação:', {
+      const id = await pedirValor(`Não consegui identificar a cotação da planilha "${file.name}". Escolha a cotação:`, {
         tipo: 'lista', ok: 'Importar',
         opcoes: abertas.map(x => ({ valor: x.id, texto: `Nº ${x.numero} · ${fmtData(x.data)}${x.titulo ? ' · ' + x.titulo : ''} · ${x.itens.length} itens` })),
       });
@@ -1126,14 +1130,46 @@ async function importarResposta(file, cotId, fiSugerido) {
     const f = c.fornecedores[fi];
     if (Object.keys(f.respostas || {}).length && !(await confirmar(`${f.nome} já tem preços lançados. Substituir pelos da planilha?`))) return;
     const qtd = aplicarResposta(c, fi, ws, meta);
-    toast(`${qtd} preço(s) importado(s) de ${f.nome}.`);
-    ir('cotacao', c.id);
+    return { cotacao: c, fornecedor: f.nome, qtd };
+  }
+}
+
+async function importarResposta(file, cotId, fiSugerido) {
+  try {
+    const r = await importarRespostaArquivo(file, cotId, fiSugerido);
+    if (!r) return;
+    toast(`${r.qtd} preço(s) importado(s) de ${r.fornecedor}.`);
+    ir('cotacao', r.cotacao.id);
     render();
   } catch (e) {
     console.error(e);
     avisar('Erro ao importar a planilha:\n' + e.message);
   }
 }
+
+/** Várias planilhas respondidas de uma vez: importa uma por uma e mostra um resumo no fim. */
+async function importarRespostas(files, cotId = null) {
+  if (files.length === 1) return importarResposta(files[0], cotId, null);
+  const ok = [], falhas = [], canceladas = [];
+  for (const file of files) {
+    try {
+      const r = await importarRespostaArquivo(file, cotId, null);
+      if (r) ok.push({ ...r, arquivo: file.name }); else canceladas.push(file.name);
+    } catch (e) {
+      console.error(e);
+      falhas.push({ arquivo: file.name, erro: e.message.split('\n')[0] });
+    }
+  }
+  const cots = [...new Set(ok.map(r => r.cotacao))];
+  if (cots.length === 1) ir('cotacao', cots[0].id);
+  render();
+  const linhas = [`${ok.length} de ${files.length} planilha(s) importada(s):`];
+  for (const r of ok) linhas.push(`✓ ${r.fornecedor}: ${r.qtd} preço(s)${cots.length > 1 ? ` (cotação nº ${r.cotacao.numero})` : ''}`);
+  for (const f of falhas) linhas.push(`✗ ${f.arquivo}: ${f.erro}`);
+  for (const n of canceladas) linhas.push(`– ${n}: não importada (cancelada)`);
+  await avisar(linhas.join('\n'));
+}
+
 
 /* ---------------- Excel: comparativo e produtos ---------------- */
 
@@ -2887,7 +2923,7 @@ function renderCotacoes() {
     <div class="row-between">
       <h2>Cotações</h2>
       <div class="row">
-        <label class="btn" style="margin:0">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx,.xls" data-import-geral></label>
+        <label class="btn" style="margin:0">📥 Importar planilhas respondidas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>
         <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido de compra">🧾 Conferir NF-e (XML)<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
       </div>
@@ -3483,7 +3519,7 @@ function renderCotacao(id) {
       ${disponiveis.length ? `<select id="addFornCot" style="width:auto;max-width:280px">${disponiveis.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select>
       <button class="sm" data-act="addFornCot">+ Adicionar fornecedor</button>` : ''}
       <button class="sm" data-act="baixarGeral" title="Planilha da cotação sem nome de fornecedor">⬇ Planilha da cotação</button>
-      <label class="btn sm" style="margin:0" title="Importar uma planilha preenchida pelo fornecedor">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx,.xls" data-import-cot></label>
+      <label class="btn sm" style="margin:0" title="Importar uma planilha preenchida pelo fornecedor">📥 Importar planilhas respondidas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-cot></label>
     </div>
     ${nf ? `<div class="row barra-lote">
       <span class="small muted" id="qtdSel">${textoSel(c)}</span>
@@ -3846,7 +3882,7 @@ function renderInicio() {
       <div class="row">
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
         <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
-        <label class="btn" style="margin:0">📥 Importar planilha respondida<input type="file" class="hidden" accept=".xlsx,.xls" data-import-geral></label>
+        <label class="btn" style="margin:0">📥 Importar planilhas respondidas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>
       </div>
     </div>
     <div class="stats">
@@ -5165,11 +5201,12 @@ document.addEventListener('change', async e => {
     if (!rec || t.value === '') return;
     vincularItemNFe(c, rec, +t.dataset.vincularNfe, +t.value);
   } else if (t.type === 'file' && t.files.length) {
-    const file = t.files[0];
+    const files = [...t.files];
+    const file = files[0];
     t.value = '';
     if (t.dataset.import != null) await importarResposta(file, cotAtual()?.id, +t.dataset.import);
-    else if (t.hasAttribute('data-import-geral')) await importarResposta(file, null, null);
-    else if (t.hasAttribute('data-import-cot')) await importarResposta(file, cotAtual()?.id, null);
+    else if (t.hasAttribute('data-import-geral')) await importarRespostas(files, null);
+    else if (t.hasAttribute('data-import-cot')) await importarRespostas(files, cotAtual()?.id);
     else if (t.hasAttribute('data-import-produtos')) await importarProdutos(file);
     else if (t.hasAttribute('data-import-datacar')) await abrirArquivoDataCar(file);
     else if (t.hasAttribute('data-restaurar')) {
