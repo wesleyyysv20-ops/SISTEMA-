@@ -938,7 +938,8 @@ async function gerarPlanilha(c, f) {
     cell.border = { top: fina, bottom: fina, left: k === 0 ? fina : undefined, right: k === 7 ? fina : undefined };
   });
 
-  // itens
+  // itens (códigos repetidos em vermelho, como a formatação condicional da aba PLANILHA)
+  const repetidos = parceirosCodigo(c.itens.map(it => it.codigo));
   c.itens.forEach((it, i) => {
     const r = FIRST + i;
     const row = ws.getRow(r);
@@ -950,6 +951,7 @@ async function gerarPlanilha(c, f) {
       if (col !== 3) cell.numFmt = '@';
       cell.border = { bottom: fina, left: col === 1 ? fina : undefined, right: col === 8 ? fina : undefined };
     }
+    if (repetidos[i].length) row.getCell(2).font = { name: T.fonte, size: 11, bold: true, color: { argb: 'FFFF0000' } };
     row.getCell(7).fill = solido(T.cinza);
     row.getCell(8).fill = solido(T.cinzaEscuro);
     for (const col of [7, 8]) row.getCell(col).protection = { locked: false };
@@ -2003,12 +2005,36 @@ async function abrirArquivoDataCar(file) {
 const grupoDc = v => semAcento(v).replace(/\s+/g, ' ');
 const chaveCodigo = v => semAcento(v).replace(/\s+/g, '');
 
-/** Partes de um código para achar repetidos: "2527/GR12527" -> ["2527", "gr12527", "2527/gr12527"]. */
+/**
+ * Partes de um código para achar repetidos: "2527/GR12527" -> ["2527", "gr12527", "2527/gr12527"].
+ * Como no DISPPAR, o sufixo de KIT não conta: "40123-KITCIA" também vira "40123".
+ */
 function tokensCodigo(cod) {
   const k = chaveCodigo(cod || '');
   if (!k) return [];
   const partes = k.split(/[\/,;|]+/).filter(t => t.length >= 3);
-  return [...new Set([k, ...partes])];
+  const semKit = [k, ...partes].map(t => t.replace(/^(.{3,}?)[-\/]?kit[a-z0-9]*$/, '$1')).filter(t => t.length >= 3);
+  return [...new Set([k, ...partes, ...semKit])];
+}
+
+/** Para cada código, os índices dos outros com código igual ou contido (ver tokensCodigo). */
+function parceirosCodigo(codigos) {
+  const porToken = new Map();
+  const toks = codigos.map((c, i) => {
+    const t = tokensCodigo(c);
+    t.forEach(x => { if (!porToken.has(x)) porToken.set(x, new Set()); porToken.get(x).add(i); });
+    return t;
+  });
+  return codigos.map((c, i) => {
+    const set = new Set();
+    toks[i].forEach(t => porToken.get(t).forEach(j => { if (j !== i) set.add(j); }));
+    return [...set];
+  });
+}
+
+/** Item de KIT (KIT CORREIA, KIT TENSOR, "KIT …" na descrição ou código terminado em KIT). */
+function ehKit(codigo, descricao) {
+  return /\bKIT\b/i.test(semAcento(descricao || '').toUpperCase()) || /[-\/\s]KIT[A-Z0-9 ]*$/i.test(String(codigo || '').trim());
 }
 
 const ORDEM_DC = { chave: 'OBS', arquivo: 'No arquivo', produto: 'Produto cadastrado', marca: 'Marca' };
@@ -2716,14 +2742,17 @@ function renderNova() {
       <div class="painel-dup-titulo">⚠ <b>${gruposRep.length} caso(s) de código repetido</b> · compare os itens lado a lado e decida: <b>✓ Manter</b> ou <b>✕ Tirar</b></div>
       ${gruposRep.map(g => `
         <div class="dup-grupo">
-          <div class="dup-comum">Código em comum: <b>${esc(g.comum.toUpperCase())}</b> · ${g.itens.length} itens</div>
+          <div class="dup-comum">Código em comum: <b>${esc(g.comum.toUpperCase())}</b> · ${g.itens.length} itens${(() => {
+            const kits = g.itens.filter(j => ehKit(codDe(r.itens[j]), prod[r.itens[j].produtoId].descricao)).length;
+            return kits && kits < g.itens.length ? ' · <span class="aviso-kit">KIT e peça avulsa com o mesmo código: confira se precisa dos dois</span>' : '';
+          })()}</div>
           ${g.itens.map(j => {
             const x = r.itens[j];
             const px = prod[x.produtoId];
             return `<div class="dup-item ${x.dupVisto ? 'visto' : ''}">
               <button type="button" class="link dup-num" data-act="irItem" data-i="${j}" title="Ver na lista">#${j + 1}</button>
               <span class="dup-cod">${esc(codDe(x))}</span>
-              <span class="dup-desc">${esc(px.descricao)}</span>
+              <span class="dup-desc">${ehKit(codDe(x), px.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(px.descricao)}</span>
               <span class="dup-obs">OBS: <b>${esc(obsDe(x))}</b></span>
               <span class="dup-marca">${esc(x.marca || px.marca || '')}</span>
               <span class="dup-acoes">${x.dupVisto ? '<span class="badge ok">mantido</span>' : `<button class="sm" data-act="manterItem" data-i="${j}">✓ Manter</button>`}
@@ -2744,7 +2773,7 @@ function renderNova() {
     const textoObs = daPlanilha.length ? obs : p.obs ? [p.obs] : [];
     return `<tr data-item-linha="${i}" class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
       <td class="c">${i + 1}</td>
-      <td>${esc(x.codigoArquivo || p.codigo)}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
+      <td>${esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}">${origemObs}: <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
@@ -3446,6 +3475,7 @@ function renderCotacao(id) {
   const ultimos = temResposta ? ultimosPrecos(c.id) : {};
   const chips = avs => avs.map(a => `<span class="alerta-preco ${a.tipo}" title="${esc(a.texto)}">⚠ ${esc(a.curto)}</span>`).join('');
   const LJ = lojas();
+  const repComp = parceirosCodigo(c.itens.map(it => it.codigo));
   let qtdAlertas = 0;
   const qtdMarcas = { errada: 0, duvida: 0 };
   const tabelaComp = `
@@ -3474,7 +3504,7 @@ function renderCotacao(id) {
           }).join('');
           return `<tr>
           <td class="c">${l.i + 1}</td>
-          <td>${esc(l.it.descricao)}<br><span class="small muted">${esc([l.it.codigo, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
+          <td>${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.descricao)}<br><span class="small muted">${esc([l.it.codigo, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : '—'}</b>${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>

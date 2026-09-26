@@ -812,3 +812,9 @@ button.link.small { font-size: 12px; }
 .nota-forn.warn { background: var(--warn-bg); color: var(--warn); }
 .nota-forn.danger { background: var(--danger-bg); color: var(--danger); }
 a.link-nota { text-decoration: none; }
+
+/* KIT e repetidos */
+.badge.kit { background: #ede4fb; color: #5b2ca0; }
+.aviso-kit { color: var(--danger); font-weight: 600; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .badge.kit { background: #3a2a5c; color: #d9c8f7; } }
+:root[data-theme="dark"] .badge.kit { background: #3a2a5c; color: #d9c8f7; }

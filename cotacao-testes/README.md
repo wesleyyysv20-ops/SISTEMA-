@@ -19,6 +19,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `12-padrao-disppar` | padrão do DISPPAR e da COTAÇÃO COMPLETA: marca exigida, sugestão pela OBS, colar códigos, banco, dúvidas, início |
 | `13-importar-varias` | várias planilhas respondidas importadas de uma vez, com resumo e arquivo com erro |
 | `14-nota-fornecedores` | nota dos fornecedores (resposta, prazo, cobertura, marca, notas fiscais) |
+| `15-repetidos-kit` | códigos repetidos (regra do KIT do DISPPAR), etiqueta KIT, vermelho na planilha |
 
 ## Rodar
 

@@ -118,6 +118,15 @@ Modelo **COTAÇÃO GERAL DISPPAR** (o mesmo da aba PLANILHA da COTAÇÃO COMPLET
   sugere arquivar as canceladas e as finalizadas com mais de 60 dias; *Ver só as arquivadas* mostra as
   arquivadas, e **↩ Desarquivar** (na cotação) traz de volta.
 
+## Códigos repetidos e KIT
+
+- Como no DISPPAR, códigos que só mudam no sufixo de KIT contam como o mesmo código
+  ("40123" e "40123-KITCIA"), além dos códigos compostos ("2527/GR12527" e "2527/RD45552").
+- Itens de KIT (descrição com "KIT", como KIT CORREIA e KIT TENSOR, ou código terminado em KIT) ganham a
+  etiqueta **KIT** na nova cotação e no comparativo; quando o KIT e a peça avulsa estão na mesma
+  cotação, o painel de repetidos avisa para conferir se precisa dos dois.
+- Na planilha enviada, os códigos repetidos ficam em vermelho, como na aba PLANILHA.
+
 ## Nota dos fornecedores
 
 Em **Relatórios** (respeita o período escolhido) e na lista de **Fornecedores**: nota de 0 a 10 de cada
