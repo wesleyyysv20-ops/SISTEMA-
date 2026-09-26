@@ -72,6 +72,9 @@ Modelo **COTAÇÃO GERAL DISPPAR** (o mesmo da aba PLANILHA da COTAÇÃO COMPLET
   compra anterior. O botão 📈 abre o histórico completo do produto: gráfico, cada cotação com o
   fornecedor, o preço pago, a diferença 1º × 2º e todos os preços recebidos. *Só com preço* filtra os
   produtos que já apareceram em cotações.
+- No histórico do produto, **Preço de cada fornecedor**: um gráfico com uma linha por fornecedor (passe o
+  mouse para ver todos os preços daquela cotação) e uma tabela com quantas vezes cotou e ganhou, primeiro
+  e último preço, variação (↑ subiu, ↓ baixou), menor e maior. Mostra quem subiu preço.
 - **Relatórios:** por período, mostra o total comprado, a economia em relação à média e ao preço
   mais caro recebido, a diferença média entre o 1º e o 2º preço, quais fornecedores ganham mais itens
   e o resumo de cada cotação. As cotações canceladas não entram.

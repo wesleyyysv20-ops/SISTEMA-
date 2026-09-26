@@ -31,7 +31,7 @@ test('produtos: último preço pago, variação e histórico (cotação cancelad
   assert.match(hist, /Menor pago\s+R\$ 100,00/);
   assert.match(hist, /↑ 40,0%/);
   assert.doesNotMatch(hist, /nº 0000/);
-  assert.equal(await page.locator('.hist-linha tbody tr').count(), 3);
+  assert.equal(await page.locator('.hist-linha table:not(.hf-tabela) tbody tr').count(), 3);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
@@ -46,6 +46,25 @@ test('relatórios: total, economia e fornecedores que mais ganham', async () => 
   assert.match(resumo, /Economia vs média dos preços\s+R\$ 71,17/);
   const primeiro = await page.locator('section:has(h3:text("Fornecedores")) tbody tr').first().innerText().then(n);
   assert.match(primeiro, /^Via Peças/);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
+
+test('histórico por fornecedor: uma linha por fornecedor, tabela de variação e dica com os preços', async () => {
+  const s = await abrir(dados());
+  const { page } = s;
+  await page.click('nav [data-route=produtos]');
+  await page.click('[data-act=verHistorico][data-id=p1]');
+  assert.deepEqual(await page.locator('.hf-legenda > span:has(.hf-sw)').allInnerTexts(), ['Auto Mix', 'Via Peças', 'Dist Sul']);
+  assert.equal(await page.locator('.hf-serie').count(), 3);
+  const tabela = await page.locator('.hf-tabela tbody tr').allInnerTexts().then(ns);
+  // última cotação: Via Peças R$ 140 (mais barata), Auto Mix R$ 150, Dist Sul R$ 160
+  assert.match(tabela[0], /^Via Peças\s+3×\s+2×\s+R\$ 110,00[\s\S]*R\$ 140,00[\s\S]*↑ 27,3%/);
+  assert.match(tabela[1], /^Auto Mix\s+3×\s+1×\s+R\$ 100,00[\s\S]*R\$ 150,00[\s\S]*↑ 50,0%/);
+  assert.match(tabela[2], /^Dist Sul\s+1×\s+0×/);
+  await page.locator('.hf-col').nth(1).hover();
+  const dica = n(await page.locator('.hf-tip').innerText()).replace(/\s+/g, ' ');
+  assert.match(dica, /01\/09\/2026 · cotação nº 0002 Via Peças R\$ 118,00 ✓ Auto Mix R\$ 120,00/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

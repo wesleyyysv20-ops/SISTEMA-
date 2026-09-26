@@ -3620,6 +3620,86 @@ function linhasProdutos() {
   }).join('') + extra;
 }
 
+/* ---------------- histórico de preço por fornecedor ---------------- */
+
+const MAX_SERIES = 8; // paleta categórica de 8 cores (ordem fixa, nunca repetida)
+
+/** Preços de cada fornecedor ao longo das cotações do produto, na ordem em que apareceram. */
+function seriesFornecedores(h) {
+  const mapa = new Map();
+  h.forEach((x, k) => x.precos.forEach(p => {
+    if (!mapa.has(p.nome)) mapa.set(p.nome, []);
+    mapa.get(p.nome).push({ k, data: x.data, numero: x.numero, preco: p.preco, ganhou: p.nome === x.fornecedor });
+  }));
+  return [...mapa.entries()].map(([nome, pts], i) => ({ nome, pts, cor: i < MAX_SERIES ? i + 1 : 0 }));
+}
+
+function graficoFornecedores(h, series) {
+  const noGrafico = series.filter(sr => sr.cor);
+  const W = 640, H = 210, PL = 64, PR = noGrafico.length <= 4 ? 110 : 16, PT = 12, PB = 26;
+  const vals = noGrafico.flatMap(sr => sr.pts.map(p => p.preco));
+  let mn = Math.min(...vals), mx = Math.max(...vals);
+  if (mn === mx) { mn *= 0.9; mx *= 1.1; }
+  const X0 = PL + 18; // afasta a 1ª data do rótulo do eixo
+  const x = k => (h.length === 1 ? (X0 + W - PR) / 2 : X0 + k * (W - X0 - PR) / (h.length - 1));
+  const y = v => PT + (mx - v) * (H - PT - PB) / (mx - mn);
+  const grade = [mn, (mn + mx) / 2, mx].map(v => `<line class="hf-grade" x1="${PL}" x2="${W - PR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+    <text class="hf-eixo" x="${PL - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${esc(fmtMoeda(v))}</text>`).join('');
+  const datas = h.map((c, k) => `<text class="hf-eixo" x="${x(k).toFixed(1)}" y="${H - 6}" text-anchor="middle">${esc(fmtData(c.data).slice(0, 5))}</text>`).join('');
+  const linhas = noGrafico.map(sr => {
+    const pts = sr.pts.map(p => `${x(p.k).toFixed(1)},${y(p.preco).toFixed(1)}`).join(' ');
+    const ult = sr.pts[sr.pts.length - 1];
+    return `<g class="hf-serie" style="--c: var(--serie-${sr.cor})">
+      ${sr.pts.length > 1 ? `<polyline points="${pts}"/>` : ''}
+      ${sr.pts.map(p => `<circle cx="${x(p.k).toFixed(1)}" cy="${y(p.preco).toFixed(1)}" r="${p.ganhou ? 5 : 4}"${p.ganhou ? ' class="ganhou"' : ''}/>`).join('')}
+      ${noGrafico.length <= 4 ? `<text class="hf-rotulo" x="${(x(ult.k) + 9).toFixed(1)}" y="${(y(ult.preco) + 4).toFixed(1)}">${esc(sr.nome.length > 14 ? sr.nome.slice(0, 13) + '…' : sr.nome)}</text>` : ''}
+    </g>`;
+  }).join('');
+  // colunas invisíveis para a dica ao passar o mouse (todos os preços daquela cotação)
+  const larg = h.length > 1 ? (W - X0 - PR) / (h.length - 1) : W - X0 - PR;
+  const colunas = h.map((c, k) => {
+    const linhasTip = series.map(sr => [sr, sr.pts.find(p => p.k === k)]).filter(([, p]) => p).sort((a, b) => a[1].preco - b[1].preco)
+      .map(([sr, p]) => `${sr.cor}|${sr.nome}|${fmtMoeda(p.preco)}${p.ganhou ? ' ✓' : ''}`).join(';;');
+    return `<rect class="hf-col" x="${(x(k) - larg / 2).toFixed(1)}" y="${PT}" width="${larg.toFixed(1)}" height="${H - PT - PB}" data-tip="${esc(`${fmtData(c.data)} · cotação nº ${c.numero}`)}" data-linhas="${esc(linhasTip)}" data-x="${x(k).toFixed(1)}"/>`;
+  }).join('');
+  return `<div class="hf-wrap">
+    <svg class="hf-graf" viewBox="0 0 ${W} ${H}" role="img" aria-label="Preço de cada fornecedor por cotação">${grade}${datas}<line class="hf-cruz" x1="0" x2="0" y1="${PT}" y2="${H - PB}" style="display:none"/>${linhas}${colunas}</svg>
+    <div class="hf-tip" hidden></div>
+  </div>`;
+}
+
+function blocoFornecedoresHistorico(h) {
+  const series = seriesFornecedores(h);
+  if (series.length < 2 && h.length < 2) return '';
+  const fora = series.filter(sr => !sr.cor).length;
+  const resumo = series.map(sr => {
+    const ps = sr.pts.map(p => p.preco);
+    const a = sr.pts[0], b = sr.pts[sr.pts.length - 1];
+    return { sr, n: sr.pts.length, ganhou: sr.pts.filter(p => p.ganhou).length, a, b, var: sr.pts.length > 1 && a.preco > 0 ? b.preco / a.preco - 1 : null, mn: Math.min(...ps), mx: Math.max(...ps) };
+  }).sort((p, q) => p.b.k === q.b.k ? p.b.preco - q.b.preco : q.b.k - p.b.k);
+  const swatch = sr => (sr.cor ? `<span class="hf-sw" style="--c: var(--serie-${sr.cor})"></span>` : '<span class="hf-sw vazio"></span>');
+  return `<div class="hf-bloco">
+    <h4>Preço de cada fornecedor</h4>
+    <div class="hf-legenda">${series.filter(sr => sr.cor).map(sr => `<span>${swatch(sr)}${esc(sr.nome)}</span>`).join('')}<span class="small muted">● maior = ganhou naquela cotação</span></div>
+    ${graficoFornecedores(h, series)}
+    ${fora ? `<p class="small muted" style="margin:4px 0 0">${fora} fornecedor(es) a mais aparecem só na tabela.</p>` : ''}
+    <div class="table-wrap"><table class="hf-tabela">
+      <thead><tr><th>Fornecedor</th><th class="r">Cotou</th><th class="r">Ganhou</th><th class="r">Primeiro preço</th><th class="r">Último preço</th><th class="r">Variação</th><th class="r">Menor</th><th class="r">Maior</th></tr></thead>
+      <tbody>${resumo.map(r => `<tr>
+        <td>${swatch(r.sr)}<b>${esc(r.sr.nome)}</b></td>
+        <td class="r">${r.n}×</td>
+        <td class="r">${r.ganhou}×</td>
+        <td class="r">${fmtMoeda(r.a.preco)}<br><span class="small muted">${fmtData(r.a.data)}</span></td>
+        <td class="r"><b>${fmtMoeda(r.b.preco)}</b><br><span class="small muted">${fmtData(r.b.data)}</span></td>
+        <td class="r">${r.var != null ? setaVariacao(r.var) : '—'}</td>
+        <td class="r">${fmtMoeda(r.mn)}</td>
+        <td class="r">${fmtMoeda(r.mx)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <p class="small muted" style="margin:4px 0 0">Ordem: quem cotou mais recentemente e mais barato primeiro. A variação compara o primeiro e o último preço de cada fornecedor (↑ subiu, ↓ baixou).</p>
+  </div>`;
+}
+
 function painelHistorico(h) {
   const vals = h.map(x => x.preco);
   const primeiro = h[0].preco, ultimo = h[h.length - 1].preco;
@@ -3631,6 +3711,8 @@ function painelHistorico(h) {
       ${h.length > 1 ? `<div><span class="muted small">Desde a 1ª cotação</span><b>${setaVariacao(primeiro > 0 ? ultimo / primeiro - 1 : null)}</b></div>` : ''}
     </div>
     ${h.length > 1 ? graficoPrecos(h, true) : ''}
+    ${blocoFornecedoresHistorico(h)}
+    <h4 style="margin:14px 0 4px">Cotações</h4>
     <div class="table-wrap"><table>
       <thead><tr><th>Data</th><th>Cotação</th><th>Comprado de</th><th class="r">Preço pago</th><th class="r">Dif. 1º × 2º</th><th>Todos os preços recebidos</th></tr></thead>
       <tbody>${[...h].reverse().map(x => `<tr>
@@ -5229,6 +5311,37 @@ function teclaItens(e) {
     focarCampoItem(ui.cursorItem, 'marca', '');
   }
 }
+
+/* dica do gráfico de preço por fornecedor: todos os preços da cotação sob o mouse */
+document.addEventListener('mouseover', e => {
+  const col = e.target.closest?.('.hf-col');
+  const wrap = e.target.closest?.('.hf-wrap');
+  if (!wrap) return;
+  const tip = wrap.querySelector('.hf-tip');
+  const cruz = wrap.querySelector('.hf-cruz');
+  if (!col) { tip.hidden = true; cruz.style.display = 'none'; return; }
+  const linhas = (col.dataset.linhas || '').split(';;').filter(Boolean).map(l => {
+    const [cor, nome, preco] = l.split('|');
+    return `<div class="hf-tip-linha"><span class="hf-sw" style="--c: var(--serie-${cor})"></span><span>${esc(nome)}</span><b>${esc(preco)}</b></div>`;
+  }).join('');
+  tip.innerHTML = `<div class="hf-tip-tit">${esc(col.dataset.tip)}</div>${linhas}`;
+  tip.hidden = false;
+  const svg = wrap.querySelector('svg');
+  const escala = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+  const px = Number(col.dataset.x) * escala;
+  cruz.setAttribute('x1', col.dataset.x);
+  cruz.setAttribute('x2', col.dataset.x);
+  cruz.style.display = '';
+  const larguraTip = tip.offsetWidth;
+  tip.style.left = `${Math.max(0, Math.min(px + 12, wrap.clientWidth - larguraTip))}px`;
+});
+document.addEventListener('mouseout', e => {
+  const wrap = e.target.closest?.('.hf-wrap');
+  if (wrap && !wrap.contains(e.relatedTarget)) {
+    wrap.querySelector('.hf-tip').hidden = true;
+    wrap.querySelector('.hf-cruz').style.display = 'none';
+  }
+});
 
 document.addEventListener('focusin', e => {
   if (e.target.dataset?.qtdLoja != null) e.target.select();

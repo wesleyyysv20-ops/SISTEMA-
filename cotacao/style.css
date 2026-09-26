@@ -818,3 +818,39 @@ a.link-nota { text-decoration: none; }
 .aviso-kit { color: var(--danger); font-weight: 600; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .badge.kit { background: #3a2a5c; color: #d9c8f7; } }
 :root[data-theme="dark"] .badge.kit { background: #3a2a5c; color: #d9c8f7; }
+
+/* histórico de preço por fornecedor (paleta categórica validada, ordem fixa) */
+:root {
+  --serie-1: #2a78d6; --serie-2: #eb6834; --serie-3: #1baf7a; --serie-4: #eda100;
+  --serie-5: #e87ba4; --serie-6: #008300; --serie-7: #4a3aa7; --serie-8: #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    --serie-1: #3987e5; --serie-2: #d95926; --serie-3: #199e70; --serie-4: #c98500;
+    --serie-5: #d55181; --serie-6: #008300; --serie-7: #9085e9; --serie-8: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  --serie-1: #3987e5; --serie-2: #d95926; --serie-3: #199e70; --serie-4: #c98500;
+  --serie-5: #d55181; --serie-6: #008300; --serie-7: #9085e9; --serie-8: #e66767;
+}
+.hf-bloco { margin-top: 14px; }
+.hf-bloco h4 { margin: 0 0 6px; }
+.hf-legenda { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 13px; margin-bottom: 4px; }
+.hf-legenda > span { display: inline-flex; align-items: center; gap: 6px; }
+.hf-sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); margin-right: 6px; vertical-align: -1px; flex: none; }
+.hf-sw.vazio { background: none; border: 1px dashed var(--muted); }
+.hf-wrap { position: relative; max-width: 720px; }
+.hf-graf { display: block; width: 100%; height: auto; overflow: visible; }
+.hf-grade { stroke: var(--line); stroke-width: 1; }
+.hf-eixo { font-size: 11px; fill: var(--muted); font-family: var(--font); }
+.hf-rotulo { font-size: 12px; fill: var(--text); font-family: var(--font); font-weight: 600; }
+.hf-serie polyline { fill: none; stroke: var(--c); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.hf-serie circle { fill: var(--c); stroke: var(--card-2); stroke-width: 2; }
+.hf-serie circle.ganhou { stroke: var(--text); stroke-width: 1.5; }
+.hf-col { fill: transparent; cursor: crosshair; }
+.hf-cruz { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; }
+.hf-tip { position: absolute; top: 0; z-index: 5; pointer-events: none; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 8px 10px; font-size: 12px; min-width: 180px; }
+.hf-tip-tit { font-weight: 600; margin-bottom: 4px; color: var(--muted); }
+.hf-tip-linha { display: flex; align-items: center; gap: 6px; }
+.hf-tip-linha b { margin-left: auto; padding-left: 12px; font-family: var(--mono); }
