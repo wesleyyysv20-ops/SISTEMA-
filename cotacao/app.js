@@ -3700,13 +3700,16 @@ async function fazerBackup() {
 
 const PERIODOS = [['', 'Todo o período'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['365', 'Últimos 12 meses']];
 
+/** Data inicial do período escolhido em Relatórios ('' = todo o período). */
+function inicioPeriodo() {
+  if (!ui.periodoRel) return '';
+  const d = new Date();
+  d.setDate(d.getDate() - Number(ui.periodoRel));
+  return d.toISOString().slice(0, 10);
+}
+
 function dadosRelatorio() {
-  let desde = '';
-  if (ui.periodoRel) {
-    const d = new Date();
-    d.setDate(d.getDate() - Number(ui.periodoRel));
-    desde = d.toISOString().slice(0, 10);
-  }
+  const desde = inicioPeriodo();
   const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde))
     .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
   const forn = {};
@@ -3801,7 +3804,126 @@ function renderRelatorios() {
         <td class="r">${r.comparaveis ? `${fmtMoeda(r.maior)} <span class="small muted">(${pct(r.maior, r.total + r.maior)})</span>` : '—'}</td>
       </tr>`).join('')}</tbody>
     </table></div>
-  </section>` : ''}`;
+  </section>` : ''}
+  ${secaoNotaFornecedores()}`;
+}
+
+/* ---------------- nota dos fornecedores ---------------- */
+
+const PESOS_NOTA = [
+  ['resposta', 0.25, 'Responde às cotações'],
+  ['prazo', 0.15, 'Responde no prazo'],
+  ['cobertura', 0.20, 'Cota os itens pedidos'],
+  ['marca', 0.20, 'Manda a marca exigida'],
+  ['notas', 0.20, 'Notas fiscais sem divergência'],
+];
+
+/**
+ * Desempenho de cada fornecedor do cadastro nas cotações do período (canceladas não contam):
+ * resposta, prazo, tempo de resposta, cobertura, marca, notas fiscais e nota de 0 a 10.
+ */
+function desempenhoFornecedores(desde = inicioPeriodo()) {
+  const st = {};
+  const pega = (id, nome) => (st[id] ||= {
+    id, nome, recebidas: 0, respondidas: 0, comPrazo: 0, noPrazo: 0, horas: [], itensPedidos: 0, itensCotados: 0,
+    comExigencia: 0, marcaErrada: 0, semMarca: 0, notas: 0, notasDiv: 0, cobrado: 0, faltas: 0,
+  });
+  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde));
+  for (const c of cots) {
+    const comp = comparar(c);
+    c.fornecedores.forEach((f, j) => {
+      const x = pega(f.fornecedorId || f.nome, f.nome);
+      const resp = respondeu(f);
+      if (!f.enviadoEm && !resp) return; // ainda não recebeu a cotação
+      x.recebidas++;
+      if (!resp) return;
+      x.respondidas++;
+      if (c.prazoResposta && f.respondidoEm) {
+        x.comPrazo++;
+        if (f.respondidoEm.slice(0, 10) <= c.prazoResposta) x.noPrazo++;
+      }
+      if (f.enviadoEm && f.respondidoEm && f.respondidoEm > f.enviadoEm) x.horas.push((new Date(f.respondidoEm) - new Date(f.enviadoEm)) / 3600000);
+      x.itensPedidos += c.itens.length;
+      for (const l of comp.linhas) {
+        if (l.precos[j] == null) continue;
+        x.itensCotados++;
+        const m = l.marcas[j];
+        if (m == null) continue;
+        x.comExigencia++;
+        if (m === 'errada') x.marcaErrada++;
+        if (m === 'sem') x.semMarca++;
+      }
+    });
+    for (const rec of c.recebimentos || []) {
+      const f = c.fornecedores.find(y => y.fornecedorId === rec.fornecedorId);
+      const x = pega(rec.fornecedorId, f?.nome || rec.nf.emitente.nome);
+      const { resumo } = conferirNFe(c, rec);
+      x.notas++;
+      if (resumo.precoMaior || resumo.qtd || resumo.naoPedidos) x.notasDiv++;
+      x.cobrado += resumo.cobrar;
+      x.faltas += resumo.naoVeio;
+    }
+  }
+  for (const x of Object.values(st)) {
+    const cad = db.fornecedores.find(f => f.id === x.id);
+    if (cad) x.nome = cad.nome;
+    x.partes = {
+      resposta: x.recebidas ? x.respondidas / x.recebidas : null,
+      prazo: x.comPrazo ? x.noPrazo / x.comPrazo : null,
+      cobertura: x.itensPedidos ? x.itensCotados / x.itensPedidos : null,
+      marca: x.comExigencia ? 1 - (x.marcaErrada + x.semMarca * 0.5) / x.comExigencia : null,
+      notas: x.notas ? 1 - x.notasDiv / x.notas : null,
+    };
+    const usados = PESOS_NOTA.filter(([k]) => x.partes[k] != null);
+    const peso = usados.reduce((s2, [, w]) => s2 + w, 0);
+    x.nota = peso ? Math.round((usados.reduce((s2, [k, w]) => s2 + x.partes[k] * w, 0) / peso) * 100) / 10 : null;
+    x.horasMedia = x.horas.length ? x.horas.reduce((a, b) => a + b, 0) / x.horas.length : null;
+  }
+  return Object.values(st).filter(x => x.recebidas || x.notas)
+    .sort((a, b) => (b.nota ?? -1) - (a.nota ?? -1) || COLLATOR.compare(a.nome, b.nome));
+}
+
+function fmtHoras(h) {
+  if (h == null) return '—';
+  if (h < 1) return 'menos de 1 h';
+  if (h < 48) return `${Math.round(h)} h`;
+  return `${(h / 24).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} dias`;
+}
+
+function badgeNota(nota, titulo = '') {
+  if (nota == null) return '<span class="muted">—</span>';
+  const cls = nota >= 8 ? 'ok' : nota >= 6 ? 'warn' : 'danger';
+  return `<span class="nota-forn ${cls}" title="${esc(titulo)}">${nota.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>`;
+}
+
+function tituloNota(x) {
+  return PESOS_NOTA.map(([k, w, rot]) => `${rot} (${Math.round(w * 100)}%): ${x.partes[k] == null ? 'sem dados' : fmtPct(x.partes[k], 0)}`).join('\n');
+}
+
+function secaoNotaFornecedores() {
+  const lista = desempenhoFornecedores();
+  if (!lista.length) return '';
+  const pct = (a, b) => (b ? `${a}/${b} <span class="small muted">(${fmtPct(a / b, 0)})</span>` : '—');
+  return `<section class="card" id="notaFornecedores">
+    <h3>Nota dos fornecedores</h3>
+    <p class="muted small" style="margin-top:0">Nota de 0 a 10: responde às cotações (25%), no prazo (15%), cota os itens pedidos (20%), manda a marca exigida (20%; sem marca conta meio erro) e notas fiscais sem divergência (20%). O que não tem dados fica fora da conta. Passe o mouse na nota para ver cada parte.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Fornecedor</th><th class="c">Nota</th><th class="r">Respondeu</th><th class="r">No prazo</th><th class="r">Tempo médio</th><th class="r">Itens cotados</th><th class="r">Marca errada</th><th class="r">Sem marca</th><th class="r">Notas com divergência</th><th class="r">Cobrado a mais</th></tr></thead>
+      <tbody>${lista.map(x => `<tr>
+        <td><b>${esc(x.nome)}</b></td>
+        <td class="c">${badgeNota(x.nota, tituloNota(x))}</td>
+        <td class="r">${pct(x.respondidas, x.recebidas)}</td>
+        <td class="r">${pct(x.noPrazo, x.comPrazo)}</td>
+        <td class="r">${fmtHoras(x.horasMedia)}</td>
+        <td class="r">${pct(x.itensCotados, x.itensPedidos)}</td>
+        <td class="r">${x.comExigencia ? `${x.marcaErrada} <span class="small muted">de ${x.comExigencia}</span>` : '—'}</td>
+        <td class="r">${x.comExigencia ? x.semMarca : '—'}</td>
+        <td class="r">${x.notas ? `${x.notasDiv} de ${x.notas}${x.faltas ? `<br><span class="small muted">${x.faltas} item(ns) não vieram</span>` : ''}` : '—'}</td>
+        <td class="r">${x.cobrado ? `<span class="txt-ruim">${fmtMoeda(x.cobrado)}</span>` : '—'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <p class="small muted" style="margin:6px 0 0">O tempo de resposta vai do envio (marcado quando você abre o e-mail) até a importação da planilha respondida.</p>
+  </section>`;
 }
 
 function linhasFornecedores() {
@@ -3809,15 +3931,18 @@ function linhasFornecedores() {
   const lista = db.fornecedores
     .filter(f => !q || semAcento(`${f.nome} ${f.contato} ${f.email} ${f.telefone} ${f.obs}`).includes(q))
     .sort((a, b) => a.nome.localeCompare(b.nome));
-  if (!lista.length) return `<tr><td colspan="5" class="empty">${db.fornecedores.length ? 'Nenhum fornecedor encontrado.' : 'Nenhum fornecedor cadastrado.'}</td></tr>`;
+  if (!lista.length) return `<tr><td colspan="7" class="empty">${db.fornecedores.length ? 'Nenhum fornecedor encontrado.' : 'Nenhum fornecedor cadastrado.'}</td></tr>`;
+  const notas = Object.fromEntries(desempenhoFornecedores('').map(x => [x.id, x]));
   return lista.map(f => {
     const n = db.cotacoes.filter(c => c.fornecedores.some(x => x.fornecedorId === f.id)).length;
+    const d = notas[f.id];
     return `<tr>
       <td><b>${esc(f.nome)}</b>${f.obs ? `<br><span class="small muted">${esc(f.obs)}</span>` : ''}${f.pedidoMinimo || f.frete ? `<br><span class="small">${[f.pedidoMinimo && `mínimo ${fmtMoeda(f.pedidoMinimo)}`, f.frete && `frete ${fmtMoeda(f.frete)}${f.freteGratisAcima ? ` (grátis acima de ${fmtMoeda(f.freteGratisAcima)})` : ''}`].filter(Boolean).join(' · ')}</span>` : ''}</td>
       <td>${esc(f.contato || '—')}${f.substituto ? `<br><span class="small muted">subst.: ${esc(f.substituto)}</span>` : ''}</td>
       <td>${f.email ? `<a href="mailto:${esc(f.email)}">${esc(f.email)}</a>` : '—'}</td>
       <td>${esc(f.telefone || '—')}</td>
       <td class="c">${n}</td>
+      <td class="c">${d ? `<a href="#" data-route="relatorios" class="link-nota">${badgeNota(d.nota, tituloNota(d))}</a>` : '<span class="muted">—</span>'}</td>
       <td class="actions-cell">
         <button class="sm" data-act="editarForn" data-id="${f.id}">Editar</button>
         <button class="sm danger" data-act="excluirForn" data-id="${f.id}">✕</button>
@@ -4021,7 +4146,7 @@ function renderFornecedores() {
   <section class="card">
     <input id="filtroForn" placeholder="Buscar fornecedor…" value="${esc(ui.filtroForn)}" style="margin-bottom:10px">
     <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th><th>Contato</th><th>E-mail</th><th>Telefone</th><th class="c">Cotações</th><th></th></tr></thead>
+      <thead><tr><th>Fornecedor</th><th>Contato</th><th>E-mail</th><th>Telefone</th><th class="c">Cotações</th><th class="c" title="Nota de 0 a 10 (detalhes em Relatórios)">Nota</th><th></th></tr></thead>
       <tbody id="tbForn">${linhasFornecedores()}</tbody>
     </table></div>
   </section>`;

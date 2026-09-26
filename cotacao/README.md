@@ -118,6 +118,14 @@ Modelo **COTAÇÃO GERAL DISPPAR** (o mesmo da aba PLANILHA da COTAÇÃO COMPLET
   sugere arquivar as canceladas e as finalizadas com mais de 60 dias; *Ver só as arquivadas* mostra as
   arquivadas, e **↩ Desarquivar** (na cotação) traz de volta.
 
+## Nota dos fornecedores
+
+Em **Relatórios** (respeita o período escolhido) e na lista de **Fornecedores**: nota de 0 a 10 de cada
+fornecedor, com responde às cotações (25%), responde no prazo (15%), cota os itens pedidos (20%),
+manda a marca exigida (20%; sem marca conta meio erro) e notas fiscais sem divergência (20%). O que não
+tem dados fica fora da conta. A tabela mostra também o tempo médio de resposta, marcas erradas,
+respostas sem marca, notas com divergência, itens que não vieram e o valor cobrado acima do cotado.
+
 ## Enviar os pedidos de compra por e-mail
 
 - Em *Pedidos de compra*, **✉ Enviar pedidos por e-mail** abre o envio em sequência: cada fornecedor
