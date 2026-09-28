@@ -59,10 +59,22 @@ export async function abrir(dados, { largura = 1400, altura = 1000 } = {}) {
       }),
     });
   });
+  // Dados do teste gravados ANTES de o sistema abrir, só na 1ª carga (recarregar mantém o que o sistema gravou).
+  // Antes era "abre vazio → grava → recarrega": numa máquina lenta a recarga podia perder os dados de teste.
+  if (dados) {
+    await page.addInitScript(json => {
+      try {
+        if (location.protocol !== 'file:' || sessionStorage.getItem('__dadosTeste')) return;
+        localStorage.setItem('sistemaCotacao.v1', json);
+        sessionStorage.setItem('__dadosTeste', '1');
+      } catch (e) { /* página sem acesso ao armazenamento (about:blank) */ }
+    }, JSON.stringify(dados));
+  }
   await page.goto(URL_SISTEMA);
   if (dados) {
-    await page.evaluate(d => localStorage.setItem('sistemaCotacao.v1', JSON.stringify(d)), dados);
-    await page.reload();
+    // confere que o sistema abriu com os dados do teste (erro claro em vez de "elemento não encontrado")
+    const carregou = await page.evaluate(n => db.cotacoes.length === n.c && db.produtos.length === n.p, { c: (dados.cotacoes || []).length, p: (dados.produtos || []).length });
+    if (!carregou) throw new Error('O sistema não abriu com os dados do teste: ' + JSON.stringify(await page.evaluate(() => ({ cot: db.cotacoes.length, prod: db.produtos.length, erros: window.__errosCarga || null }))));
   }
   const salvos = async () => (await page.evaluate(() => window.__salvos)).map(s => ({ nome: s.nome, buffer: Buffer.from(s.b64, 'base64') }));
   return { page, context, erros, salvos, fechar: () => context.close() };
