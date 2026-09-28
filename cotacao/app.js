@@ -133,7 +133,7 @@ try {
  * uma cotação por documento e as configurações em "sistema/*". */
 
 const LOTE = 200;
-const nuvem = { db: null, downloads: null, enviado: {}, timer: null, gravando: false, pendente: false, status: 'local' };
+const nuvem = { db: null, downloads: null, supabase: null, usuario: null, enviado: {}, timer: null, gravando: false, pendente: false, status: 'local' };
 
 function docsDoEstado() {
   const docs = {
@@ -227,17 +227,11 @@ function mostrarStatus(s) {
   el.dataset.s = s;
 }
 
-async function iniciarNuvem() {
-  if (!window.claude || typeof window.claude.use !== 'function') return;
-  const [dbx, dl] = await Promise.all([
-    window.claude.use('db').catch(() => null),
-    window.claude.use('downloads').catch(() => null),
-  ]);
-  nuvem.downloads = dl;
-  if (!dbx) return;
+/** Carrega os dados de um armazenamento na nuvem (página do Claude ou Supabase) e passa a sincronizar. */
+async function usarNuvem(adaptador) {
   mostrarStatus('carregando');
   try {
-    nuvem.db = dbx;
+    nuvem.db = adaptador;
     const remoto = await carregarNuvem();
     if (remoto) {
       db = remoto;
@@ -250,12 +244,164 @@ async function iniciarNuvem() {
     } else {
       mostrarStatus('salvo');
     }
+    return true;
   } catch (e) {
     console.error(e);
     nuvem.db = null;
     mostrarStatus('local');
     toast('Não consegui acessar os dados na nuvem. Usando os dados deste navegador.', 6000);
+    return false;
   }
+}
+
+async function iniciarNuvem() {
+  const cfg = window.COTACAO_CONFIG || {};
+  if (cfg.supabaseUrl && cfg.supabaseAnonKey) return iniciarSupabase(cfg);
+  if (!window.claude || typeof window.claude.use !== 'function') return;
+  const [dbx, dl] = await Promise.all([
+    window.claude.use('db').catch(() => null),
+    window.claude.use('downloads').catch(() => null),
+  ]);
+  nuvem.downloads = dl;
+  if (dbx) await usarNuvem(dbx);
+}
+
+/* ---------------- Supabase (site publicado na Cloudflare) ---------------- */
+
+const TABELA_SUPABASE = 'cotacao_documentos';
+
+function carregarScript(src) {
+  return new Promise((ok, falha) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = ok;
+    el.onerror = () => falha(new Error('Não consegui carregar ' + src));
+    document.head.appendChild(el);
+  });
+}
+
+function erroSupabase(error) {
+  const e = new Error(error?.message || 'Erro no Supabase');
+  e.code = /fetch|network|timeout|failed/i.test(e.message) || error?.status >= 500 ? 'unavailable' : error?.code;
+  return e;
+}
+
+/** Mesma interface do armazenamento da página do Claude: doc(caminho).set/delete e collection(col).get. */
+function adaptadorSupabase(cli) {
+  return {
+    doc: caminho => ({
+      set: async dados => {
+        const { error } = await cli.from(TABELA_SUPABASE).upsert({ caminho, dados });
+        if (error) throw erroSupabase(error);
+      },
+      delete: async () => {
+        const { error } = await cli.from(TABELA_SUPABASE).delete().eq('caminho', caminho);
+        if (error) throw erroSupabase(error);
+      },
+    }),
+    collection: col => ({
+      limit: () => ({
+        get: async () => {
+          const linhas = [];
+          for (let de = 0; ; de += 1000) {
+            const { data, error } = await cli.from(TABELA_SUPABASE).select('caminho,dados').eq('colecao', col).order('caminho').range(de, de + 999);
+            if (error) throw erroSupabase(error);
+            linhas.push(...data);
+            if (data.length < 1000) break;
+          }
+          return { docs: linhas.map(r => ({ id: r.caminho.slice(col.length + 1), exists: true, data: () => r.dados })) };
+        },
+      }),
+    }),
+  };
+}
+
+async function iniciarSupabase(cfg) {
+  mostrarStatus('carregando');
+  try {
+    if (!window.supabase) await carregarScript('vendor/supabase.min.js');
+    const cli = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+      auth: { persistSession: true, autoRefreshToken: true, storageKey: 'cotacao-disppar-auth' },
+    });
+    nuvem.supabase = cli;
+    let { data: { session } } = await cli.auth.getSession();
+    for (;;) {
+      if (!session) session = await telaLogin(cli);
+      // só entra quem estiver na lista de acesso (tabela cotacao_usuarios)
+      const { data, error } = await cli.from('cotacao_usuarios').select('email').limit(1);
+      if (!error && data.length) break;
+      await cli.auth.signOut();
+      session = null;
+      mensagemLogin(error ? `Erro ao verificar o acesso: ${error.message}` : 'Este e-mail não tem acesso ao sistema. Peça para liberar em "cotacao_usuarios".');
+    }
+    nuvem.usuario = session.user.email;
+    fecharLogin();
+    await usarNuvem(adaptadorSupabase(cli));
+    render();
+  } catch (e) {
+    console.error(e);
+    mostrarStatus('erro');
+    mensagemLogin('Não consegui conectar ao Supabase: ' + e.message);
+  }
+}
+
+/** Tela de login por cima do sistema; resolve com a sessão quando o login dá certo. */
+function telaLogin(cli) {
+  return new Promise(resolve => {
+    let tela = $('#telaLogin');
+    if (!tela) {
+      tela = document.createElement('div');
+      tela.id = 'telaLogin';
+      tela.innerHTML = `<form class="login-card" autocomplete="on">
+        <div class="login-logo">${$('.logo-marca')?.outerHTML || ''}</div>
+        <h1>Cotações ${esc(db.config.loja || 'DISPPAR')}</h1>
+        <p class="muted small">Entre com o e-mail e a senha cadastrados no Supabase.</p>
+        <label>E-mail<input name="email" type="email" required autocomplete="username"></label>
+        <label>Senha<input name="senha" type="password" required autocomplete="current-password"></label>
+        <p class="login-msg" role="alert"></p>
+        <button class="primary" type="submit">Entrar</button>
+        <button type="button" class="link" data-esqueci>Esqueci a senha</button>
+      </form>`;
+      document.body.appendChild(tela);
+    }
+    tela.hidden = false;
+    const form = tela.querySelector('form');
+    form.email.focus();
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      mensagemLogin('Entrando…', true);
+      const { data, error } = await cli.auth.signInWithPassword({ email: form.email.value.trim(), password: form.senha.value });
+      if (error) return mensagemLogin(/invalid/i.test(error.message) ? 'E-mail ou senha incorretos.' : error.message);
+      mensagemLogin('', true);
+      resolve(data.session);
+    };
+    tela.querySelector('[data-esqueci]').onclick = async () => {
+      const email = form.email.value.trim();
+      if (!email) return mensagemLogin('Digite o e-mail para receber o link de nova senha.');
+      const { error } = await cli.auth.resetPasswordForEmail(email, { redirectTo: location.origin });
+      mensagemLogin(error ? error.message : 'Se o e-mail estiver cadastrado, você vai receber um link para criar uma nova senha.', !error);
+    };
+  });
+}
+
+function mensagemLogin(texto, info = false) {
+  const el = $('#telaLogin .login-msg');
+  if (!el) return;
+  el.textContent = texto;
+  el.classList.toggle('info', info);
+}
+
+function fecharLogin() {
+  const tela = $('#telaLogin');
+  if (tela) tela.hidden = true;
+}
+
+async function sairSupabase() {
+  if (!nuvem.supabase) return;
+  if (nuvem.timer || nuvem.gravando) await sincronizar();
+  await nuvem.supabase.auth.signOut();
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* sem acesso */ }
+  location.reload();
 }
 
 /* ---------------- utilitários ---------------- */
@@ -4342,11 +4488,15 @@ function renderConfig() {
       <div class="actions"><button class="primary">Salvar configurações</button></div>
     </form>
   </section>
+  ${nuvem.supabase ? `<section class="card">
+    <div class="row-between"><h2>Conta</h2><button data-act="sairSupabase">Sair</button></div>
+    <p class="muted small" style="margin:0">Conectado como <b>${esc(nuvem.usuario || '')}</b>. Os dados ficam no Supabase e aparecem em qualquer computador em que você entrar.</p>
+  </section>` : ''}
   ${renderMarcasCfg()}
   <section class="card">
     <h2>Backup dos dados</h2>
     <p class="muted small">${nuvem.db
-      ? 'Os dados ficam salvos <b>na nuvem, junto com esta página</b>, e aparecem em qualquer computador ou celular em que você abrir o link. Mesmo assim, baixe um backup de vez em quando.'
+      ? `Os dados ficam salvos <b>na nuvem${nuvem.supabase ? ' (Supabase)' : ', junto com esta página'}</b>, e aparecem em qualquer computador em que você ${nuvem.supabase ? 'entrar' : 'abrir o link'}. Mesmo assim, baixe um backup de vez em quando.`
       : 'Os dados ficam salvos <b>somente neste navegador</b>. Faça backup com frequência e guarde o arquivo (Google Drive, pendrive…). Com o backup você também passa os dados para outro computador.'}</p>
     <div class="row">
       <button data-act="backup">⬇ Baixar backup</button>
@@ -5002,6 +5152,7 @@ const acoes = {
   },
 
   backup: () => fazerBackup(),
+  sairSupabase: () => sairSupabase(),
   adiarBackup: () => {
     const d = new Date();
     d.setDate(d.getDate() + 1);

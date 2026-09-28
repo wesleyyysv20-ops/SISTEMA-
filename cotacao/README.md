@@ -193,6 +193,13 @@ O sistema junta o programa DISPPAR (Python) e a planilha COTAÇÃO COMPLETA.xlsm
 | Dúvidas (DPR/DSS, texto para WhatsApp) | **Dúvidas**, alimentada pelo botão ❓ do comparativo; siglas das lojas em Configurações |
 | Workspace principal | **Início** com as pendências de todas as cotações |
 
+## Site publicado (Supabase + Cloudflare)
+
+O sistema também roda como site na Cloudflare Pages, com os dados no Supabase e login por e-mail e senha.
+O passo a passo está em [`../cotacao-supabase/README.md`](../cotacao-supabase/README.md), e o banco em
+[`../cotacao-supabase/schema.sql`](../cotacao-supabase/schema.sql). A configuração fica em `config.js`;
+com ela em branco, o sistema funciona como antes (dados no navegador ou na página do Claude).
+
 ## Testes automáticos
 
 Ficam em `../cotacao-testes/` e rodam sozinhos no GitHub a cada alteração. Veja o README de lá para rodar no computador.

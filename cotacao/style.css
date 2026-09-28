@@ -872,3 +872,14 @@ a.link-nota { text-decoration: none; }
 .hf-tip-tit { font-weight: 600; margin-bottom: 4px; color: var(--muted); }
 .hf-tip-linha { display: flex; align-items: center; gap: 6px; }
 .hf-tip-linha b { margin-left: auto; padding-left: 12px; font-family: var(--mono); }
+
+/* login (site publicado com Supabase) */
+#telaLogin { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: var(--bg); }
+#telaLogin[hidden] { display: none; }
+.login-card { width: min(380px, 100%); background: var(--card); border: 1px solid var(--line); border-top: 4px solid var(--accent); border-radius: var(--radius); box-shadow: var(--shadow); padding: 24px; display: grid; gap: 10px; }
+.login-card h1 { margin: 0; font-size: 20px; color: var(--primary); }
+.login-card p { margin: 0; }
+.login-logo .logo-marca { width: 84px; height: 53px; }
+.login-msg { min-height: 1.2em; color: var(--danger); font-size: 14px; }
+.login-msg.info { color: var(--muted); }
+.login-card button.link { justify-self: center; background: none; border: 0; color: var(--primary-2); cursor: pointer; }

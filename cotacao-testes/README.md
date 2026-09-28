@@ -20,6 +20,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `13-importar-varias` | várias planilhas respondidas importadas de uma vez, com resumo e arquivo com erro |
 | `14-nota-fornecedores` | nota dos fornecedores (resposta, prazo, cobertura, marca, notas fiscais) |
 | `15-repetidos-kit` | códigos repetidos (regra do KIT do DISPPAR), etiqueta KIT, vermelho na planilha |
+| `16-supabase` | site publicado: login, lista de acesso, dados salvos no Supabase (Supabase simulado) |
 
 ## Rodar
 
