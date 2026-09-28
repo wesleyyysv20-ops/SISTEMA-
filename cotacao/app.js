@@ -852,7 +852,7 @@ function preencherModelo(tpl, c, f, extra = {}) {
 /* ---------------- Excel: planilha para o fornecedor ---------------- */
 
 const XL = {
-  azul: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E79' } },
+  azul: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF253D83' } }, // azul da marca
   cinza: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } },
   amarelo: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } },
   verde: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } },

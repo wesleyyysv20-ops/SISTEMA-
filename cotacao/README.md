@@ -169,6 +169,14 @@ respostas sem marca, notas com divergência, itens que não vieram e o valor cob
 - **Copiar texto para o fornecedor** e **Divergências (Excel)** para cobrar.
 - Os pedidos mostram a situação do recebimento por loja: aguardando nota, parcial, recebido ou divergência.
 
+## Identidade visual
+
+- Logo DISPPAR redesenhada em vetor (SVG) no topo e no ícone da aba do navegador.
+- Cores da marca: azul `#253D83` (botões, links, aba ativa, títulos e cabeçalhos das planilhas de
+  comparativo, pedidos e divergências) e vermelho `#CE0704` (filete do topo e alertas do menu). No tema
+  escuro, as mesmas cores clareadas para manter a leitura.
+- A planilha enviada aos fornecedores continua no modelo COTAÇÃO GERAL DISPPAR.
+
 ## Padrão do DISPPAR e da planilha COTAÇÃO COMPLETA
 
 O sistema junta o programa DISPPAR (Python) e a planilha COTAÇÃO COMPLETA.xlsm:

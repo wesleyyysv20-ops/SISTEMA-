@@ -1,28 +1,31 @@
 :root {
-  --bg: #eef1f5;
+  --bg: #f2f4f9;
   --card: #ffffff;
-  --card-2: #f6f8fb;
-  --text: #17222f;
-  --muted: #5d6b7c;
-  --line: #dde3ea;
-  --input-line: #c6cfda;
-  --primary: #1c3553;
-  --primary-2: #2d5f93;
+  --card-2: #f5f7fc;
+  --text: #141c33;
+  --muted: #5a6480;
+  --line: #dde2ee;
+  --input-line: #c5cde0;
+  --primary: #253d83;
+  --primary-2: #2f4fa8;
   --on-primary: #ffffff;
-  --bar: #1c3553;
-  --bar-text: #d5e1ee;
-  --focus: #8db6e0;
+  --accent: #ce0704;
+  --bar: #ffffff;
+  --bar-text: #253d83;
+  --logo-azul: #253d83;
+  --logo-vermelho: #ce0704;
+  --focus: #7f96dc;
   --ok: #1a6e43;
   --ok-bg: #dff2e7;
   --warn: #8a5a00;
   --warn-bg: #fff1cf;
-  --danger: #a8261b;
-  --danger-bg: #fce9e7;
-  --blue-bg: #e2ecf8;
+  --danger: #b3140f;
+  --danger-bg: #fde8e7;
+  --blue-bg: #e6ebf8;
   --field: #fff2cc;
   --field-text: #3b2f00;
-  --hover: #f0f3f7;
-  --shadow: 0 10px 30px rgba(16, 32, 52, .16);
+  --hover: #eef1f8;
+  --shadow: 0 10px 30px rgba(20, 28, 51, .16);
   --radius: 10px;
   --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
@@ -31,58 +34,64 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #0f1620;
-    --card: #17212d;
-    --card-2: #1c2836;
-    --text: #e3e9f0;
-    --muted: #93a2b4;
-    --line: #283646;
-    --input-line: #36475a;
-    --primary: #4f8cc9;
-    --primary-2: #6aa3dc;
-    --on-primary: #0b1520;
-    --bar: #121c28;
-    --bar-text: #b8c7d8;
-    --focus: #4f8cc9;
+    --bg: #0d1222;
+    --card: #151c30;
+    --card-2: #1a2238;
+    --text: #e6eaf5;
+    --muted: #99a3bf;
+    --line: #29324c;
+    --input-line: #38425f;
+    --primary: #7b95e3;
+    --primary-2: #9bb0ee;
+    --on-primary: #0b1020;
+    --accent: #ff5a52;
+    --bar: #151c30;
+    --bar-text: #c9d3ef;
+    --logo-azul: #8ea5ea;
+    --logo-vermelho: #ff4a42;
+    --focus: #7b95e3;
     --ok: #6fd39c;
     --ok-bg: #173526;
     --warn: #f0c060;
     --warn-bg: #3a2e10;
     --danger: #f08a80;
     --danger-bg: #3d1c19;
-    --blue-bg: #1b3350;
+    --blue-bg: #1f2b4d;
     --field: #3a3312;
     --field-text: #f7e7a8;
-    --hover: #1f2c3b;
+    --hover: #1e2640;
     --shadow: 0 10px 30px rgba(0, 0, 0, .5);
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0f1620;
-  --card: #17212d;
-  --card-2: #1c2836;
-  --text: #e3e9f0;
-  --muted: #93a2b4;
-  --line: #283646;
-  --input-line: #36475a;
-  --primary: #4f8cc9;
-  --primary-2: #6aa3dc;
-  --on-primary: #0b1520;
-  --bar: #121c28;
-  --bar-text: #b8c7d8;
-  --focus: #4f8cc9;
+  --bg: #0d1222;
+  --card: #151c30;
+  --card-2: #1a2238;
+  --text: #e6eaf5;
+  --muted: #99a3bf;
+  --line: #29324c;
+  --input-line: #38425f;
+  --primary: #7b95e3;
+  --primary-2: #9bb0ee;
+  --on-primary: #0b1020;
+  --accent: #ff5a52;
+  --bar: #151c30;
+  --bar-text: #c9d3ef;
+  --logo-azul: #8ea5ea;
+  --logo-vermelho: #ff4a42;
+  --focus: #7b95e3;
   --ok: #6fd39c;
   --ok-bg: #173526;
   --warn: #f0c060;
   --warn-bg: #3a2e10;
   --danger: #f08a80;
   --danger-bg: #3d1c19;
-  --blue-bg: #1b3350;
+  --blue-bg: #1f2b4d;
   --field: #3a3312;
   --field-text: #f7e7a8;
-  --hover: #1f2c3b;
+  --hover: #1e2640;
   --shadow: 0 10px 30px rgba(0, 0, 0, .5);
 }
 
@@ -106,11 +115,16 @@ a { color: var(--primary-2); }
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 18px;
-  padding: 10px 16px;
+  padding: 8px 16px;
   background: var(--bar);
   color: var(--bar-text);
+  border-bottom: 3px solid var(--accent);
+  box-shadow: 0 1px 8px rgba(20, 28, 51, .08);
 }
-.brand { font-weight: 700; font-size: 17px; color: #fff; letter-spacing: .01em; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; color: var(--bar-text); letter-spacing: .01em; }
+.logo-marca { width: 46px; height: 29px; flex: none; }
+.logo-marca .azul { fill: var(--logo-azul); }
+.logo-marca .vermelho { fill: var(--logo-vermelho); }
 nav { display: flex; flex-wrap: wrap; gap: 4px; order: 3; width: 100%; }
 @media (min-width: 900px) { nav { order: 0; width: auto; flex: 1; } }
 nav a {
@@ -118,23 +132,25 @@ nav a {
   text-decoration: none;
   padding: 6px 10px;
   border-radius: 6px;
+  font-weight: 500;
 }
-nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
-nav a.active { background: rgba(255,255,255,.16); color: #fff; font-weight: 600; }
+nav a:hover { background: var(--hover); }
+nav a.active { background: var(--primary); color: var(--on-primary); font-weight: 600; }
 
 .status-nuvem {
   margin-left: auto;
   font-size: 12px;
   padding: 3px 9px;
   border-radius: 20px;
-  background: rgba(255,255,255,.1);
-  color: var(--bar-text);
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
   white-space: nowrap;
 }
-.status-nuvem::before { content: "●"; margin-right: 5px; color: #9fb3c8; }
-.status-nuvem[data-s="salvo"]::before { color: #6fd39c; }
-.status-nuvem[data-s="salvando"]::before, .status-nuvem[data-s="carregando"]::before { color: #f0c060; }
-.status-nuvem[data-s="erro"]::before { color: #f08a80; }
+.status-nuvem::before { content: "●"; margin-right: 5px; color: var(--muted); }
+.status-nuvem[data-s="salvo"]::before { color: var(--ok); }
+.status-nuvem[data-s="salvando"]::before, .status-nuvem[data-s="carregando"]::before { color: var(--warn); }
+.status-nuvem[data-s="erro"]::before { color: var(--danger); }
 
 main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 
@@ -145,7 +161,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px; }
   padding: 16px;
   margin-bottom: 16px;
 }
-h2 { margin: 0 0 12px; font-size: 20px; text-wrap: balance; }
+h2 { margin: 0 0 12px; font-size: 20px; text-wrap: balance; color: var(--primary); }
 h3 { margin: 0 0 12px; font-size: 16px; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
@@ -461,8 +477,9 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
   max-width: min(560px, calc(100% - 32px));
   padding: 10px 16px;
   border-radius: 8px;
-  background: #17222f;
+  background: #253d83;
   color: #fff;
+  border-left: 4px solid #ce0704;
   box-shadow: var(--shadow);
   transition: transform .25s;
   z-index: 50;
@@ -737,7 +754,7 @@ button.link { border: 0; background: none; padding: 0 3px; color: var(--primary-
 .aviso-prazo-card { border-left: 4px solid var(--warn); }
 .lista-prazo { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 6px; }
 .lista-prazo li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.nav-alerta { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #d9822b; color: #fff; font-size: 11px; font-weight: 700; text-align: center; line-height: 18px; margin-left: 2px; }
+.nav-alerta { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; text-align: center; line-height: 18px; margin-left: 2px; }
 
 /* quantidades por loja e marcas */
 .col-qtd { background: var(--blue-bg); }
@@ -796,7 +813,8 @@ button.link.small { font-size: 12px; }
 @media (max-width: 1100px) { .duvidas-grid { grid-template-columns: 1fr; } .form-duvida { grid-template-columns: repeat(3, 1fr); } }
 .texto-whats { white-space: pre-wrap; font-family: var(--mono); font-size: 13px; background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0 0; max-height: 480px; overflow: auto; }
 .btn-duvida { font-size: 14px; padding: 0 2px; }
-.nav-alerta.nav-info { background: #5b8fd1; }
+.nav-alerta.nav-info { background: var(--primary-2); }
+nav a.active .nav-alerta { box-shadow: 0 0 0 1.5px #fff; }
 .colar-codigos textarea { font-family: var(--mono); }
 
 /* início */
