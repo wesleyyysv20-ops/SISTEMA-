@@ -115,3 +115,34 @@ test('robô de publicação: sem os segredos, para com a explicação', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /SUPABASE_ACCESS_TOKEN|publicar\.json|ENOENT/);
 });
+
+test('robô de publicação: sem o token da Cloudflare, faz só o Supabase e adia o convite', async () => {
+  const { srv, estado, porta } = await servidorFalso();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'publicar-sb-'));
+  fs.mkdirSync(path.join(tmp, 'cotacao-supabase'));
+  fs.mkdirSync(path.join(tmp, 'cotacao'));
+  for (const f of ['publicar.mjs', 'schema.sql']) fs.copyFileSync(path.join(raiz, 'cotacao-supabase', f), path.join(tmp, 'cotacao-supabase', f));
+  fs.writeFileSync(path.join(tmp, 'cotacao-supabase', 'publicar.json'), JSON.stringify({ email: 'wes@loja.com' }));
+  const r = await new Promise(ok => {
+    const p = spawn(process.execPath, [path.join(tmp, 'cotacao-supabase', 'publicar.mjs')], {
+      env: { PATH: process.env.PATH, SUPABASE_ACCESS_TOKEN: 'sb-token', ESPERA_MS: '10',
+        SUPABASE_API_URL: `http://127.0.0.1:${porta}/sb`, SUPABASE_PROJETO_URL: `http://127.0.0.1:${porta}/proj` },
+    });
+    let stdout = '', stderr = '';
+    p.stdout.on('data', d => { stdout += d; });
+    p.stderr.on('data', d => { stderr += d; });
+    p.on('close', status => ok({ status, stdout, stderr }));
+  });
+  try {
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(estado.projetos.length, 1);
+    assert.match(estado.sql, /cotacao_documentos/);
+    assert.equal(estado.pages, null, 'não mexe na Cloudflare');
+    assert.deepEqual(estado.auth, { disable_signup: true });
+    assert.deepEqual(estado.convites, [], 'convite adiado');
+    assert.match(fs.readFileSync(path.join(tmp, 'cotacao', 'config.js'), 'utf8'), /supabaseAnonKey: 'anon-publica'/);
+    assert.match(r.stdout, /Convite por e-mail fica para quando o site estiver na Cloudflare/);
+  } finally {
+    srv.close();
+  }
+});

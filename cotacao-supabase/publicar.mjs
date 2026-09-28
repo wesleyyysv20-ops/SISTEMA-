@@ -25,7 +25,7 @@ const { email } = JSON.parse(fs.readFileSync(path.join(aqui, 'publicar.json'), '
 
 const falhar = msg => { console.error(`\n::error::${msg}`); process.exit(1); };
 if (!SB) falhar('Falta o segredo SUPABASE_ACCESS_TOKEN (GitHub → Settings → Secrets and variables → Actions).');
-if (!CF) falhar('Falta o segredo CLOUDFLARE_API_TOKEN (GitHub → Settings → Secrets and variables → Actions).');
+if (!CF) console.log('::warning::Sem CLOUDFLARE_API_TOKEN: faço só a parte do Supabase. Quando o token existir, rode de novo para criar o site.');
 if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || '')) falhar('publicar.json precisa ter o e-mail de login: {"email": "voce@exemplo.com"}');
 
 const esperar = ms => new Promise(r => setTimeout(r, ms));
@@ -101,35 +101,40 @@ for (let i = 0; ; i++) {
 console.log('Banco criado (tabelas, regras de acesso e e-mail liberado).');
 
 // ---------------- Cloudflare Pages: projeto novo ----------------
-console.log(`\n== Cloudflare Pages: projeto "${NOME}"`);
 let conta = process.env.CLOUDFLARE_ACCOUNT_ID;
-if (!conta) {
-  const contas = (await cloudflare('GET', '/accounts')).dados.result;
-  if (!contas.length) falhar('O token da Cloudflare não enxerga nenhuma conta. Dê a ele a permissão "Cloudflare Pages: Edit".');
-  conta = contas[0].id;
-  console.log(`Conta: ${contas[0].name}`);
+let site = '';
+if (CF) {
+  console.log(`\n== Cloudflare Pages: projeto "${NOME}"`);
+  if (!conta) {
+    const contas = (await cloudflare('GET', '/accounts')).dados.result;
+    if (!contas.length) falhar('O token da Cloudflare não enxerga nenhuma conta. Dê a ele a permissão "Cloudflare Pages: Edit".');
+    conta = contas[0].id;
+    console.log(`Conta: ${contas[0].name}`);
+  }
+  let pages = await cloudflare('GET', `/accounts/${conta}/pages/projects/${NOME}`, undefined, { aceitar: [404] });
+  if (pages.status === 404) {
+    pages = await cloudflare('POST', `/accounts/${conta}/pages/projects`, { name: NOME, production_branch: BRANCH });
+    console.log('Projeto Pages criado.');
+  } else console.log('Projeto Pages já existe. Reaproveitando.');
+  site = `https://${pages.dados.result.subdomain}`;
+  console.log(`Endereço do site: ${site}`);
 }
-let pages = await cloudflare('GET', `/accounts/${conta}/pages/projects/${NOME}`, undefined, { aceitar: [404] });
-if (pages.status === 404) {
-  pages = await cloudflare('POST', `/accounts/${conta}/pages/projects`, { name: NOME, production_branch: BRANCH });
-  console.log('Projeto Pages criado.');
-} else console.log('Projeto Pages já existe. Reaproveitando.');
-const site = `https://${pages.dados.result.subdomain}`;
-console.log(`Endereço do site: ${site}`);
 
 // ---------------- Supabase: login ----------------
-await supabase('PATCH', `/v1/projects/${ref}/config/auth`, {
-  site_url: site, uri_allow_list: `${site}/**`, disable_signup: true,
-});
-console.log('\nLogin configurado: cadastro aberto desligado, endereço do site liberado.');
+await supabase('PATCH', `/v1/projects/${ref}/config/auth`, site
+  ? { site_url: site, uri_allow_list: `${site}/**`, disable_signup: true }
+  : { disable_signup: true });
+console.log(`\nLogin configurado: cadastro aberto desligado${site ? ', endereço do site liberado' : ''}.`);
 
 const url = urlProjeto(ref);
-const convite = await fetch(`${url}/auth/v1/invite?redirect_to=${encodeURIComponent(site)}`, {
+// o convite só vai quando o site existe (o link do e-mail leva para ele)
+const convite = !site ? { ok: false, adiado: true, text: async () => '' } : await fetch(`${url}/auth/v1/invite?redirect_to=${encodeURIComponent(site)}`, {
   method: 'POST',
   headers: { apikey: servico, Authorization: `Bearer ${servico}`, 'Content-Type': 'application/json' },
   body: JSON.stringify({ email: email.toLowerCase() }),
 });
-if (convite.ok) console.log(`Convite enviado para ${email}: abra o e-mail e crie a sua senha.`);
+if (convite.adiado) console.log('Convite por e-mail fica para quando o site estiver na Cloudflare.');
+else if (convite.ok) console.log(`Convite enviado para ${email}: abra o e-mail e crie a sua senha.`);
 else {
   const t = await convite.text();
   if (/already|registered|exists/i.test(t)) console.log(`O usuário ${email} já existe: entre com a sua senha (ou use "Esqueci a senha" no site).`);
@@ -147,5 +152,5 @@ window.COTACAO_CONFIG = window.COTACAO_CONFIG || {
 };
 `);
 console.log('cotacao/config.js atualizado.');
-saida('conta', conta);
-saida('site', site);
+if (conta) saida('conta', conta);
+if (site) saida('site', site);
