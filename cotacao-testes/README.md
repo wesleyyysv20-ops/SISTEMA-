@@ -22,6 +22,19 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `15-repetidos-kit` | códigos repetidos (regra do KIT do DISPPAR), etiqueta KIT, vermelho na planilha |
 | `16-supabase` | site publicado: login, lista de acesso, dados salvos no Supabase (Supabase simulado) |
 | `17-publicar` | robô de publicação (Supabase e Cloudflare simulados): cria, configura, convida e gera o config.js; pode rodar de novo |
+| `18-marca-padrao` | nova cotação: Enter salva a marca e vai para o próximo item; Enter duas vezes grava como padrão no cadastro; sugestão de marca ao digitar; código editável só na cotação (KIT CORREIA/TENSOR) |
+| `19-busca-itens` | nova cotação: procurar na lista (código, similar, marca, descrição), incluir do cadastro o que não está na lista, cadastrar no banco o que não existe e tirar item com confirmação |
+| `20-duvida-lojas` | ❓ do comparativo: escolher a loja (uma ou as duas), quantidade e observação; Paranoá antes de São Sebastião |
+| `21-marca-recusada` | "Não, é outra marca": o preço não ganha, o item fica aguardando outro preço; desfazer e nova marca do fornecedor |
+| `22-marca-obrigatoria` | produto sem marca exigida: aviso e exclusão com confirmação, trocar marca (FREEMAX → FREMAX), bloqueio no formulário, na planilha e no DataCar |
+| `23-dois-computadores` | gravação segura: juntar versões, dois computadores ao mesmo tempo, aba fechada antes de enviar, lotes antigos viram baldes |
+| `24-ordem-fornecedores` | comparativo com os fornecedores em ordem alfabética (tela, totais e Excel), cada preço no fornecedor certo |
+| `25-kaizen-estoque` | Kaizen: "MARCA/estoque" separa marca e estoque; quando ganha, a quantidade das lojas não passa do estoque |
+| `26-recolher-fornecedores` | quadro Fornecedores da cotação recolhível: começa fechado com resumo, abre/fecha no clique ou Enter, lembra a escolha |
+| `27-coluna-fixa` | comparativo: colunas # e Produto fixas ao rolar para o lado |
+| `28-filtro-vencedor` | comparativo: "Mostrar itens de" um fornecedor (ou sem preço) para digitar só as quantidades dele |
+| `29-exportar-pedido` | exportar o pedido do fornecedor: planilhas individuais por loja (zip) ou somada entregue numa loja; marca a cotação dele como concluída e lembra a forma |
+| `30-prazo-hora-dif` | prazo de resposta com hora (vence no mesmo dia, conta na nota do fornecedor); Dif. 1º × 2º mostra o mais barato quando você escolheu outro ; alerta quando a diferença passa de 100% (possível preço errado) |
 
 ## Rodar
 

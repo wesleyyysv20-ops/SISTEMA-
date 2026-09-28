@@ -32,7 +32,7 @@ test('menor preço ganha, diferença 1º × 2º e avisos de preço fora do norma
   const vencedores = await page.locator('.tab-comp tbody tr').evaluateAll(rs => rs.slice(0, 3).map(r => r.querySelector('td.best')?.innerText.split('\n')[0].replace(/\u00a0/g, ' ')));
   assert.deepEqual(vencedores, ['R$ 140,00', 'R$ 48,00', 'R$ 5,00']);
   const difs = await page.locator('.dif-seg').allInnerTexts().then(ns);
-  assert.deepEqual(difs, ['7,1%', '8,3%', '320,0%']);
+  assert.deepEqual(difs, ['+7,1%', '+8,3%', '+320,0%']);
   const alertas = await page.locator('.alerta-preco').allInnerTexts().then(ns);
   assert.ok(alertas.includes('⚠ ↑40% vs último'), 'rolamento 40% acima do último pago');
   assert.ok(alertas.includes('⚠ muito abaixo dos outros'), 'filtro a R$ 5 muito abaixo');

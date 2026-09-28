@@ -186,7 +186,7 @@ O sistema junta o programa DISPPAR (Python) e a planilha COTAÇÃO COMPLETA.xlsm
 | Banco de Dados (DISPPAR) / aba BANCO DE DADOS | **Produtos** (importa a aba BANCO DE DADOS direto do .xlsm) |
 | Marca exigida: QUALQUER, SÓ COFAP, ALB-NAK-KAY-PERF-MONR | entendida na checagem da marca respondida (abreviações e listas com hífen) |
 | Planilhas: lote do DataCar e seleção por OBS | **Nova cotação → Abrir arquivo do DataCar**, com sugestão pela OBS (CORTAR, NÃO COTAR, OK, VERIFICAR…) |
-| Aba MONTAGEM (colar códigos e buscar no banco) | **Nova cotação → Colar lista de códigos** |
+| Aba MONTAGEM (colar códigos e buscar no banco) | **Nova cotação → Abrir arquivo do DataCar** (a colagem de códigos foi retirada) |
 | Aba PLANILHA (cotação para os fornecedores) | planilha gerada em **Criar cotação** |
 | Aba FORNECEDORES (atendente, substituto, check) | **Fornecedores** (atendente e substituto) e situação de envio/resposta na cotação |
 | Aba COMPRAS (menor preço, 2º e porcentagem) | **Comparativo** (vencedor, 2º melhor e Dif. 1º × 2º) |

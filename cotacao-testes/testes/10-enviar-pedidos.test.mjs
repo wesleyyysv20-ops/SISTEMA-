@@ -38,7 +38,7 @@ test('e-mail do pedido já vai com total e lojas de entrega; abrir marca como en
   assert.equal(url.searchParams.get('su'), 'Pedido de compra - cotação nº 0010 - Loja Teste');
   const corpo = n(url.searchParams.get('body'));
   assert.match(corpo, /2 item\(ns\), total de R\$ 500,00/);
-  assert.match(corpo, /uma aba para cada:\n- São Sebastião \(Rua 1, São Sebastião\): 1 item\(ns\), R\$ 300,00\n- Paranoá \(Quadra 2, Paranoá\): 2 item\(ns\), R\$ 200,00/);
+  assert.match(corpo, /uma aba para cada:\n- Paranoá \(Quadra 2, Paranoá\): 2 item\(ns\), R\$ 200,00\n- São Sebastião \(Rua 1, São Sebastião\): 1 item\(ns\), R\$ 300,00/);
   await page.click('.tab-lote tr.atual a:text("Gmail")');
   await page.waitForFunction(() => document.querySelector('.tab-lote tr.feito'));
   await page.click('[data-act=fecharLote]');
@@ -59,7 +59,7 @@ test('pedidos em .zip: uma planilha por fornecedor, uma aba por loja (ou lojas j
   const zip = await JSZip.loadAsync(arq.buffer);
   assert.deepEqual(Object.keys(zip.files).sort(), ['Pedido_0010_auto_mix.xlsx', 'Pedido_0010_via_pecas.xlsx']);
   const wb = await lerXlsx(await zip.file('Pedido_0010_auto_mix.xlsx').async('nodebuffer'));
-  assert.deepEqual(wb.worksheets.map(w => w.name), ['São Sebastião', 'Paranoá']);
+  assert.deepEqual(wb.worksheets.map(w => w.name), ['Paranoá', 'São Sebastião']);
   assert.equal(valor(wb.getWorksheet('Paranoá').getCell('A1')), 'PEDIDO DE COMPRA — PARANOÁ');
   const via = await lerXlsx(await zip.file('Pedido_0010_via_pecas.xlsx').async('nodebuffer'));
   assert.deepEqual(via.worksheets.map(w => w.name), ['São Sebastião'], 'só a loja que tem itens');
@@ -72,7 +72,7 @@ test('pedidos em .zip: uma planilha por fornecedor, uma aba por loja (ou lojas j
   assert.equal(wj.worksheets.length, 1);
   let cab = [];
   wj.worksheets[0].eachRow(r => { if (r.values.includes('Item')) cab = r.values.slice(1); });
-  assert.deepEqual(cab.slice(3, 6), ['QTD São Sebastião', 'QTD Paranoá', 'QTD TOTAL']);
+  assert.deepEqual(cab.slice(3, 6), ['QTD Paranoá', 'QTD São Sebastião', 'QTD TOTAL']);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

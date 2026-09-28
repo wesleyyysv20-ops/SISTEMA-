@@ -6,6 +6,6 @@
  * Deixe em branco para usar o sistema sem Supabase (dados só no navegador).
  */
 window.COTACAO_CONFIG = window.COTACAO_CONFIG || {
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://tdjfmlosdviqplizjvyd.supabase.co',
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRkamZtbG9zZHZpcXBsaXpqdnlkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA1OTcyNTEsImV4cCI6MjEwNjE3MzI1MX0.rXYiZaDziFp7dNbIK8Jnn__sjiWJv0O1EkNERlRnMxw',
 };

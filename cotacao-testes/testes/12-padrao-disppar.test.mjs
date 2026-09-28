@@ -48,7 +48,7 @@ test('DataCar: sugestão pela OBS (CORTAR, OK, VERIFICAR) e aplicar sugestões',
   await s.fechar();
 });
 
-test('colar lista de códigos (aba MONTAGEM) e importar a aba BANCO DE DADOS', async () => {
+test('importar a aba BANCO DE DADOS da planilha', async () => {
   // banco no formato da planilha COTAÇÃO COMPLETA: título na linha 1, cabeçalho na 2
   const wb = new ExcelJS.Workbook();
   wb.addWorksheet('PLANILHA').getCell('A1').value = 'outra aba';
@@ -66,13 +66,6 @@ test('colar lista de códigos (aba MONTAGEM) e importar a aba BANCO DE DADOS', a
   await page.waitForFunction(() => db.produtos.length === 2);
   assert.deepEqual(await page.evaluate(() => db.produtos.map(p => [p.codigo, p.similar, p.marca, p.descricao])), [
     ['27321/HG33036', 'ALB9144', 'SÓ NAKATA', 'AMORTECEDOR DIANTEIRO'], ['GB48167', '', 'SÓ COFAP', 'AMORTECEDOR TRASEIRO']]);
-  await irPara(page, 'nova');
-  await page.click('.colar-codigos summary');
-  await page.fill('#colarCodigos', 'CÓDIGO DO PRODUTO\n27321/HG33036\ngb48167\t1\nNOVO-9\n27321/HG33036');
-  await page.click('[data-act=colarCodigos]');
-  assert.match(n(await page.locator('.dlg p').innerText()), /2 encontrado\(s\) no banco[\s\S]*1 novo\(s\) cadastrado\(s\) sem descrição: NOVO-9[\s\S]*1 já estava/);
-  await page.click('.dlg button');
-  assert.equal(await page.locator('[data-item-linha]').count(), 3);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
@@ -86,6 +79,7 @@ test('dúvidas: do comparativo para a fila, texto no formato do WhatsApp', async
   await page.click('nav [data-route=cotacoes]');
   await page.click('[data-route=cotacao][data-id=c1]');
   await page.click('[data-act=duvidaItem][data-i="0"]');
+  await page.click('.dlg-duvida button.primary'); // as duas lojas já vêm marcadas com a quantidade da cotação
   assert.match(await page.locator('#nav a[data-route=duvidas]').innerText(), /Dúvidas\s*2/);
   await irPara(page, 'duvidas');
   await page.click('[data-act=editarDuvida] >> nth=1');
@@ -94,8 +88,8 @@ test('dúvidas: do comparativo para a fila, texto no formato do WhatsApp', async
   const texto = n(await page.locator('#textoDuvidas').innerText());
   assert.equal(texto, [
     'Segue a relação dos itens em dúvida para avaliação:',
-    '- *GP30562*\nR$ 120,50 - MONROE\n*PEDE 2 DSS ?*',
-    '- *GP30562. MARCA DIFERENTE*\nR$ 120,50 - MONROE\n*PEDE 1 DPR ?*',
+    '- *GP30562*\nR$ 120,50 - MONROE\n*PEDE 1 DPR ?*',
+    '- *GP30562. MARCA DIFERENTE*\nR$ 120,50 - MONROE\n*PEDE 2 DSS ?*',
   ].join('\n\n'));
   // item manual
   await page.selectOption('[data-form=duvida] [name=empresa]', 'N/A');

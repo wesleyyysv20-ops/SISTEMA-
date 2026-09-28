@@ -39,6 +39,7 @@ test('itens repetidos (mesmo código) aparecem no painel e dá para tirar só um
   assert.match(painel, /2527/);
   assert.match(painel, /UB152/);
   await page.click('.painel-dup [data-act=removerItem] >> nth=0');
+  await page.click('.dlg button.primary'); // confirma
   assert.equal(await page.locator('[data-item-linha]').count(), 4, 'tira só o item escolhido');
   assert.deepEqual(s.erros, []);
   await s.fechar();

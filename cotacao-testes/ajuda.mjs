@@ -41,6 +41,10 @@ export async function abrir(dados, { largura = 1400, altura = 1000 } = {}) {
   const erros = [];
   page.on('pageerror', e => erros.push(e.message));
   await page.addInitScript(() => {
+    // dados no navegador, mesmo com o config.js do site publicado preenchido (o teste do Supabase define o seu)
+    window.COTACAO_CONFIG = window.COTACAO_CONFIG || { supabaseUrl: '', supabaseAnonKey: '' };
+    // nos testes, o quadro Fornecedores da cotação começa aberto (o teste do recolher tira isto)
+    try { if (localStorage.getItem('cotacao.fornAberto') === null) localStorage.setItem('cotacao.fornAberto', '1'); } catch (e) { /* file:// sem acesso */ }
     window.__salvos = [];
     window.showSaveFilePicker = async o => ({
       name: o.suggestedName,

@@ -26,13 +26,10 @@ test('regra do DISPPAR: sufixo de KIT não esconde o código repetido', async ()
 });
 
 test('nova cotação: etiqueta KIT e aviso de KIT com peça avulsa', async () => {
-  const s = await abrir(base({ produtos }));
+  const rascunho = { titulo: '', prazoResposta: '', obs: '', fornecedorIds: [], itens: produtos.map(p => ({ produtoId: p.id, quantidade: 1 })) };
+  const s = await abrir(base({ produtos, rascunho }));
   const { page } = s;
   await irPara(page, 'nova');
-  await page.click('.colar-codigos summary');
-  await page.fill('#colarCodigos', '40123\n40123-KITCIA\nCT1234\nGB48167');
-  await page.click('[data-act=colarCodigos]');
-  await page.click('.dlg button');
   assert.equal(await page.locator('#tabItens .badge.kit, [data-item-linha] .badge.kit').count(), 2);
   const painel = n(await page.locator('.painel-dup').innerText());
   assert.match(painel, /Código em comum: 40123[\s\S]*KIT e peça avulsa com o mesmo código/);

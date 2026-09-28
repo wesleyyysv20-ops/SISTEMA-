@@ -66,7 +66,7 @@ test('quantidades por loja: totais, pedidos separados por loja e lojas juntas', 
   assert.match(await page.locator('#tot-0').innerText().then(n), /R\$ 400,00/);
   assert.match(await page.locator('#tot-4').innerText().then(n), /sem qtd/);
   const tot = await page.locator('#totalComp').innerText().then(n);
-  assert.match(tot, /5 un\.\s+R\$ 400,00\s+1 un\.\s+R\$ 100,00\s+R\$ 500,00/);
+  assert.match(tot, /1 un\.\s+R\$ 100,00\s+5 un\.\s+R\$ 400,00\s+R\$ 500,00/);
 
   const ss = await salvarDepois(s, () => page.click('[data-act=baixarPedido][data-f="0"][data-loja=sao-sebastiao]'));
   assert.equal(ss.nome, 'Pedido_0006_auto_mix_sao_sebastiao.xlsx');
@@ -81,7 +81,7 @@ test('quantidades por loja: totais, pedidos separados por loja e lojas juntas', 
   const wj = (await lerXlsx(juntas.buffer)).worksheets[0];
   const cab = [];
   wj.eachRow(r => { if (r.values.includes('Item')) cab.push(...r.values.slice(1)); });
-  assert.deepEqual(cab.slice(3, 6), ['QTD São Sebastião', 'QTD Paranoá', 'QTD TOTAL']);
+  assert.deepEqual(cab.slice(3, 6), ['QTD Paranoá', 'QTD São Sebastião', 'QTD TOTAL']);
 
   // quantidades ficam salvas
   await page.waitForTimeout(600);

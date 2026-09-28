@@ -39,8 +39,8 @@ const DEFAULT_DB = {
     marcasEquivalentes: {}, // marca pedida (normalizada) → abreviações aceitas
     marcasDiferentes: {}, // marca pedida (normalizada) → respostas que NÃO são a mesma marca
     lojas: [
-      { id: 'sao-sebastiao', nome: 'São Sebastião', sigla: 'DSS', cnpj: '', endereco: '' },
       { id: 'paranoa', nome: 'Paranoá', sigla: 'DPR', cnpj: '', endereco: '' },
+      { id: 'sao-sebastiao', nome: 'São Sebastião', sigla: 'DSS', cnpj: '', endereco: '' },
     ],
     assuntoCobranca: 'Lembrete: cotação nº {numero} - {loja}',
     corpoCobranca:
@@ -73,18 +73,59 @@ const STATUS = {
 let db = carregar();
 let versaoDados = 0; // muda a cada gravação (invalida caches)
 let cacheHist = null;
-const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', sel: null, lote: null, verArquivadas: false, conferindo: null };
+const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, enterPadrao: null, filtroItens: '', editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', sel: null, lote: null, verArquivadas: false, conferindo: null };
 
 /* ---------------- persistência ---------------- */
 
 function carregar() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return normalizar(JSON.parse(raw));
   } catch (e) {
     console.error(e);
+    // não abre vazio por cima dos dados: guarda a cópia que não deu para ler e avisa
+    try { if (raw) localStorage.setItem(STORAGE_KEY + '.nao-lida', raw); } catch (e2) { /* sem espaço */ }
+    setTimeout(() => avisar('Não consegui ler os dados guardados neste navegador. Uma cópia foi guardada à parte (nada foi apagado). Se estiver usando o Supabase, os dados vêm de lá normalmente; senão, restaure um backup em Configurações.'), 0);
   }
   return structuredClone(DEFAULT_DB);
+}
+
+/** Ordem das lojas: Paranoá primeiro. Só inverte a ordem antiga (São Sebastião, Paranoá); ordem personalizada fica. */
+function ordenarLojas(config) {
+  const l = config.lojas;
+  if (Array.isArray(l) && l.map(x => x && x.id).join() === 'sao-sebastiao,paranoa') config.lojas = [l[1], l[0]];
+  return config;
+}
+
+/*
+ * Kaizen informa a marca junto com o estoque: "NGK/685" = marca NGK, 685 no estoque.
+ * Só para a Kaizen: a marca fica "NGK" (conferida normalmente) e o estoque vira limite de quantidade.
+ */
+function ehKaizen(f) {
+  return /\bkaizen\b/.test(semAcento(f?.nome));
+}
+function separarEstoque(marca) {
+  const m = /^(.*\S)\s*\/\s*(\d+)\s*$/.exec(String(marca || ''));
+  return m ? { marca: m[1].trim(), estoque: Number(m[2]) } : null;
+}
+
+/** Separa marca e estoque nas respostas da Kaizen (e mantém as marcas já recusadas). */
+function ajustarKaizen(c) {
+  let mudou = false;
+  for (const f of c.fornecedores || []) {
+    if (!ehKaizen(f)) continue;
+    for (const [i, o] of Object.entries(f.respostas || {})) {
+      if (!o || o.estoque != null) continue;
+      const sep = separarEstoque(o.marca);
+      if (!sep) continue;
+      const rec = c.recusadas?.[i];
+      if (rec && rec[f.fornecedorId] === normMarca(o.marca)) rec[f.fornecedorId] = normMarca(sep.marca);
+      f.respostas[i] = { ...o, marca: sep.marca, estoque: sep.estoque, marcaOriginal: o.marcaOriginal || o.marca };
+      mudou = true;
+    }
+  }
+  return mudou;
 }
 
 function normalizar(d) {
@@ -92,24 +133,31 @@ function normalizar(d) {
   return {
     ...base,
     ...d,
-    config: { ...base.config, ...(d.config || {}) },
+    config: ordenarLojas({ ...base.config, ...(d.config || {}) }),
     produtos: d.produtos || [],
     fornecedores: d.fornecedores || [],
-    cotacoes: d.cotacoes || [],
+    cotacoes: (d.cotacoes || []).map(c => { ajustarKaizen(c); return c; }),
     duvidas: Array.isArray(d.duvidas) ? d.duvidas : [],
   };
 }
 
 let timerLocal = null;
+let cacheLocalOk = true; // a cópia no navegador está em dia? (falha quando passa do limite de espaço)
 
 function gravarLocal() {
   clearTimeout(timerLocal);
   timerLocal = null;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    cacheLocalOk = true;
   } catch (e) {
+    cacheLocalOk = false;
+    // sem a cópia local em dia, a lista do que falta enviar apontaria para dados velhos: descarta
+    try { localStorage.removeItem(CHAVE_PENDENTES); } catch (e2) { /* sem acesso */ }
     if (!nuvem.db) avisar('Não foi possível salvar os dados no navegador. Faça um backup em Configurações.\n\n' + e.message);
+    return;
   }
+  anotarPendentes();
 }
 
 /** Salva sem travar a digitação: grava depois de uma pequena pausa. */
@@ -121,8 +169,13 @@ function salvar() {
   agendarSincronia();
 }
 
-window.addEventListener('pagehide', () => { if (timerLocal) gravarLocal(); });
-document.addEventListener('visibilitychange', () => { if (document.hidden && timerLocal) gravarLocal(); });
+window.addEventListener('pagehide', () => { if (timerLocal) gravarLocal(); if (nuvem.timer) sincronizar(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (timerLocal) gravarLocal();
+    if (nuvem.timer) sincronizar(); // saiu da aba: envia agora, sem esperar
+  } else puxarNuvem(); // voltou: traz o que mudou em outro computador
+});
 
 try {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -132,20 +185,148 @@ try {
  * Os dados ficam em documentos: produtos e fornecedores em lotes,
  * uma cotação por documento e as configurações em "sistema/*". */
 
-const LOTE = 200;
-const nuvem = { db: null, downloads: null, supabase: null, usuario: null, enviado: {}, timer: null, gravando: false, pendente: false, status: 'local' };
+const nuvem = { db: null, downloads: null, supabase: null, usuario: null, enviado: {}, versao: {}, timer: null, gravando: false, pendente: false, status: 'local' };
 
-function docsDoEstado() {
+/*
+ * Produtos e fornecedores ficam em "baldes" fixos: cada item cai sempre no mesmo balde (pelo id).
+ * Assim, incluir ou excluir um produto regrava só o balde dele (e não todos os lotes seguintes),
+ * e duas pessoas mexendo em produtos diferentes quase nunca gravam o mesmo documento.
+ */
+const BALDES = { produtos: 64, fornecedores: 4 };
+function baldeDe(col, id) {
+  let h = 2166136261; // FNV-1a
+  for (let k = 0; k < id.length; k++) { h ^= id.charCodeAt(k); h = Math.imul(h, 16777619); }
+  return `${col}/b-${pad((h >>> 0) % BALDES[col])}`;
+}
+
+/** Documentos que representam um estado (objetos, ainda não convertidos em texto). */
+function docsDe(estado) {
   const docs = {
-    'sistema/config': db.config,
-    'sistema/extra': { rascunho: db.rascunho || null, ultimoBackup: db.ultimoBackup || null, backupAdiadoAte: db.backupAdiadoAte || null, duvidas: db.duvidas || [] },
+    'sistema/config': estado.config,
+    'sistema/extra': { rascunho: estado.rascunho || null, ultimoBackup: estado.ultimoBackup || null, backupAdiadoAte: estado.backupAdiadoAte || null, duvidas: estado.duvidas || [] },
   };
   for (const col of ['produtos', 'fornecedores']) {
-    const lista = [...db[col]].sort((a, b) => a.id.localeCompare(b.id));
-    for (let i = 0; i * LOTE < lista.length; i++) docs[`${col}/lote-${pad(i)}`] = { itens: lista.slice(i * LOTE, (i + 1) * LOTE) };
+    const baldes = {};
+    for (const x of estado[col]) (baldes[baldeDe(col, x.id)] ||= []).push(x);
+    for (const [caminho, itens] of Object.entries(baldes)) docs[caminho] = { itens: itens.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) };
   }
-  for (const c of db.cotacoes) docs[`cotacoes/${c.id}`] = c;
-  return Object.fromEntries(Object.entries(docs).map(([k, v]) => [k, JSON.stringify(v)]));
+  for (const c of estado.cotacoes) docs[`cotacoes/${c.id}`] = c;
+  return docs;
+}
+
+function docsDoEstado() {
+  return Object.fromEntries(Object.entries(docsDe(db)).map(([k, v]) => [k, JSON.stringify(v)]));
+}
+
+/* ---------- juntar alterações feitas em dois lugares (este navegador e outro computador) ---------- */
+
+/** Texto estável de um valor (chaves em ordem), para comparar sem depender da ordem das chaves. */
+function chaveEstavel(v) {
+  if (v === undefined) return 'undefined';
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(chaveEstavel).join(',') + ']';
+  return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + chaveEstavel(v[k])).join(',') + '}';
+}
+
+/** Junta listas de itens {id}: o que este navegador mudou vale; o resto vem do outro lado. */
+function mesclarItens(base = [], local = [], remoto = []) {
+  const B = new Map(base.map(x => [x.id, chaveEstavel(x)]));
+  const L = new Map(local.map(x => [x.id, x]));
+  const R = new Map(remoto.map(x => [x.id, x]));
+  const saida = [];
+  for (const id of new Set([...B.keys(), ...L.keys(), ...R.keys()])) {
+    const l = L.get(id), r = R.get(id);
+    const mudouAqui = (l === undefined ? undefined : chaveEstavel(l)) !== B.get(id);
+    if (mudouAqui) { if (l !== undefined) saida.push(l); } // alterado ou excluído aqui
+    else if (r !== undefined) saida.push(r); // sem mudança aqui: vale o outro lado (inclusive exclusão)
+  }
+  return saida;
+}
+
+/** Junta objetos campo a campo: campo que este navegador mudou vale; o resto vem do outro lado. */
+function mesclarObjeto(base = {}, local = {}, remoto = {}) {
+  const saida = {};
+  for (const k of new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remoto)])) {
+    const v = chaveEstavel(local[k]) !== chaveEstavel(base[k]) ? local[k] : remoto[k];
+    if (v !== undefined) saida[k] = v;
+  }
+  return saida;
+}
+
+/** Junta um documento (undefined = não existe). */
+function mesclarDoc(caminho, base, local, remoto) {
+  const col = caminho.split('/')[0];
+  if (col === 'produtos' || col === 'fornecedores') {
+    const itens = mesclarItens(base?.itens, local?.itens, remoto?.itens);
+    return itens.length ? { itens } : undefined;
+  }
+  const mudouAqui = chaveEstavel(local) !== chaveEstavel(base);
+  const mudouLa = chaveEstavel(remoto) !== chaveEstavel(base);
+  if (!mudouAqui) return remoto;
+  if (!mudouLa) return local;
+  // os dois mudaram: excluído de um lado e alterado do outro fica o alterado (não perde nada)
+  if (local === undefined) return remoto;
+  if (remoto === undefined) return local;
+  return mesclarObjeto(base, local, remoto);
+}
+
+/** Põe no estado atual (db) o valor juntado de um documento. */
+function aplicarDoc(caminho, valor, antes = []) {
+  const [col, id] = caminho.split(/\/(.*)/s);
+  if (col === 'produtos' || col === 'fornecedores') {
+    // tira os itens que este documento tinha (em qualquer versão) e põe os juntados
+    const ids = new Set([...antes.flatMap(d => (d?.itens || []).map(x => x.id)), ...(valor?.itens || []).map(x => x.id)]);
+    db[col] = db[col].filter(x => !ids.has(x.id)).concat(structuredClone(valor?.itens || []));
+  } else if (col === 'cotacoes') {
+    const i = db.cotacoes.findIndex(c => c.id === id);
+    const cot = valor === undefined ? undefined : structuredClone(valor);
+    if (cot) ajustarKaizen(cot);
+    if (cot === undefined) { if (i >= 0) db.cotacoes.splice(i, 1); } else if (i >= 0) db.cotacoes[i] = cot;
+    else db.cotacoes.push(cot);
+  } else if (caminho === 'sistema/config') {
+    db.config = ordenarLojas({ ...structuredClone(DEFAULT_DB.config), ...structuredClone(valor || {}) });
+  } else if (caminho === 'sistema/extra') {
+    const v = structuredClone(valor || {});
+    Object.assign(db, { rascunho: v.rascunho || null, ultimoBackup: v.ultimoBackup || null, backupAdiadoAte: v.backupAdiadoAte || null, duvidas: v.duvidas || [] });
+  }
+}
+
+/** Busca a versão do Supabase de um documento e junta com o que este navegador tem. */
+async function juntarComRemoto(caminho, remotoLido) {
+  const rem = remotoLido || await nuvem.db.doc(caminho).get();
+  const base = nuvem.enviado[caminho] != null ? JSON.parse(nuvem.enviado[caminho]) : undefined;
+  const localJson = docsDoEstado()[caminho];
+  const local = localJson != null ? JSON.parse(localJson) : undefined;
+  const remoto = rem.existe ? rem.dados : undefined;
+  aplicarDoc(caminho, mesclarDoc(caminho, base, local, remoto), [base, local, remoto]);
+  if (rem.existe) { nuvem.enviado[caminho] = JSON.stringify(rem.dados); nuvem.versao[caminho] = rem.versao; }
+  else { delete nuvem.enviado[caminho]; delete nuvem.versao[caminho]; }
+  cacheBusca = null;
+  versaoDados++;
+}
+
+/* ---------- o que ainda não foi para a nuvem (sobrevive a fechar a aba) ---------- */
+
+const CHAVE_PENDENTES = 'sistemaCotacao.pendentes';
+
+/** Guarda, para cada documento alterado e ainda não enviado, a versão da nuvem em que ele se baseou. */
+function anotarPendentes() {
+  if (!nuvem.db) return;
+  try {
+    if (!cacheLocalOk) { localStorage.removeItem(CHAVE_PENDENTES); return; }
+    const atual = docsDoEstado();
+    const pend = JSON.parse(localStorage.getItem(CHAVE_PENDENTES) || '{}');
+    for (const caminho of new Set([...Object.keys(atual), ...Object.keys(nuvem.enviado)])) {
+      if (atual[caminho] === nuvem.enviado[caminho]) delete pend[caminho];
+      else if (!(caminho in pend)) pend[caminho] = nuvem.enviado[caminho] ?? null;
+    }
+    if (Object.keys(pend).length) localStorage.setItem(CHAVE_PENDENTES, JSON.stringify(pend));
+    else localStorage.removeItem(CHAVE_PENDENTES);
+  } catch (e) { /* cópia local é opcional */ }
+}
+
+function lerPendentes() {
+  try { return JSON.parse(localStorage.getItem(CHAVE_PENDENTES) || 'null'); } catch (e) { return null; }
 }
 
 function agendarSincronia() {
@@ -156,22 +337,38 @@ function agendarSincronia() {
 
 async function sincronizar() {
   if (!nuvem.db) return;
+  clearTimeout(nuvem.timer);
+  nuvem.timer = null;
   if (nuvem.gravando) { nuvem.pendente = true; return; }
   nuvem.gravando = true;
   mostrarStatus('salvando');
+  let juntou = false;
   try {
-    const atual = docsDoEstado();
-    for (const [path, json] of Object.entries(atual)) {
-      if (nuvem.enviado[path] === json) continue;
-      await comRetentativa(() => nuvem.db.doc(path).set(JSON.parse(json)));
-      nuvem.enviado[path] = json;
+    for (let rodada = 0; ; rodada++) {
+      const atual = docsDoEstado();
+      const conflitos = [];
+      for (const [caminho, json] of Object.entries(atual)) {
+        if (nuvem.enviado[caminho] === json) continue;
+        const r = await comRetentativa(() => gravarDoc(caminho, JSON.parse(json)));
+        if (r.ok) { nuvem.enviado[caminho] = json; if (r.versao) nuvem.versao[caminho] = r.versao; } else conflitos.push(caminho);
+      }
+      for (const caminho of Object.keys(nuvem.enviado)) {
+        if (caminho in atual) continue;
+        const r = await comRetentativa(() => apagarDoc(caminho));
+        if (r.ok) { delete nuvem.enviado[caminho]; delete nuvem.versao[caminho]; } else conflitos.push(caminho);
+      }
+      if (!conflitos.length) break;
+      // alguém gravou antes (outro computador ou aba): junta as duas versões e grava de novo
+      if (rodada >= 4) throw new Error('Os dados estão sendo alterados em outro lugar ao mesmo tempo. Tente de novo.');
+      for (const caminho of conflitos) await juntarComRemoto(caminho);
+      juntou = true;
     }
-    for (const path of Object.keys(nuvem.enviado)) {
-      if (path in atual) continue;
-      await comRetentativa(() => nuvem.db.doc(path).delete());
-      delete nuvem.enviado[path];
-    }
+    anotarPendentes();
     mostrarStatus('salvo');
+    if (juntou) {
+      renderSeguro();
+      toast('Havia alterações feitas em outro computador ou aba: juntei com as suas, nada foi perdido.', 6000);
+    }
   } catch (e) {
     console.error(e);
     mostrarStatus('erro');
@@ -183,6 +380,54 @@ async function sincronizar() {
     if (nuvem.pendente) { nuvem.pendente = false; agendarSincronia(); }
   }
 }
+
+/** Grava um documento só se ninguém o alterou desde a versão que temos ({ ok:false } = conflito). */
+async function gravarDoc(caminho, dados) {
+  const d = nuvem.db.doc(caminho);
+  if (!d.gravar) { await d.set(dados); return { ok: true }; }
+  return d.gravar(dados, nuvem.versao[caminho]);
+}
+
+async function apagarDoc(caminho) {
+  const d = nuvem.db.doc(caminho);
+  if (!d.apagar) { await d.delete(); return { ok: true }; }
+  return d.apagar(nuvem.versao[caminho]);
+}
+
+/**
+ * Traz as alterações feitas em outro computador (ao voltar para a aba e a cada minuto).
+ * Não mexe na tela enquanto a pessoa está digitando: tenta de novo depois.
+ */
+async function puxarNuvem() {
+  if (!nuvem.db?.versoes || nuvem.gravando || nuvem.timer || document.hidden) return;
+  try {
+    const remotas = await nuvem.db.versoes();
+    const mudaram = Object.keys(remotas).filter(c => remotas[c] !== nuvem.versao[c]);
+    const sumiram = Object.keys(nuvem.versao).filter(c => !(c in remotas));
+    if (!mudaram.length && !sumiram.length) return;
+    if (nuvem.gravando || nuvem.timer) return; // começou a salvar: o salvamento junta
+    const lidos = mudaram.length ? await nuvem.db.buscar(mudaram) : {};
+    for (const c of mudaram) await juntarComRemoto(c, lidos[c] || { existe: false });
+    for (const c of sumiram) await juntarComRemoto(c, { existe: false });
+    renderSeguro();
+    if (docsMudaramAqui()) agendarSincronia();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+const docsMudaramAqui = () => { const a = docsDoEstado(); return Object.keys(a).some(c => a[c] !== nuvem.enviado[c]) || Object.keys(nuvem.enviado).some(c => !(c in a)); };
+
+/** Redesenha sem atrapalhar quem está digitando num campo (redesenha quando sair do campo). */
+function renderSeguro() {
+  const ativo = document.activeElement;
+  if (ativo && ativo.matches?.('input, textarea, select') && !ativo.closest('#telaLogin') && $('#app')?.contains(ativo)) {
+    ativo.addEventListener('blur', () => setTimeout(render, 0), { once: true });
+  } else if (!document.querySelector('.dlg-fundo')) render();
+}
+
+setInterval(puxarNuvem, 60000);
+window.addEventListener('focus', () => puxarNuvem());
 
 async function comRetentativa(fn) {
   for (let tent = 0; ; tent++) {
@@ -199,11 +444,17 @@ async function comRetentativa(fn) {
 }
 
 async function carregarNuvem() {
-  const ler = async col => (await nuvem.db.collection(col).limit(1000).get()).docs.filter(d => d.exists).map(d => [`${col}/${d.id}`, d.data()]);
+  const ler = async col => (await nuvem.db.collection(col).limit(1000).get()).docs.filter(d => d.exists).map(d => [`${col}/${d.id}`, d.data(), d.versao]);
   const [sis, prods, forns, cots] = await Promise.all(['sistema', 'produtos', 'fornecedores', 'cotacoes'].map(ler));
   const todos = [...sis, ...prods, ...forns, ...cots];
   if (!todos.length) return null;
-  for (const [path, data] of todos) nuvem.enviado[path] = JSON.stringify(data);
+  for (const [path, data, versao] of todos) {
+    nuvem.enviado[path] = JSON.stringify(data);
+    if (versao) nuvem.versao[path] = versao;
+  }
+  // mesmo item em dois documentos (lotes antigos + baldes novos): fica um só (os baldes vêm primeiro)
+  const semRepetir = lista => { const vistos = new Set(); return lista.filter(x => x && !vistos.has(x.id) && vistos.add(x.id)); };
+  const emOrdem = docs => [...docs].sort((a, b) => (a[0].includes('/b-') ? 0 : 1) - (b[0].includes('/b-') ? 0 : 1));
   // Os documentos chegam congelados (somente leitura): trabalhamos sempre com cópias.
   const mapa = structuredClone(Object.fromEntries(sis));
   return normalizar({
@@ -212,8 +463,8 @@ async function carregarNuvem() {
     duvidas: mapa['sistema/extra']?.duvidas || [],
     ultimoBackup: mapa['sistema/extra']?.ultimoBackup || null,
     backupAdiadoAte: mapa['sistema/extra']?.backupAdiadoAte || null,
-    produtos: structuredClone(prods.flatMap(([, d]) => d.itens || [])),
-    fornecedores: structuredClone(forns.flatMap(([, d]) => d.itens || [])),
+    produtos: structuredClone(semRepetir(emOrdem(prods).flatMap(([, d]) => d.itens || []))),
+    fornecedores: structuredClone(semRepetir(emOrdem(forns).flatMap(([, d]) => d.itens || []))),
     cotacoes: cots.map(([, d]) => structuredClone(d)),
   });
 }
@@ -232,10 +483,23 @@ async function usarNuvem(adaptador) {
   mostrarStatus('carregando');
   try {
     nuvem.db = adaptador;
+    const copiaLocal = db;
+    const pendentes = lerPendentes();
     const remoto = await carregarNuvem();
     if (remoto) {
       db = remoto;
       cacheBusca = null;
+      if (pendentes && Object.keys(pendentes).length) {
+        // alterações que não chegaram a ir para a nuvem (a aba foi fechada antes): junta com o que está lá
+        const locais = Object.fromEntries(Object.entries(docsDe(copiaLocal)).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))]));
+        for (const [caminho, baseJson] of Object.entries(pendentes)) {
+          const base = baseJson != null ? JSON.parse(baseJson) : undefined;
+          const remotoDoc = nuvem.enviado[caminho] != null ? JSON.parse(nuvem.enviado[caminho]) : undefined;
+          aplicarDoc(caminho, mesclarDoc(caminho, base, locais[caminho], remotoDoc), [base, locais[caminho], remotoDoc]);
+        }
+        versaoDados++;
+        agendarSincronia();
+      }
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) { /* cache opcional */ }
       render();
       mostrarStatus('salvo');
@@ -288,28 +552,74 @@ function erroSupabase(error) {
 
 /** Mesma interface do armazenamento da página do Claude: doc(caminho).set/delete e collection(col).get. */
 function adaptadorSupabase(cli) {
+  const T = () => cli.from(TABELA_SUPABASE);
+  const ler = async caminho => {
+    const { data, error } = await T().select('caminho,dados,atualizado_em').eq('caminho', caminho).limit(1);
+    if (error) throw erroSupabase(error);
+    return data.length ? { existe: true, dados: data[0].dados, versao: data[0].atualizado_em } : { existe: false };
+  };
   return {
     doc: caminho => ({
       set: async dados => {
-        const { error } = await cli.from(TABELA_SUPABASE).upsert({ caminho, dados });
+        const { error } = await T().upsert({ caminho, dados });
         if (error) throw erroSupabase(error);
       },
       delete: async () => {
-        const { error } = await cli.from(TABELA_SUPABASE).delete().eq('caminho', caminho);
+        const { error } = await T().delete().eq('caminho', caminho);
         if (error) throw erroSupabase(error);
       },
+      get: () => ler(caminho),
+      /** Grava só se o documento ainda estiver na versão que conhecemos (senão: conflito). */
+      gravar: async (dados, versao) => {
+        if (versao) {
+          const { data, error } = await T().update({ dados }).eq('caminho', caminho).eq('atualizado_em', versao).select('atualizado_em');
+          if (error) throw erroSupabase(error);
+          return data.length ? { ok: true, versao: data[0].atualizado_em } : { ok: false };
+        }
+        const { data, error } = await T().insert({ caminho, dados }).select('atualizado_em');
+        if (error) { if (error.code === '23505') return { ok: false }; throw erroSupabase(error); }
+        return { ok: true, versao: data[0]?.atualizado_em };
+      },
+      apagar: async versao => {
+        let q = T().delete().eq('caminho', caminho);
+        if (versao) q = q.eq('atualizado_em', versao);
+        const { data, error } = await q.select('caminho');
+        if (error) throw erroSupabase(error);
+        if (data.length) return { ok: true };
+        return (await ler(caminho)).existe ? { ok: false } : { ok: true }; // já não existia: tudo certo
+      },
     }),
+    /** Versão (atualizado_em) de todos os documentos, sem os dados: para ver o que mudou. */
+    versoes: async () => {
+      const mapa = {};
+      for (let de = 0; ; de += 1000) {
+        const { data, error } = await T().select('caminho,atualizado_em').order('caminho').range(de, de + 999);
+        if (error) throw erroSupabase(error);
+        for (const r of data) mapa[r.caminho] = r.atualizado_em;
+        if (data.length < 1000) break;
+      }
+      return mapa;
+    },
+    buscar: async caminhos => {
+      const saida = {};
+      for (let k = 0; k < caminhos.length; k += 50) {
+        const { data, error } = await T().select('caminho,dados,atualizado_em').in('caminho', caminhos.slice(k, k + 50));
+        if (error) throw erroSupabase(error);
+        for (const r of data) saida[r.caminho] = { existe: true, dados: r.dados, versao: r.atualizado_em };
+      }
+      return saida;
+    },
     collection: col => ({
       limit: () => ({
         get: async () => {
           const linhas = [];
           for (let de = 0; ; de += 1000) {
-            const { data, error } = await cli.from(TABELA_SUPABASE).select('caminho,dados').eq('colecao', col).order('caminho').range(de, de + 999);
+            const { data, error } = await cli.from(TABELA_SUPABASE).select('caminho,dados,atualizado_em').eq('colecao', col).order('caminho').range(de, de + 999);
             if (error) throw erroSupabase(error);
             linhas.push(...data);
             if (data.length < 1000) break;
           }
-          return { docs: linhas.map(r => ({ id: r.caminho.slice(col.length + 1), exists: true, data: () => r.dados })) };
+          return { docs: linhas.map(r => ({ id: r.caminho.slice(col.length + 1), exists: true, data: () => r.dados, versao: r.atualizado_em })) };
         },
       }),
     }),
@@ -438,7 +748,7 @@ async function sairSupabase() {
   if (!nuvem.supabase) return;
   if (nuvem.timer || nuvem.gravando) await sincronizar();
   await nuvem.supabase.auth.signOut();
-  try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* sem acesso */ }
+  try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(CHAVE_PENDENTES); } catch (e) { /* sem acesso */ }
   location.reload();
 }
 
@@ -801,6 +1111,7 @@ function chipMarca(l, j, o) {
   const st = l.marcas[j];
   const m = o?.marca || '';
   const at = `data-act="marcaResposta" data-i="${l.i}" data-f="${j}"`;
+  if (l.recusas?.[j]) return `<span class="chip-marca recusada" ${at} title="Você recusou esta marca (pedida: ${esc(l.it.marca)}). Este preço não entra. Clique para desfazer.">✗ ${esc(m)} — marca recusada</span>`;
   if (st === 'errada') return `<span class="chip-marca errada" ${at} title="Pedida: ${esc(l.it.marca)}. Clique para confirmar ou corrigir.">⚠ ${esc(m)} ≠ ${esc(l.it.marca)}</span>`;
   if (st === 'duvida') return `<span class="chip-marca duvida" ${at} title="Pode ser abreviação de ${esc(l.it.marca)}. Clique para confirmar.">? ${esc(m)} — confira</span>`;
   if (st === 'abrev') return `<span class="chip-marca ok" ${at} title="Reconhecida como ${esc(l.it.marca)}">✓ ${esc(m)}</span>`;
@@ -860,6 +1171,32 @@ function qtdItem(c, i, porLoja = temQtdLojas(c)) {
 }
 
 /**
+ * Marca recusada ("Não, é outra marca") num item: c.recusadas[i][fornecedorId] = marca recusada (normalizada).
+ * Vale enquanto o fornecedor mantiver essa marca; se ele mandar outra marca, a recusa cai sozinha.
+ */
+function recusada(c, i, f) {
+  const m = c.recusadas?.[i]?.[f.fornecedorId];
+  return m != null && m === normMarca(f.respostas?.[i]?.marca);
+}
+
+function recusarMarca(c, i, f) {
+  const alvo = normMarca(f.respostas?.[i]?.marca);
+  c.recusadas = { ...(c.recusadas || {}) };
+  const r = { ...(c.recusadas[i] || {}) };
+  // a mesma marca de outro fornecedor, no mesmo item, também está errada
+  for (const g of c.fornecedores) if (normMarca(g.respostas?.[i]?.marca) === alvo) r[g.fornecedorId] = alvo;
+  c.recusadas[i] = r;
+  if (c.escolhas?.[i] && r[c.escolhas[i]] != null) { c.escolhas = { ...c.escolhas }; delete c.escolhas[i]; }
+}
+
+function desfazerRecusa(c, i, f) {
+  if (!c.recusadas?.[i]?.[f.fornecedorId]) return;
+  c.recusadas = { ...c.recusadas, [i]: { ...c.recusadas[i] } };
+  delete c.recusadas[i][f.fornecedorId];
+  if (!Object.keys(c.recusadas[i]).length) delete c.recusadas[i];
+}
+
+/**
  * Monta o comparativo de preços de uma cotação.
  * O vencedor de cada item é o menor preço, a não ser que a pessoa tenha escolhido outro fornecedor
  * (c.escolhas[i] = fornecedorId). l.preco é o preço do vencedor; l.min continua sendo o menor preço.
@@ -872,28 +1209,37 @@ function comparar(c) {
       return p != null && p > 0 ? p : null;
     });
     const marcas = c.fornecedores.map(f => statusMarca(it.marca, f.respostas?.[i]?.marca));
+    // marca recusada por você: esse preço não ganha nunca (o item espera outro preço)
+    const recusas = c.fornecedores.map(f => recusada(c, i, f));
     // preço com marca diferente da pedida não ganha sozinho (a não ser que só haja esses)
-    let aptos = precos;
+    let aptos = precos.map((p, j) => (recusas[j] ? null : p));
     if (db.config.marcaErradaNaoGanha !== false) {
-      const filtrados = precos.map((p, j) => (marcas[j] === 'errada' ? null : p));
+      const filtrados = aptos.map((p, j) => (marcas[j] === 'errada' ? null : p));
       if (filtrados.some(p => p != null)) aptos = filtrados;
     }
-    const validos = aptos.filter(p => p != null);
-    const min = validos.length ? Math.min(...validos) : null;
-    let vencedor = min == null ? -1 : aptos.indexOf(min);
+    // classificação: menor preço; no empate (mesmo valor em centavos), quem respondeu primeiro
+    const chegada = j => { const t = Date.parse(c.fornecedores[j].respondidoEm || ''); return Number.isNaN(t) ? Infinity : t; };
+    const ordem = aptos.map((p, j) => [p, j]).filter(([p]) => p != null)
+      .sort((x, y) => Math.round(x[0] * 100) - Math.round(y[0] * 100) || chegada(x[1]) - chegada(y[1]) || x[1] - y[1]);
+    const min = ordem.length ? ordem[0][0] : null;
+    const minIdx = ordem.length ? ordem[0][1] : -1; // quem ganharia sozinho (menor preço; empate: respondeu primeiro)
+    let vencedor = minIdx;
     let manual = false;
     const escolhido = c.escolhas?.[i];
     if (escolhido) {
       const j = c.fornecedores.findIndex(f => f.fornecedorId === escolhido);
-      if (j >= 0 && precos[j] != null) { vencedor = j; manual = precos[j] !== min; }
+      if (j >= 0 && precos[j] != null && !recusas[j]) { vencedor = j; manual = precos[j] !== min; }
     }
+    // só tinha preço com marca recusada: aguardando o próximo valor
+    const aguardando = vencedor < 0 && recusas.some((r, j) => r && precos[j] != null);
     const preco = vencedor >= 0 ? precos[vencedor] : null;
-    // segundo melhor preço (de outro fornecedor) e a diferença em % para o melhor
-    const ordem = aptos.map((p, j) => [p, j]).filter(([p]) => p != null).sort((x, y) => x[0] - y[0]);
+    // segundo colocado (de outro fornecedor) e a diferença em % para o melhor
     const [seg, segIdx] = ordem.length > 1 ? ordem[1] : [null, -1];
     const difSegundo = seg != null && min > 0 ? seg / min - 1 : null;
     const q = qtdItem(c, i, porLoja);
-    return { it, i, q, precos, marcas, min, vencedor, preco, manual, segundo: seg, segundoIdx: segIdx, difSegundo };
+    // estoque informado pelo vencedor (Kaizen: "MARCA/estoque"): limite de quantidade
+    const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
+    return { it, i, q, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -1025,7 +1371,7 @@ function preencherModelo(tpl, c, f, extra = {}) {
     comprador: cfg.comprador,
     telefone: cfg.telefone,
     email: cfg.email,
-    prazo: c.prazoResposta ? fmtData(c.prazoResposta) : 'o prazo combinado',
+    prazo: c.prazoResposta ? textoDataPrazo(c) : 'o prazo combinado',
     titulo: c.titulo || '',
   };
   return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] || '' : m))
@@ -1254,6 +1600,7 @@ function aplicarResposta(c, fi, ws, meta) {
 
   const f = c.fornecedores[fi];
   f.respostas = respostas;
+  ajustarKaizen(c);
   f.cond = condicoes;
   f.respondidoEm = new Date().toISOString();
   salvar();
@@ -1365,7 +1712,8 @@ async function exportarComparativo(c) {
   const ws = wb.addWorksheet('Comparativo', { pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   const nf = c.fornecedores.length;
   const LJ = lojas();
-  const cab = ['Item', 'Código', 'Descrição', 'Unid.', 'Qtd.', ...c.fornecedores.map(f => f.nome), 'Preço escolhido', 'Fornecedor', 'Total', '2º melhor preço', 'Dif. 1º × 2º', ...LJ.map(l => 'Qtd. ' + l.nome)];
+  const ordem = ordemFornecedores(c);
+  const cab = ['Item', 'Código', 'Descrição', 'Unid.', 'Qtd.', ...ordem.map(j => c.fornecedores[j].nome), 'Preço escolhido', 'Fornecedor', 'Total', '2º melhor preço', 'Dif. 1º × 2º', ...LJ.map(l => 'Qtd. ' + l.nome)];
   ws.columns = [6, 14, 44, 8, 10, ...c.fornecedores.map(() => 18), 16, 24, 18, 16, 12, ...LJ.map(() => 14)].map(width => ({ width }));
 
   ws.mergeCells(1, 1, 1, cab.length);
@@ -1387,17 +1735,17 @@ async function exportarComparativo(c) {
     const row = ws.getRow(4 + k);
     row.values = [
       k + 1, l.it.codigo || '', l.it.descricao, l.it.unidade || '', l.q,
-      ...l.precos.map(p => p ?? ''),
+      ...ordem.map(j => l.precos[j] ?? ''),
       l.preco ?? '', l.vencedor >= 0 ? c.fornecedores[l.vencedor].nome + (l.manual ? ' (escolhido)' : '') : 'sem preço',
       l.preco != null ? l.preco * l.q : '',
       l.segundo ?? '', l.difSegundo ?? '',
       ...LJ.map(lj => qtdLoja(c, l.i, lj.id) || ''),
     ];
     for (let col = 1; col <= cab.length; col++) row.getCell(col).border = XL.borda;
-    for (let j = 0; j < nf; j++) {
-      const cell = row.getCell(6 + j);
+    for (let k = 0; k < nf; k++) {
+      const cell = row.getCell(6 + k);
       cell.numFmt = XL.moeda;
-      if (j === l.vencedor) { cell.fill = XL.verde; cell.font = { bold: true, color: { argb: 'FF1E7B4A' } }; }
+      if (ordem[k] === l.vencedor) { cell.fill = XL.verde; cell.font = { bold: true, color: { argb: 'FF1E7B4A' } }; }
     }
     row.getCell(6 + nf).numFmt = XL.moeda;
     row.getCell(8 + nf).numFmt = XL.moeda;
@@ -1463,23 +1811,24 @@ const colLetra = n => { let s = ''; for (; n > 0; n = Math.floor((n - 1) / 26)) 
  * `loja`: pedido só daquela loja (endereço de entrega dela). Sem loja e com quantidades por loja,
  * o pedido traz uma coluna de quantidade para cada loja.
  */
-function abaPedido(wb, c, ped, nomeAba, loja = null) {
-  const cfg = db.config;
-  const { f, itens } = ped;
+function abaPedido(wb, c, ped, nomeAba, loja = null, { somada = false } = {}) {
+  // formato combinado com a loja: título, tabela direto (sem bloco de dados), itens em ordem de descrição
+  const { f } = ped;
+  const itens = [...ped.itens].sort((a, b) => COLLATOR.compare(a.it.descricao || '', b.it.descricao || ''));
   const LJ = lojas();
   const colunasLoja = !loja && ped.porLoja;
   const cols = [
-    { h: 'Item', v: (x, k) => k + 1, centro: true },
-    { h: 'Código', v: x => x.it.codigo || '' },
-    { h: 'Similar', v: x => x.it.similar || '' },
+    { h: 'Item', v: (x, k) => k + 1, centro: true, larg: 5.1 },
+    { h: 'Código', v: x => x.it.codigo || '', larg: 18 },
+    { h: 'Similar', v: x => x.it.similar || '', larg: 15.1 },
     ...(colunasLoja
-      ? LJ.map(lj => ({ h: 'QTD ' + lj.nome, v: x => x.qtds[lj.id] || '', centro: true }))
+      ? LJ.map(lj => ({ h: 'QTD ' + lj.nome, v: x => x.qtds[lj.id] || '', centro: true, larg: 9 }))
       : []),
-    { h: colunasLoja ? 'QTD TOTAL' : 'QTD', v: x => x.qtd, centro: true, qtd: true },
-    { h: 'Marca', v: x => x.marca },
-    { h: 'Descrição', v: x => x.it.descricao },
-    { h: 'Valor unit.', v: x => x.preco, moeda: true, preco: true, min: 13 },
-    { h: 'Total', total: true, moeda: true, min: 14 },
+    { h: colunasLoja ? 'QTD TOTAL' : 'QTD', v: x => x.qtd, centro: true, qtd: true, larg: colunasLoja ? 7 : 4.7 },
+    { h: 'Marca', v: x => x.marca, larg: 10.7 },
+    { h: 'Descrição', v: x => x.it.descricao, larg: 31.6, quebra: true },
+    { h: 'Valor unit.', v: x => x.preco, moeda: true, preco: true, larg: 10.3 },
+    { h: 'Total', total: true, moeda: true, larg: 12.7 },
   ];
   const N = cols.length;
   const ULT = colLetra(N);
@@ -1490,58 +1839,13 @@ function abaPedido(wb, c, ped, nomeAba, loja = null) {
   });
   ws.mergeCells(`A1:${ULT}1`);
   const titulo = ws.getCell('A1');
-  titulo.value = loja ? `PEDIDO DE COMPRA — ${loja.nome.toUpperCase()}` : 'PEDIDO DE COMPRA';
+  titulo.value = loja ? (somada ? `PEDIDO DE COMPRA — ENTREGA EM ${loja.nome.toUpperCase()}` : `PEDIDO DE COMPRA — ${loja.nome.toUpperCase()}`) : 'PEDIDO DE COMPRA';
   titulo.font = { bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
   titulo.fill = XL.azul;
   titulo.alignment = { horizontal: 'center', vertical: 'middle' };
   ws.getRow(1).height = 21;
 
-  // rótulo em A:B, valor em C até antes da metade direita, segundo par no final
-  const meio = Math.max(5, N - 3);
-  const info = (row, label, value, label2, value2) => {
-    ws.mergeCells(`A${row}:B${row}`);
-    ws.getCell(`A${row}`).value = label;
-    ws.getCell(`A${row}`).font = { bold: true };
-    ws.mergeCells(`C${row}:${colLetra(label2 ? meio : N)}${row}`);
-    ws.getCell(`C${row}`).value = value || '';
-    if (label2) {
-      ws.getCell(`${colLetra(meio + 1)}${row}`).value = label2;
-      ws.getCell(`${colLetra(meio + 1)}${row}`).font = { bold: true };
-      ws.mergeCells(`${colLetra(meio + 2)}${row}:${ULT}${row}`);
-      ws.getCell(`${colLetra(meio + 2)}${row}`).value = value2 || '';
-      ws.getCell(`${colLetra(meio + 2)}${row}`).alignment = { horizontal: 'left' };
-    }
-  };
-  const nomeLoja = loja ? [cfg.loja, loja.nome].filter(Boolean).join(' — ') : cfg.loja;
-  info(2, 'Comprador:', nomeLoja, 'Data:', fmtData(hojeISO()));
-  info(3, 'CNPJ:', (loja && loja.cnpj) || cfg.cnpj, 'Cotação nº:', c.numero);
-  info(4, 'Contato:', [cfg.comprador, cfg.telefone].filter(Boolean).join(' - '), 'Referência:', c.titulo || '');
-  info(5, 'E-mail:', cfg.email);
-  let r = 6;
-  if (loja) {
-    info(r++, 'Entregar em:', [loja.nome, loja.endereco || cfg.endereco].filter(Boolean).join(' — '));
-  } else if (colunasLoja) {
-    for (const lj of LJ) info(r++, `Entrega ${lj.nome}:`, lj.endereco || '—');
-  } else {
-    info(r++, 'Endereço:', cfg.endereco);
-  }
-  ws.mergeCells(`A${r}:B${r}`);
-  ws.getCell(`A${r}`).value = 'Fornecedor:';
-  ws.getCell(`A${r}`).font = { bold: true };
-  ws.mergeCells(`C${r}:${ULT}${r}`);
-  ws.getCell(`C${r}`).value = [f.nome, f.contato].filter(Boolean).join(' — ');
-  ws.getCell(`C${r}`).font = { bold: true, size: 12 };
-  r++;
-  for (const [k, label] of COND_CAMPOS.filter(([k]) => f.cond?.[k])) {
-    ws.mergeCells(`A${r}:B${r}`);
-    ws.getCell(`A${r}`).value = label + ':';
-    ws.getCell(`A${r}`).font = { bold: true };
-    ws.mergeCells(`C${r}:${ULT}${r}`);
-    ws.getCell(`C${r}`).value = f.cond[k];
-    r++;
-  }
-
-  const HEADER = r + 1;
+  const HEADER = 2;
   const FIRST = HEADER + 1;
   const hr = ws.getRow(HEADER);
   cols.forEach((col, k) => {
@@ -1560,7 +1864,7 @@ function abaPedido(wb, c, ped, nomeAba, loja = null) {
       const cell = row.getCell(j + 1);
       cell.value = col.total ? { formula: `${cQtd}${n}*${cPreco}${n}`, result: x.preco * x.qtd } : col.v(x, k);
       cell.border = XL.borda;
-      cell.alignment = { vertical: 'middle', horizontal: col.centro ? 'center' : undefined };
+      cell.alignment = { vertical: 'middle', horizontal: col.centro ? 'center' : undefined, wrapText: col.quebra || undefined };
       if (col.moeda) cell.numFmt = XL.moeda;
     });
   });
@@ -1574,17 +1878,12 @@ function abaPedido(wb, c, ped, nomeAba, loja = null) {
   ws.getCell(`${ULT}${TOTAL}`).value = { formula: `SUM(${ULT}${FIRST}:${ULT}${LAST})`, result: ped.total };
   ws.getCell(`${ULT}${TOTAL}`).numFmt = XL.moeda;
   for (const col of ['A', ULT]) {
-    ws.getCell(`${col}${TOTAL}`).font = { bold: true };
+    ws.getCell(`${col}${TOTAL}`).font = col === ULT ? { bold: true, size: 14, color: { argb: 'FFFF0000' } } : { bold: true };
     ws.getCell(`${col}${TOTAL}`).fill = XL.cinza;
     ws.getCell(`${col}${TOTAL}`).border = XL.borda;
   }
 
-  ws.columns = cols.map((col, j) => {
-    let m = col.h.length;
-    if (!col.total && !col.moeda) itens.forEach((x, k) => { m = Math.max(m, String(col.v(x, k) ?? '').length); });
-    if (col.h.startsWith('QTD ')) m = Math.min(m, 12);
-    return { width: Math.min(Math.max(m + 2, col.min || 5), 80) };
-  });
+  ws.columns = cols.map(col => ({ width: col.larg }));
   ws.views = [{ state: 'frozen', ySplit: HEADER }];
   return ws;
 }
@@ -2702,6 +3001,7 @@ async function importarProdutos(file) {
 
     const porCodigo = Object.fromEntries(db.produtos.filter(p => p.codigo).map(p => [semAcento(p.codigo), p]));
     let novos = 0, atualizados = 0;
+    const semMarca = [];
     for (const l of dados) {
       const get = k => (idx[k] != null ? String(l[idx[k]] ?? '').trim() : '');
       const p = { codigo: get('codigo'), similar: get('similar'), descricao: get('descricao'), unidade: get('unidade').toUpperCase() || 'UN', marca: get('marca'), categoria: get('categoria'), obs: get('obs') };
@@ -2710,6 +3010,8 @@ async function importarProdutos(file) {
       if (existente) {
         Object.assign(existente, Object.fromEntries(Object.entries(p).filter(([, v]) => v)));
         atualizados++;
+      } else if (!p.marca) {
+        semMarca.push(p.codigo || p.descricao); // sem marca exigida não entra no banco
       } else {
         const novo = { id: uid(), ...p, criadoEm: new Date().toISOString() };
         db.produtos.push(novo);
@@ -2719,7 +3021,9 @@ async function importarProdutos(file) {
     }
     salvar();
     render();
-    toast(`${novos} produto(s) novo(s), ${atualizados} atualizado(s).`);
+    const resumo = `${novos} produto(s) novo(s), ${atualizados} atualizado(s).`;
+    if (semMarca.length) avisar(`${resumo}\n\n${semMarca.length} produto(s) novo(s) sem marca exigida NÃO entraram no banco:\n${semMarca.slice(0, 15).join(', ')}${semMarca.length > 15 ? '…' : ''}\n\nPreencha a coluna de marca na planilha e importe de novo.`);
+    else toast(resumo);
   } catch (e) {
     console.error(e);
     avisar('Erro ao importar produtos:\n' + e.message);
@@ -2761,19 +3065,41 @@ function dadosEmailGrupo(c, fornecedores, tipo = 'cotacao') {
   };
 }
 
-/** Dias até o prazo de resposta (negativo = vencido). */
+/** Fim do prazo de resposta: a data com a hora marcada (sem hora: até o fim do dia). */
+function limitePrazo(c) {
+  if (!c.prazoResposta) return null;
+  const [a, m, d] = c.prazoResposta.split('-').map(Number);
+  const [h, mi] = (c.prazoHora || '23:59').split(':').map(Number);
+  return new Date(a, m - 1, d, h || 0, mi || 0, c.prazoHora ? 0 : 59, c.prazoHora ? 0 : 999);
+}
+
+/** "29/09/2026 às 09:00" (ou só a data, sem hora marcada). */
+function textoDataPrazo(c) {
+  return c.prazoResposta ? fmtData(c.prazoResposta) + (c.prazoHora ? ` às ${c.prazoHora}` : '') : '';
+}
+
+/** Respondeu dentro do prazo (data e hora)? */
+function respondeuNoPrazo(c, f) {
+  const lim = limitePrazo(c);
+  return !!(lim && f.respondidoEm && new Date(f.respondidoEm) <= lim);
+}
+
+/** Dias até o prazo de resposta (negativo = vencido; -0,5 = venceu hoje, depois da hora marcada). */
 function diasAtePrazo(c) {
   if (!c.prazoResposta) return null;
   const [a, m, d] = c.prazoResposta.split('-').map(Number);
   const [ha, hm, hd] = hojeISO().split('-').map(Number);
-  return Math.round((Date.UTC(a, m - 1, d) - Date.UTC(ha, hm - 1, hd)) / 86400000);
+  const dias = Math.round((Date.UTC(a, m - 1, d) - Date.UTC(ha, hm - 1, hd)) / 86400000);
+  return dias === 0 && Date.now() > limitePrazo(c) ? -0.5 : dias;
 }
 
-function textoPrazo(dias) {
+function textoPrazo(dias, hora = '') {
   if (dias == null) return '';
+  const h = hora ? ` às ${hora}` : '';
+  if (dias < 0 && dias > -1) return `venceu hoje${h}`;
   if (dias < 0) return dias === -1 ? 'venceu ontem' : `venceu há ${-dias} dias`;
-  if (dias === 0) return 'vence hoje';
-  if (dias === 1) return 'vence amanhã';
+  if (dias === 0) return `vence hoje${h}`;
+  if (dias === 1) return `vence amanhã${h}`;
   return `vence em ${dias} dias`;
 }
 
@@ -2865,20 +3191,132 @@ async function copiar(texto, el) {
  * TELAS
  * ============================================================ */
 
+/*
+ * Índices dos produtos, refeitos só quando os dados mudam (salvar() muda versaoDados; carregar troca db.produtos).
+ * Evita varrer e tirar acento dos ~10 mil produtos a cada tecla.
+ */
+let cacheIndices = null;
+function indices() {
+  const c = cacheIndices;
+  if (c && c.v === versaoDados && c.ref === db.produtos && c.n === db.produtos.length) return c;
+  const porId = {}, codigos = new Set(), busca = [];
+  for (const p of db.produtos) {
+    porId[p.id] = p;
+    const cods = [p.codigo, p.similar].filter(Boolean).join(' ');
+    const e = { p, texto: semAcento([cods, p.marca, p.descricao].filter(Boolean).join(' ')), cod: normCod(cods), codPrincipal: normCod(p.codigo) };
+    busca.push(e);
+    if (e.codPrincipal) codigos.add(e.codPrincipal);
+  }
+  cacheIndices = { v: versaoDados, ref: db.produtos, n: db.produtos.length, porId, codigos, busca, porIdBusca: Object.fromEntries(busca.map(e => [e.p.id, e])) };
+  return cacheIndices;
+}
+const prodPorId = () => indices().porId;
+
+/** Palavras da busca já preparadas: sem acento (texto) e só letras/números (código). */
+const palavrasBusca = termo => String(termo || '').trim().split(/\s+/).filter(Boolean).map(pal => ({ t: semAcento(pal), c: normCod(pal) }));
+const casaBusca = (pals, texto, cod) => pals.every(x => texto.includes(x.t) || (x.c && cod.includes(x.c)));
+
+/** Busca na lista de itens da cotação: código (com ou sem traço/barra), similar, marca e descrição. */
+function itemNaBusca(x, p, termo, pals = palavrasBusca(termo)) {
+  if (!pals.length) return true;
+  if (!x || !p) return false;
+  const e = indices().porIdBusca[p.id];
+  let texto = e ? e.texto : semAcento([p.codigo, p.similar, p.marca, p.descricao].filter(Boolean).join(' '));
+  let cod = e ? e.cod : normCod([p.codigo, p.similar].filter(Boolean).join(' '));
+  if (x.codigoArquivo) { texto += ' ' + semAcento(x.codigoArquivo); cod += ' ' + normCod(x.codigoArquivo); }
+  if (x.marca) texto += ' ' + semAcento(x.marca);
+  return casaBusca(pals, texto, cod);
+}
+
+function contaFiltroItens() {
+  const r = rascunho();
+  if (!ui.filtroItens.trim()) return '';
+  const prod = prodPorId();
+  const pals = palavrasBusca(ui.filtroItens);
+  const n = r.itens.filter(x => itemNaBusca(x, prod[x.produtoId], null, pals)).length;
+  return n ? `${n} de ${r.itens.length} itens` : 'Nenhum item encontrado';
+}
+
+/** Produtos do cadastro que combinam com a busca e ainda não estão na cotação (código igual primeiro). */
+function foraDaLista(termo, max = 6) {
+  const t = String(termo || '').trim();
+  if (!t) return { lista: [], total: 0 };
+  const ja = new Set(rascunho().itens.map(x => x.produtoId));
+  const alvo = normCod(t);
+  const pals = palavrasBusca(t);
+  const achados = indices().busca.filter(e => !ja.has(e.p.id) && casaBusca(pals, e.texto, e.cod));
+  const peso = e => (alvo && e.codPrincipal === alvo ? 0 : alvo && e.codPrincipal.startsWith(alvo) ? 1 : 2);
+  // só ordena o necessário: os de código igual/parecido primeiro, depois por descrição
+  achados.sort((a, b) => peso(a) - peso(b) || COLLATOR.compare(a.p.descricao || '', b.p.descricao || ''));
+  return { lista: achados.slice(0, max).map(e => e.p), total: achados.length };
+}
+
+/** A busca parece um código que não existe no banco (e não achou nada na lista)? Então dá para cadastrar. */
+function codigoParaCadastrar(termo) {
+  const t = String(termo || '').trim();
+  if (!t || /\s/.test(t) || !normCod(t)) return '';
+  if (indices().codigos.has(normCod(t))) return '';
+  const prod = prodPorId();
+  const pals = palavrasBusca(t);
+  if (rascunho().itens.some(x => itemNaBusca(x, prod[x.produtoId], null, pals))) return '';
+  return t.toUpperCase();
+}
+
+function htmlForaDaLista() {
+  const termo = ui.filtroItens.trim();
+  if (!termo) return '';
+  const { lista, total } = foraDaLista(termo);
+  const novo = codigoParaCadastrar(termo);
+  const cadastrar = novo ? `<div class="fora-item"><button type="button" class="sm" data-act="cadastrarDaBusca">+ Cadastrar “${esc(novo)}” no banco e incluir</button>${lista.length ? '' : ' <span class="small muted">(Enter também)</span>'}</div>` : '';
+  if (!lista.length) return `<p class="small muted">Nenhum produto com “${esc(termo)}” no cadastro${novo ? '.' : ' fora da lista.'}</p>${cadastrar}`;
+  return `<p class="small muted">No cadastro, fora da lista${total > lista.length ? ` (${lista.length} de ${total}; digite mais para achar)` : ''}:</p>
+    ${lista.map((p, k) => `<div class="fora-item">
+      <button type="button" class="sm primary" data-act="incluirDaBusca" data-id="${p.id}" title="${k === 0 ? 'Enter na busca também inclui este' : 'Incluir na cotação'}">+ Incluir</button>
+      <b>${esc(p.codigo || '—')}</b> <span>${esc(p.descricao)}</span> ${p.marca ? `<span class="muted">(${esc(p.marca)})</span>` : ''}${p.similar ? ` <span class="muted small">sim. ${esc(p.similar)}</span>` : ''}
+    </div>`).join('')}${cadastrar}`;
+}
+
+/** Cadastra no banco um produto novo com o código buscado (pede a descrição) e inclui na cotação. */
+async function cadastrarEIncluir(codigo) {
+  if (!codigo) return;
+  const descricao = await pedirValor(`Cadastrar o produto ${codigo} no banco e incluir na cotação.\n\nDescrição:`, { ok: 'Cadastrar e incluir' });
+  if (!descricao) { $('#filtroItens')?.focus(); return; }
+  const marca = await pedirValor(`${codigo} · ${descricao.toUpperCase()}\n\nMarca exigida (ex.: QUALQUER, SÓ COFAP):`, { opcoes: marcasConhecidas().slice(0, 300).map(x => x.m), ok: 'Cadastrar e incluir' });
+  if (!marca) { toast('Sem marca exigida o produto não é cadastrado.'); $('#filtroItens')?.focus(); return; }
+  const p = { id: uid(), codigo, descricao: descricao.toUpperCase(), unidade: 'UN', similar: '', marca: marca.toUpperCase(), categoria: '', obs: '', criadoEm: new Date().toISOString() };
+  db.produtos.push(p);
+  incluirNaLista(p.id);
+  toast(`${codigo} · ${p.descricao} (${p.marca}) cadastrado no banco e incluído.`);
+}
+
+/** Inclui um produto do cadastro na cotação e põe o cursor nele (para já digitar a marca). */
+function incluirNaLista(id) {
+  const r = rascunho();
+  const p = db.produtos.find(x => x.id === id);
+  if (!p) return;
+  if (!r.itens.some(x => x.produtoId === id)) {
+    r.itens.push({ produtoId: id, quantidade: 1 });
+    salvar();
+  }
+  render();
+  const i = r.itens.findIndex(x => x.produtoId === id);
+  if (i >= 0) moverCursorItem(i);
+  toast(`Incluído na cotação: ${p.codigo || ''} · ${p.descricao}.`);
+}
+
+/** KIT CORREIA / KIT TENSOR: o código pode ser trocado só na cotação (o cadastro não muda). */
+const codigoSoNaCotacao = p => /\bKIT (CORREIA|TENSOR)\b/.test(normMarca(p && p.descricao));
+
 /** Itens da cotação sempre em ordem alfabética (A-Z) pela descrição. */
 function ordenarItensRascunho(r, prod) {
   r.itens.sort((a, b) => COLLATOR.compare(prod[a.produtoId]?.descricao || '', prod[b.produtoId]?.descricao || '')
     || COLLATOR.compare(a.codigoArquivo || prod[a.produtoId]?.codigo || '', b.codigoArquivo || prod[b.produtoId]?.codigo || ''));
 }
 
-function renderNova() {
+/** O que a lista de itens da nova cotação precisa para desenhar: códigos repetidos, OBS… */
+function contextoNova() {
   const r = rascunho();
-  const prod = byId(db.produtos);
-  r.itens = r.itens.filter(x => prod[x.produtoId]);
-  ordenarItensRascunho(r, prod);
-  const forn = byId(db.fornecedores);
-  r.fornecedorIds = r.fornecedorIds.filter(id => forn[id]);
-
+  const prod = prodPorId();
   // Códigos repetidos: itens cujo código é igual ou CONTÉM o mesmo código de outro item
   // (ex.: "2527/GR12527" e "2527/RD45552", ou "UB152" e "UB152/20036"), ou várias linhas do arquivo no mesmo item.
   const codDe = x => x.codigoArquivo || prod[x.produtoId].codigo || '';
@@ -2894,7 +3332,17 @@ function renderNova() {
     return [...set];
   });
   const repetido = (x, i = r.itens.indexOf(x)) => !x.dupVisto && (parceiros[i].length > 0 || (x.obsArquivo || []).length > 1);
-  const nRepetidos = r.itens.filter(repetido).length;
+  const obsDe = x => {
+    const k2 = chaveCodigo(codDe(x));
+    const o = (r.obsPorCodigo && r.obsPorCodigo[k2]) || x.obsArquivo || [];
+    return o.length ? o.map(v => v || 'sem OBS').join(' · ') : (prod[x.produtoId].obs || '—');
+  };
+  return { r, prod, codDe, tokensDe, parceiros, repetido, obsDe };
+}
+
+/** Painel "código repetido" da nova cotação. */
+function painelRepetidos(ctx) {
+  const { r, prod, codDe, tokensDe, parceiros, repetido, obsDe } = ctx;
   const gruposRep = [];
   {
     const visto = new Set();
@@ -2916,11 +3364,6 @@ function renderNova() {
       }
     });
   }
-  const obsDe = x => {
-    const k2 = chaveCodigo(codDe(x));
-    const o = (r.obsPorCodigo && r.obsPorCodigo[k2]) || x.obsArquivo || [];
-    return o.length ? o.map(v => v || 'sem OBS').join(' · ') : (prod[x.produtoId].obs || '—');
-  };
   const painelRep = gruposRep.length ? `
     <div class="painel-dup">
       <div class="painel-dup-titulo">⚠ <b>${gruposRep.length} caso(s) de código repetido</b> · compare os itens lado a lado e decida: <b>✓ Manter</b> ou <b>✕ Tirar</b></div>
@@ -2946,7 +3389,12 @@ function renderNova() {
         </div>`).join('')}
     </div>` : '';
 
-  const linhas = r.itens.map((x, i) => {
+  return painelRep;
+}
+
+/** Uma linha da lista de itens da nova cotação. */
+function linhaItemNova(ctx, x, i) {
+  const { r, prod, codDe, parceiros, repetido } = ctx;
     const p = prod[x.produtoId];
     const dup = repetido(x, i);
     // OBS da planilha original: todas as linhas do arquivo com este código; senão as linhas usadas; senão a OBS do cadastro
@@ -2955,17 +3403,54 @@ function renderNova() {
     const obs = daPlanilha.map(o => o || 'sem OBS');
     const origemObs = daPlanilha.length ? 'OBS na planilha' : p.obs ? 'OBS no cadastro' : '';
     const textoObs = daPlanilha.length ? obs : p.obs ? [p.obs] : [];
-    return `<tr data-item-linha="${i}" class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
+    return `<tr data-item-linha="${i}" ${itemNaBusca(x, p, ui.filtroItens) ? '' : 'hidden'} class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
       <td class="c">${i + 1}</td>
-      <td>${esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
+      <td>${codigoSoNaCotacao(p)
+        ? `<input class="cod-item ${x.codigoArquivo && x.codigoArquivo !== p.codigo ? 'so-cotacao' : ''}" data-codigo-item="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código só desta cotação: o cadastro continua ${esc(p.codigo)}." aria-label="Código de ${esc(p.descricao)} nesta cotação">`
+        : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}">${origemObs}: <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
-      <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação.` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
+      <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação (Enter duas vezes grava como padrão no cadastro).` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
       <td>${esc(p.descricao)}</td>
       <td class="c" style="white-space:nowrap">${dup ? `<button class="sm" data-act="manterItem" data-i="${i}" title="Manter na cotação e tirar o destaque">✓ Manter</button> ` : ''}<button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
-  }).join('');
+}
+
+/**
+ * Redesenha só a linha do item i (e o painel de repetidos), sem refazer a tela inteira:
+ * com centenas de itens, refazer tudo a cada marca salva travava a digitação.
+ */
+function atualizarLinhaItem(i) {
+  const tr = document.querySelector(`#tabItens [data-item-linha="${i}"]`);
+  const x = rascunho().itens[i];
+  if (!tr || !x) return render();
+  const ctx = contextoNova();
+  const tpl = document.createElement('template');
+  tpl.innerHTML = linhaItemNova(ctx, x, i).trim();
+  tr.replaceWith(tpl.content.firstElementChild);
+  const painel = document.querySelector('.painel-dup');
+  if (painel && ctx.parceiros[i].length) { // só quando o item aparece no painel
+    const novo = painelRepetidos(ctx).trim();
+    if (!novo) painel.remove();
+    else {
+      tpl.innerHTML = novo;
+      painel.replaceWith(tpl.content.firstElementChild);
+    }
+  }
+}
+
+function renderNova() {
+  const r = rascunho();
+  const prod = prodPorId();
+  r.itens = r.itens.filter(x => prod[x.produtoId]);
+  ordenarItensRascunho(r, prod);
+  const forn = byId(db.fornecedores);
+  r.fornecedorIds = r.fornecedorIds.filter(id => forn[id]);
+
+  const ctx = contextoNova();
+  const painelRep = painelRepetidos(ctx);
+  const linhas = r.itens.map((x, i) => linhaItemNova(ctx, x, i)).join('');
 
   const fornList = db.fornecedores.length
     ? `<div class="checklist">${[...db.fornecedores].sort((a, b) => a.nome.localeCompare(b.nome)).map(f => `
@@ -2978,7 +3463,7 @@ function renderNova() {
     <h2>Nova cotação</h2>
     <div class="grid">
       <label>Título / referência (opcional)<input data-draft="titulo" value="${esc(r.titulo)}" placeholder="Ex.: Reposição mensal"></label>
-      <label>Responder até<input type="date" data-draft="prazoResposta" value="${esc(r.prazoResposta)}"></label>
+      <label>Responder até<span class="prazo-campos"><input type="date" data-draft="prazoResposta" value="${esc(r.prazoResposta)}"><input type="time" data-draft="prazoHora" value="${esc(r.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></span></label>
     </div>
     <label>Observações para o fornecedor (vai na planilha)<textarea data-draft="obs" placeholder="Ex.: Entrega na loja, informar prazo e forma de pagamento.">${esc(r.obs)}</textarea></label>
   </section>
@@ -2989,32 +3474,13 @@ function renderNova() {
       <label class="btn btn-primary" style="margin:0">📂 Abrir arquivo do DataCar<input type="file" class="hidden" accept=".xlsx,.xls,.csv,.txt,.htm,.html" data-import-datacar></label>
       <span class="small muted">Escolha o arquivo gerado pelo DataCar e marque os itens que vão para a cotação. Os itens são reconhecidos pelo <b>código</b>; a <b>OBS</b> serve para ordenar e agrupar.</span>
     </div>
-    <p class="small muted" style="margin:10px 0 6px">Ou busque um produto cadastrado:</p>
-    <div class="search">
-      <input id="buscaProd" placeholder="Buscar por código, similar, descrição ou marca… (Enter adiciona o primeiro)" autocomplete="off">
-      <div id="resultadosProd" class="results"></div>
-    </div>
-    <details class="colar-codigos">
-      <summary>📋 Colar lista de códigos (como a aba MONTAGEM da planilha)</summary>
-      <p class="small muted" style="margin:6px 0">Cole os códigos, um por linha (pode colar direto do Excel ou do DataCar). O sistema busca cada um no banco e já traz similar, marca exigida e descrição. Códigos que não estão no banco são cadastrados para você completar depois.</p>
-      <textarea id="colarCodigos" rows="6" placeholder="27321/HG33036&#10;GP33366/AMD4100&#10;GB48167"></textarea>
-      <div class="actions" style="justify-content:flex-start"><button type="button" class="primary sm" data-act="colarCodigos">Adicionar à cotação</button></div>
-    </details>
-    <details>
-      <summary>+ Cadastrar produto novo e adicionar</summary>
-      <form data-form="produtoRapido" class="grid">
-        <label>Código<input name="codigo"></label>
-        <label>Descrição *<input name="descricao" required></label>
-        <label>Unidade<input name="unidade" value="UN"></label>
-        <label>Marca/Ref.<input name="marca"></label>
-        <div class="actions" style="align-self:end"><button class="primary">Salvar e adicionar</button></div>
-      </form>
-    </details>
     ${painelRep}
+    <div class="busca-itens"><input id="filtroItens" value="${esc(ui.filtroItens)}" placeholder="🔎 Procurar na lista ou no cadastro: código, similar, marca ou descrição" autocomplete="off" aria-label="Procurar nos itens da cotação e no cadastro"><span id="contaFiltroItens" class="small muted">${contaFiltroItens()}</span></div>
+    <div id="foraDaLista" class="fora-lista">${htmlForaDaLista()}</div>
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
       <thead><tr><th class="c">#</th><th>Código</th><th>Similar</th><th>Marca</th><th>Descrição A→Z</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
-      <p class="small muted" style="margin:6px 0 0">Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca · <span class="kbd">Enter</span> salva · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar</p>` : '<p class="empty">Busque e adicione produtos acima.</p>'}
+      <p class="small muted" style="margin:6px 0 0">Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca (sugere as marcas do cadastro; <span class="kbd">Delete</span> apaga a sugestão) · <span class="kbd">Enter</span> salva nesta cotação e vai para o próximo · <span class="kbd">Enter</span> <span class="kbd">Enter</span> salva como padrão no cadastro · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar · <span class="kbd">Ctrl</span>+<span class="kbd">Delete</span> ou ✕ tira o item (pede confirmação) · em KIT CORREIA e KIT TENSOR o código pode ser trocado só nesta cotação</p>` : '<p class="empty">Abra o arquivo do DataCar acima para trazer os itens.</p>'}
   </section>
 
   <section class="card">
@@ -3043,27 +3509,13 @@ let cacheBusca = null;
 const COLLATOR = new Intl.Collator('pt-BR', { numeric: true, sensitivity: 'base' });
 
 /** Texto de busca (sem acentos) de cada produto, calculado uma vez. */
+/** Texto de busca de cada produto, já em ordem de descrição (refeito só quando os dados mudam). */
 function indiceBusca() {
-  if (!cacheBusca) cacheBusca = db.produtos.map(p => [p, semAcento(`${p.codigo} ${p.similar || ''} ${p.descricao} ${p.marca} ${p.categoria}`)]);
-  return cacheBusca;
-}
-
-function resultadosBusca(q) {
-  const box = $('#resultadosProd');
-  if (!box) return;
-  q = semAcento(q);
-  if (!q) { box.innerHTML = ''; return; }
-  const termos = q.split(/\s+/);
-  const ja = new Set(rascunho().itens.map(x => x.produtoId));
-  const achados = [];
-  for (const [p, t] of indiceBusca()) {
-    if (termos.every(w => t.includes(w))) { achados.push(p); if (achados.length === 30) break; }
+  if (!cacheBusca) {
+    cacheBusca = db.produtos.map(p => [p, semAcento(`${p.codigo} ${p.similar || ''} ${p.descricao} ${p.marca} ${p.categoria}`)])
+      .sort((a, b) => COLLATOR.compare(a[0].descricao || '', b[0].descricao || ''));
   }
-  box.innerHTML = achados.length
-    ? achados.map(p => `<button type="button" data-act="addItem" data-id="${p.id}" ${ja.has(p.id) ? 'disabled' : ''}>
-        <b>${esc(p.codigo || '—')}</b> · ${esc(p.descricao)} ${p.marca ? `<span class="muted">(${esc(p.marca)})</span>` : ''}${p.similar ? ` <span class="muted small">sim. ${esc(p.similar)}</span>` : ''} <span class="muted small">${esc(p.unidade)}</span>
-        ${ja.has(p.id) ? '<span class="badge">já adicionado</span>' : ''}</button>`).join('')
-    : '<div class="none">Nenhum produto encontrado. Use "Cadastrar produto novo" abaixo.</div>';
+  return cacheBusca;
 }
 
 function linhasCotacoes() {
@@ -3096,7 +3548,7 @@ function avisosPrazo() {
     <h3>⏰ Respostas ${lista.some(x => x.s.dias < 0) ? 'atrasadas ou ' : ''}perto do prazo</h3>
     <ul class="lista-prazo">${lista.map(({ c, s }) => `<li>
       <a href="#" data-route="cotacao" data-id="${c.id}"><b>Cotação nº ${esc(c.numero)}</b></a>
-      <span class="badge ${s.dias < 0 ? 'danger' : 'warn'}">${textoPrazo(s.dias)}</span>
+      <span class="badge ${s.dias < 0 ? 'danger' : 'warn'}">${textoPrazo(s.dias, c.prazoHora)}</span>
       <span class="small">faltam: ${s.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</span>
     </li>`).join('')}</ul>
   </section>`;
@@ -3357,8 +3809,184 @@ function painelLote(c) {
 
 function celTotal(l) {
   if (l.preco == null) return '—';
+  const acima = l.estoque != null && l.q > l.estoque
+    ? `<br><span class="acima-estoque" title="O fornecedor tem só ${fmtNum(l.estoque)} em estoque">⚠ acima do estoque (${fmtNum(l.estoque)})</span>` : '';
   if (!l.q) return '<span class="muted small">sem qtd.</span>';
-  return `${fmtMoeda(l.preco * l.q)}${l.q !== 1 ? `<br><span class="small muted">${fmtNum(l.q)} un.</span>` : ''}`;
+  return `${fmtMoeda(l.preco * l.q)}${l.q !== 1 ? `<br><span class="small muted">${fmtNum(l.q)} un.</span>` : ''}${acima}`;
+}
+
+/** Posições dos fornecedores da cotação em ordem alfabética (só a exibição muda; os dados continuam no lugar). */
+/** Quadro "Fornecedores" da cotação aberto ou fechado (lembrado neste navegador; começa fechado). */
+const CHAVE_FORN_ABERTO = 'cotacao.fornAberto';
+function fornCotAberto() {
+  try { return localStorage.getItem(CHAVE_FORN_ABERTO) === '1'; } catch (e) { return !!ui.fornAberto; }
+}
+function alternarFornCot(el) {
+  const aberto = !fornCotAberto();
+  ui.fornAberto = aberto;
+  try { localStorage.setItem(CHAVE_FORN_ABERTO, aberto ? '1' : '0'); } catch (e) { /* só nesta sessão */ }
+  // abre/fecha sem redesenhar a tela
+  el.setAttribute('aria-expanded', String(aberto));
+  el.title = `Clique para ${aberto ? 'fechar' : 'abrir'}`;
+  el.querySelector('.seta-recolhe').textContent = aberto ? '▾' : '▸';
+  const corpo = el.parentElement.querySelector('.corpo-recolhe');
+  if (corpo) corpo.hidden = !aberto;
+}
+
+/**
+ * Filtro do comparativo por fornecedor vencedor ("Mostrar itens de"): para digitar as quantidades
+ * só dos itens de um fornecedor. '' = todos; '__sem' = sem preço / aguardando. Vale para a cotação aberta.
+ */
+function filtroVencedor(c) {
+  return ui.filtroVenc && ui.filtroVenc.cotId === c.id ? ui.filtroVenc.valor : '';
+}
+function linhaNoFiltroVenc(c, l, valor = filtroVencedor(c)) {
+  if (!valor) return true;
+  if (valor === '__sem') return l.vencedor < 0;
+  return l.vencedor >= 0 && c.fornecedores[l.vencedor].fornecedorId === valor;
+}
+function seletorVencedor(c, comp) {
+  const atual = filtroVencedor(c);
+  const cont = {};
+  for (const l of comp.linhas) if (l.vencedor >= 0) cont[c.fornecedores[l.vencedor].fornecedorId] = (cont[c.fornecedores[l.vencedor].fornecedorId] || 0) + 1;
+  const sem = comp.linhas.filter(l => l.vencedor < 0).length;
+  const opcoes = ordemFornecedores(c).map(j => c.fornecedores[j]).filter(f => cont[f.fornecedorId])
+    .map(f => `<option value="${esc(f.fornecedorId)}" ${atual === f.fornecedorId ? 'selected' : ''}>${esc(f.nome)} (${cont[f.fornecedorId]})</option>`).join('');
+  return `<label class="filtro-venc">Mostrar itens de:
+    <select id="filtroVencedor" data-cot="${esc(c.id)}">
+      <option value="">Todos os itens (${comp.linhas.length})</option>${opcoes}
+      ${sem ? `<option value="__sem" ${atual === '__sem' ? 'selected' : ''}>Sem preço / aguardando (${sem})</option>` : ''}
+    </select></label>${botaoPedidoFiltro(c, atual)}`;
+}
+
+/**
+ * Formas de mandar o pedido ao fornecedor:
+ *  { tipo: 'individual' }            uma planilha por loja (quantidade e endereço de cada loja);
+ *  { tipo: 'somada', lojaId }         uma planilha com as quantidades das lojas somadas, entregue numa loja
+ *                                     (depois a loja transfere para a outra).
+ */
+function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja }) {
+  const LJ = lojas();
+  const opcoes = [
+    { valor: 'individual', titulo: 'Planilhas individuais por loja', texto: `Um arquivo para cada loja, com a quantidade e o endereço de entrega dela${lojasComItens.length > 1 ? ` (${lojasComItens.map(x => x.nome).join(' e ')}, num .zip)` : ''}.`, desligada: !porLoja || !lojasComItens.length },
+    ...LJ.map(lj => ({ valor: 'somada:' + lj.id, titulo: `Planilha somada — entregar em ${lj.nome}`, texto: `Um arquivo com as quantidades das lojas somadas, entregue em ${lj.nome}.` })),
+  ];
+  const atual = padrao ? (padrao.tipo === 'individual' ? 'individual' : 'somada:' + padrao.lojaId) : null;
+  let marcada = opcoes.find(o => o.valor === atual && !o.desligada) || opcoes.find(o => !o.desligada);
+  return new Promise(resolve => {
+    const fundo = document.createElement('div');
+    fundo.className = 'dlg-fundo';
+    fundo.innerHTML = `<div class="dlg dlg-formato" role="dialog" aria-modal="true" aria-label="Exportar pedido">
+      <h3 style="margin:0 0 4px">⬇ Exportar pedido — ${esc(f.nome)}</h3>
+      <p class="small muted" style="margin:0 0 10px">Como ${esc(f.nome)} recebe o pedido?${padrao ? ' (marcado: a forma usada da última vez)' : ''}</p>
+      ${opcoes.map(o => `<label class="formato-opcao${o.desligada ? ' desligada' : ''}">
+        <input type="radio" name="formatoExport" value="${esc(o.valor)}" ${o === marcada ? 'checked' : ''} ${o.desligada ? 'disabled' : ''}>
+        <span><b>${esc(o.titulo)}</b><br><span class="small muted">${esc(o.desligada ? 'Digite as quantidades de cada loja no comparativo para usar esta opção.' : o.texto)}</span></span>
+      </label>`).join('')}
+      <p class="small muted" style="margin:10px 0 0">Depois de salvar, a cotação de ${esc(f.nome)} fica marcada como <b>concluída</b>.</p>
+      <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" class="primary" data-r="1">Exportar</button></div>
+    </div>`;
+    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const confirmar = () => {
+      const v = fundo.querySelector('input[name=formatoExport]:checked')?.value;
+      if (!v) return;
+      fechar(v === 'individual' ? { tipo: 'individual' } : { tipo: 'somada', lojaId: v.slice(7) });
+    };
+    const tecla = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(null); }
+      else if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); confirmar(); }
+      else e.stopImmediatePropagation();
+    };
+    fundo.addEventListener('click', e => {
+      e.stopPropagation();
+      const b = e.target.closest('button[data-r]');
+      if (b) { if (b.dataset.r === '1') confirmar(); else fechar(null); }
+    });
+    document.addEventListener('keydown', tecla, true);
+    document.body.appendChild(fundo);
+    fundo.querySelector('input[name=formatoExport]:checked')?.focus();
+  });
+}
+
+/** Exporta o pedido de um fornecedor no formato que ele usa e marca a cotação dele como concluída. */
+async function exportarPedidoForn(c, fi) {
+  const f = c.fornecedores[fi];
+  const LJ = lojas();
+  const comp = comparar(c);
+  const total = pedidosPorFornecedor(c).find(p => p.fi === fi);
+  if (!f || !total) return avisar('Este fornecedor não ganhou nenhum item com quantidade.');
+  const porLoja = LJ.map(lj => ({ lj, ped: pedidosPorFornecedor(c, lj.id).find(p => p.fi === fi) })).filter(x => x.ped);
+  const cad = db.fornecedores.find(x => x.id === f.fornecedorId);
+  const escolha = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja });
+  if (!escolha) return;
+  const novoWb = () => { const wb = new ExcelJS.Workbook(); wb.creator = db.config.loja || 'Sistema de Cotação'; wb.created = new Date(); return wb; };
+  let ok;
+  if (escolha.tipo === 'individual') {
+    const arquivos = porLoja.map(({ lj, ped }) => {
+      const wb = novoWb();
+      abaPedido(wb, c, ped, nomeAbaSeguro(lj.nome, new Set()), lj);
+      return { nome: nomePedido(c, f, lj), wb };
+    });
+    ok = arquivos.length === 1
+      ? await baixarWorkbook(arquivos[0].wb, arquivos[0].nome)
+      : await salvarComo(`Pedidos_${c.numero}_${slug(f.nome)}_por_loja.zip`, async () => criarZip(await Promise.all(arquivos.map(async a => ({ nome: a.nome, dados: new Uint8Array(await a.wb.xlsx.writeBuffer()) })))), TIPO_ZIP);
+  } else {
+    const lj = LJ.find(x => x.id === escolha.lojaId) || LJ[0];
+    const wb = novoWb();
+    abaPedido(wb, c, total, nomeAbaSeguro(f.nome, new Set()), lj, { somada: true });
+    ok = await baixarWorkbook(wb, `Pedido_${c.numero}_${slug(f.nome)}_entrega_${slug(lj.nome)}.xlsx`);
+  }
+  if (!ok) return; // cancelou a janela de salvar: não marca nada
+  // lembra a forma deste fornecedor (nesta cotação e no cadastro, para as próximas)
+  f.formatoPedido = escolha;
+  if (cad) cad.formatoPedido = escolha;
+  f.concluidoEm = new Date().toISOString();
+  salvar();
+  render();
+  toast(`Pedido de ${f.nome} exportado. Cotação de ${f.nome} marcada como concluída.`);
+}
+
+/** "⬇ Pedido de X" para o fornecedor escolhido em "Mostrar itens de" (itens que ele ganhou + quantidades das lojas). */
+function botaoPedidoFiltro(c, valor) {
+  const fi = valor && valor !== '__sem' ? c.fornecedores.findIndex(f => f.fornecedorId === valor) : -1;
+  if (fi < 0) return '<span id="pedidoFiltro"></span>';
+  return `<span id="pedidoFiltro"><button class="sm primary" data-act="baixarPedido" data-f="${fi}" title="Só os itens que ${esc(c.fornecedores[fi].nome)} ganhou, com a quantidade de cada loja">⬇ Pedido de ${esc(c.fornecedores[fi].nome)}</button></span>`;
+}
+
+/**
+ * Coluna "Dif. 1º × 2º": com o menor preço escolhido, mostra o 2º colocado; se você escolheu outro
+ * fornecedor, mostra quem tem o menor preço e quanto o escolhido está mais caro.
+ */
+/** Diferença acima de 100% entre o 1º e o 2º (ou entre o escolhido e o menor): possível preço errado na planilha. */
+const LIMITE_DIF_SUSPEITA = 1;
+function difDaLinha(l) {
+  if (l.manual && l.minIdx >= 0 && l.min > 0) return l.preco / l.min - 1;
+  return l.difSegundo;
+}
+const difSuspeita = l => difDaLinha(l) != null && difDaLinha(l) > LIMITE_DIF_SUSPEITA;
+const avisoDifSuspeita = '<br><span class="chip-alerta-dif" title="Diferença acima de 100%: um dos preços pode estar errado na planilha (preço da caixa em vez da unidade, vírgula no lugar errado…). Confira antes de fechar.">⚠ confira o preço</span>';
+
+function celulaDifSegundo(c, l) {
+  const alerta = difSuspeita(l);
+  if (l.manual && l.minIdx >= 0 && l.min > 0) {
+    const dif = difDaLinha(l);
+    return `<span class="dif-seg${dif >= 0.1 ? ' grande' : ''}${alerta ? ' suspeita' : ''}" title="Quanto o escolhido está mais caro que o menor preço">+${fmtPct(dif)}</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="Menor preço (ganharia sem a sua escolha)">1º ${esc(c.fornecedores[l.minIdx].nome)} ${fmtMoeda(l.min)}</span>`;
+  }
+  if (l.difSegundo == null) return '<span class="muted">—</span>';
+  // conta a partir do 1º lugar: quanto o 2º está mais caro que o 1º
+  return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span><br><span class="small muted">2º mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>`;
+}
+
+/** Colunas de fornecedores do comparativo: esconde quem ainda não mandou nenhum preço (dá para mostrar). */
+function fornecedoresVisiveisComp(c) {
+  const ordem = ordemFornecedores(c);
+  if (ui.mostrarSemResposta) return ordem;
+  const comPreco = ordem.filter(j => Object.values(c.fornecedores[j].respostas || {}).some(o => o?.preco > 0));
+  return comPreco.length ? comPreco : ordem;
+}
+
+function ordemFornecedores(c) {
+  return c.fornecedores.map((f, j) => j).sort((a, b) => COLLATOR.compare(c.fornecedores[a].nome || '', c.fornecedores[b].nome || ''));
 }
 
 function linhaTotalComp(c, comp) {
@@ -3367,7 +3995,7 @@ function linhaTotalComp(c, comp) {
   const qtdL = lj => comp.linhas.reduce((s, l) => s + qtdLoja(c, l.i, lj.id), 0);
   return `<tr class="total" id="totalComp">
     <td></td><td>Total dos itens cotados${comp.porLoja ? '<br><span class="small muted">com as quantidades das lojas</span>' : '<br><span class="small muted">1 unidade de cada</span>'}</td>
-    ${comp.totais.map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
+    ${fornecedoresVisiveisComp(c).map(j => comp.totais[j]).map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
     <td></td>${nf > 1 ? '<td></td>' : ''}<td>${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td>
     ${LJ.map(lj => `<td class="c col-qtd">${qtdL(lj) ? `${fmtNum(qtdL(lj))} un.<br><span class="small">${fmtMoeda(comp.porLojaTotal[lj.id])}</span>` : '<span class="muted">—</span>'}</td>`).join('')}
     <td class="r">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
@@ -3388,7 +4016,7 @@ function custoFrete(r, total) {
 
 /** 2º colocado de um item, sem contar o fornecedor `fi` (evita marca errada quando dá). */
 function alternativaItem(l, fi) {
-  const cands = l.precos.map((p, j) => ({ j, preco: p })).filter(x => x.j !== fi && x.preco != null);
+  const cands = l.precos.map((p, j) => ({ j, preco: p })).filter(x => x.j !== fi && x.preco != null && !l.recusas?.[x.j]);
   const boas = cands.filter(x => l.marcas[x.j] !== 'errada');
   const lista = (boas.length ? boas : cands).sort((a, b) => a.preco - b.preco);
   return lista[0] || null;
@@ -3568,6 +4196,7 @@ function renderCotacao(id) {
   }
   const prazo = situacaoPrazo(c);
   const nf = c.fornecedores.length;
+  const pedidoDe = Object.fromEntries(pedidosPorFornecedor(c).map(p => [p.fi, p]));
   const fornRows = c.fornecedores.map((f, fi) => {
     const t = comp.totais[fi];
     const atrasado = prazo && prazo.pendentes.includes(fi);
@@ -3575,14 +4204,18 @@ function renderCotacao(id) {
       <td class="c"><input type="checkbox" class="sel-forn" data-sel-forn="${esc(f.fornecedorId)}" ${ui.sel.ids.has(f.fornecedorId) ? 'checked' : ''} aria-label="Marcar ${esc(f.nome)}"></td>
       <td><b>${esc(f.nome)}</b>${f.contato ? `<br><span class="small muted">${esc(f.contato)}</span>` : ''}</td>
       <td class="small">${esc(f.email || '—')}</td>
-      <td>${f.enviadoEm ? `<span class="badge ok">${fmtData(f.enviadoEm)}</span>` : '<span class="badge">não enviada</span>'}</td>
-      <td>${f.respondidoEm ? `<span class="badge ok">${t.cotados}/${c.itens.length} itens</span>` : `<span class="badge ${atrasado ? (prazo.dias < 0 ? 'danger' : 'warn') : 'warn'}">${atrasado ? 'aguardando · ' + textoPrazo(prazo.dias) : 'aguardando'}</span>`}${f.cobradoEm && !f.respondidoEm ? `<br><span class="small muted">cobrado em ${fmtData(f.cobradoEm)}</span>` : ''}</td>
+      <td>${f.concluidoEm
+        ? `<button type="button" class="badge concluida" data-act="reabrirForn" data-f="${fi}" title="Pedido exportado em ${fmtData(f.concluidoEm)}. Clique para reabrir.">✓ Concluída</button>`
+        : f.enviadoEm ? `<span class="badge ok">${fmtData(f.enviadoEm)}</span>` : '<span class="badge">não enviada</span>'}</td>
+      <td>${f.respondidoEm ? `<span class="badge ok">${t.cotados}/${c.itens.length} itens</span>` : `<span class="badge ${atrasado ? (prazo.dias < 0 ? 'danger' : 'warn') : 'warn'}">${atrasado ? 'aguardando · ' + textoPrazo(prazo.dias, c.prazoHora) : 'aguardando'}</span>`}${f.cobradoEm && !f.respondidoEm ? `<br><span class="small muted">cobrado em ${fmtData(f.cobradoEm)}</span>` : ''}</td>
       <td class="r">${f.respondidoEm ? fmtMoeda(t.total) : '—'}</td>
       <td class="actions-cell">
-        <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="Baixar a planilha Excel deste fornecedor">⬇ Excel</button>
-        <button class="sm" data-act="enviar" data-f="${fi}" title="Preparar o e-mail para este fornecedor">✉ Enviar</button>
+        ${pedidoDe[fi]
+          ? `<button class="sm primary" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido: só os itens que ${esc(f.nome)} ganhou (planilhas por loja ou somada) e marcar a cotação dele como concluída">⬇ Exportar (${pedidoDe[fi].itens.length})</button>`
+          : `<span class="btn-desligado" title="${f.respondidoEm ? `${esc(f.nome)} não ganhou nenhum item (com quantidade) no comparativo` : `${esc(f.nome)} ainda não respondeu: quando responder e ganhar itens, dá para exportar o pedido`}"><button class="sm" disabled>⬇ Exportar (0)</button></span>`}
         <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥 Importar<input type="file" class="hidden" accept=".xlsx,.xls" data-import="${fi}"></label>
         <button class="sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎ Digitar</button>
+        <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="Baixar a planilha de cotação deste fornecedor (para enviar a ele)">⬇ Excel</button>
         <button class="sm danger" data-act="removerFornCot" data-f="${fi}" title="Remover da cotação">✕</button>
       </td>
     </tr>`;
@@ -3662,38 +4295,41 @@ function renderCotacao(id) {
   const repComp = parceirosCodigo(c.itens.map(it => it.codigo));
   let qtdAlertas = 0;
   const qtdMarcas = { errada: 0, duvida: 0 };
+  const ordemForn = fornecedoresVisiveisComp(c); // colunas de fornecedores em ordem alfabética (sem quem não respondeu)
+  const escondidos = c.fornecedores.length - ordemForn.length;
   const tabelaComp = `
-    <div class="table-wrap"><table class="tab-comp">
+    <div class="table-wrap painel-comp"><table class="tab-comp">
       <thead><tr>
         <th class="c">#</th><th>Produto</th>${temResposta ? '' : '<th class="r">Qtd.</th>'}
-        ${c.fornecedores.map(f => `<th class="r">${esc(f.nome)}</th>`).join('')}
+        ${ordemForn.map(j => `<th class="r">${esc(c.fornecedores[j].nome)}</th>`).join('')}
         ${temResposta ? `<th class="r">Preço escolhido</th>${nf > 1 ? '<th class="r" title="Quanto o 2º melhor preço é mais caro que o melhor">Dif. 1º × 2º</th>' : ''}<th>Fornecedor</th>
           ${LJ.map(lj => `<th class="c col-qtd" title="Quantidade para ${esc(lj.nome)}">Qtd.<br>${esc(lj.nome)}</th>`).join('')}<th class="r">Total</th>` : ''}
       </tr></thead>
       <tbody>
         ${comp.linhas.map(l => {
           const ult = l.it.produtoId ? ultimos[l.it.produtoId] : null;
-          const celulas = l.precos.map((p, j) => {
+          const celulas = ordemForn.map(j => {
+            const p = l.precos[j];
             const o = c.fornecedores[j].respostas?.[l.i];
             const st = l.marcas[j];
-            if (p != null && (st === 'errada' || st === 'duvida')) qtdMarcas[st]++;
+            if (p != null && (st === 'errada' || st === 'duvida') && !l.recusas[j]) qtdMarcas[st]++;
             const extra = [o?.prazo, o?.obs].filter(Boolean).join(' · ');
             const avs = alertasPreco(p, ult, l.precos);
             if (avs.length) qtdAlertas++;
             const venc = j === l.vencedor && (nf > 1 || l.manual);
-            const cls = ['r', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : ''].filter(Boolean).join(' ');
-            const dica = p == null ? '' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
+            const cls = ['r', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : '', l.recusas[j] && p != null ? 'recusada' : ''].filter(Boolean).join(' ');
+            const dica = p == null ? '' : l.recusas[j] ? 'Marca recusada: este preço não entra. Clique na marca para desfazer.' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${o?.marca || (p != null && st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
+            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${o?.marca || (p != null && st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
           }).join('');
-          return `<tr>
+          return `<tr class="${l.aguardando ? 'linha-aguardando' : ''}" data-comp-linha="${l.i}" ${linhaNoFiltroVenc(c, l) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
-          <td>${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.descricao)}<br><span class="small muted">${esc([l.it.codigo, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
+          <td>${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.codigo || '—')}<br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
-          ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : '—'}</b>${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
-            ${nf > 1 ? `<td class="r">${l.difSegundo != null ? `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}">${fmtPct(l.difSegundo)}</span><br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>` : '<span class="muted">—</span>'}</td>` : ''}
-            <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : '<span class="muted">sem preço</span>'}</td>
+          ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
+            ${nf > 1 ? `<td class="r">${celulaDifSegundo(c, l)}</td>` : ''}
+            <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.estoque != null ? `<br><span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : '') + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</td>
             ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${qtdLoja(c, l.i, lj.id) || ''}" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
@@ -3717,15 +4353,19 @@ function renderCotacao(id) {
         </select>
       </div>
     </div>
-    <p class="muted" style="margin:0">Criada em ${fmtData(c.data)} · <label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"></label> · ${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
-    ${prazo ? `<p class="aviso-prazo ${prazo.dias < 0 ? 'vencido' : ''}">⏰ O prazo de resposta ${textoPrazo(prazo.dias)} (${fmtData(c.prazoResposta)}) e ${prazo.pendentes.length === 1 ? 'falta 1 fornecedor responder' : `faltam ${prazo.pendentes.length} fornecedores responderem`}: <b>${prazo.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</b>.
+    <p class="muted" style="margin:0">Criada em ${fmtData(c.data)} · <label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"><input type="time" data-change="prazoHoraCot" value="${esc(c.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></label> · ${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
+    ${prazo ? `<p class="aviso-prazo ${prazo.dias < 0 ? 'vencido' : ''}">⏰ O prazo de resposta ${textoPrazo(prazo.dias, c.prazoHora)} (${textoDataPrazo(c)}) e ${prazo.pendentes.length === 1 ? 'falta 1 fornecedor responder' : `faltam ${prazo.pendentes.length} fornecedores responderem`}: <b>${prazo.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</b>.
       <button class="sm" data-act="cobrarPendentes">📣 Cobrar quem falta</button></p>` : ''}
     ${c.titulo ? `<p style="margin:6px 0 0"><b>${esc(c.titulo)}</b></p>` : ''}
     ${c.obs ? `<p class="small" style="margin:6px 0 0;white-space:pre-wrap">${esc(c.obs)}</p>` : ''}
   </section>
 
   <section class="card">
-    <h3>Fornecedores</h3>
+    <h3 class="recolhe" data-act="recolherFornCot" role="button" tabindex="0" aria-expanded="${fornCotAberto() ? 'true' : 'false'}" title="Clique para ${fornCotAberto() ? 'fechar' : 'abrir'}">
+      <span class="seta-recolhe">${fornCotAberto() ? '▾' : '▸'}</span> Fornecedores
+      <span class="small muted resumo-recolhe">${nf} fornecedor(es) · ${c.fornecedores.filter(f => f.respondidoEm).length} responderam · ${c.fornecedores.filter(f => f.enviadoEm).length} enviadas</span>
+    </h3>
+    <div class="corpo-recolhe" ${fornCotAberto() ? '' : 'hidden'}>
     ${nf ? `<div class="table-wrap"><table>
       <thead><tr><th class="c"><input type="checkbox" class="sel-forn" data-sel-todos ${nf && ui.sel.ids.size === nf ? 'checked' : ''} title="Marcar todos" aria-label="Marcar todos"></th><th>Fornecedor</th><th>E-mail</th><th>Envio</th><th>Resposta</th><th class="r">Total</th><th>Ações</th></tr></thead>
       <tbody>${fornRows}</tbody></table></div>` : '<p class="empty">Nenhum fornecedor nesta cotação.</p>'}
@@ -3744,6 +4384,7 @@ function renderCotacao(id) {
     <p class="tip"><b>Para vários de uma vez:</b> marque os fornecedores e clique em <b>✉ Enviar para os marcados</b>: você baixa todas as planilhas num .zip e abre os e-mails um atrás do outro (ou um e-mail só, com todos em cópia oculta).<br>
     <b>Para um só:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
     Quando o fornecedor devolver a planilha preenchida, use <b>📥 Importar</b> para lançar os preços automaticamente.</p>
+    </div>
   </section>
 
   ${painel}
@@ -3751,12 +4392,20 @@ function renderCotacao(id) {
   <section class="card">
     <div class="row-between">
       <h3>${temResposta ? 'Comparativo de preços' : 'Itens da cotação'}</h3>
-      ${temResposta ? '<button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button>' : ''}
+      ${temResposta ? `<div class="row">${seletorVencedor(c, comp)}<button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button></div>` : ''}
     </div>
     ${!temResposta ? '<p class="muted small">Assim que os fornecedores responderem, os preços aparecem aqui lado a lado, com o menor preço de cada item em verde.</p>' : ''}
-    ${temResposta && nf > 1 ? `<p class="muted small" style="margin-top:0">O vencedor de cada item fica em verde. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço.${comp.escolhasManuais ? ` <button class="sm" data-act="limparEscolhas">Desfazer as ${comp.escolhasManuais} escolha(s)</button>` : ''}</p>` : ''}
-    ${temResposta ? `<p class="dica-qtd small">📦 <b>Quantidades:</b> depois de ver os preços, digite quantas unidades cada loja vai comprar nas colunas ${LJ.map(l => '<b>' + esc(l.nome) + '</b>').join(' e ')} (Enter ou ↓ vai para o item de baixo). Os pedidos de compra saem divididos por loja. ${comp.porLoja ? '' : 'Enquanto nenhuma quantidade for digitada, os totais usam 1 unidade de cada item.'}</p>` : ''}
+    ${temResposta ? `<div class="barra-comp small">
+      ${escondidos ? `<span class="muted">${escondidos} fornecedor(es) ainda sem resposta não aparecem na tabela.</span> <button type="button" class="link" data-act="mostrarSemResposta">mostrar</button>` : ui.mostrarSemResposta && c.fornecedores.some(f => !Object.values(f.respostas || {}).some(o => o?.preco > 0)) ? '<button type="button" class="link" data-act="mostrarSemResposta">esconder quem não respondeu</button>' : ''}
+      ${comp.escolhasManuais ? `<button class="sm" data-act="limparEscolhas">Desfazer as ${comp.escolhasManuais} escolha(s)</button>` : ''}
+      <details class="ajuda-comp"><summary>ⓘ Como usar</summary>
+        ${nf > 1 ? '<p>O vencedor de cada item fica em <b>verde</b>. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço. Preços iguais: ganha quem respondeu primeiro.</p>' : ''}
+        <p>📦 <b>Quantidades:</b> digite quantas unidades cada loja vai comprar nas colunas ${LJ.map(l => '<b>' + esc(l.nome) + '</b>').join(' e ')} (Enter ou ↓ vai para o item de baixo). Use <b>Mostrar itens de</b> para ver só os itens de um fornecedor. ${comp.porLoja ? '' : 'Enquanto nenhuma quantidade for digitada, os totais usam 1 unidade de cada item.'}</p>
+      </details>
+    </div>` : ''}
+    ${comp.linhas.some(l => l.aguardando) ? `<p class="aviso-recusa small">✗ <b>${comp.linhas.filter(l => l.aguardando).length} item(ns) com a marca recusada, aguardando outro preço</b> (linhas em vermelho). Quando chegar a resposta de outro fornecedor, confira a marca dele.</p>` : ''}
     ${qtdMarcas.errada || qtdMarcas.duvida ? `<p class="aviso-marca small">🏷️ ${qtdMarcas.errada ? `<b>${qtdMarcas.errada} preço(s) com marca diferente da pedida</b>${db.config.marcaErradaNaoGanha !== false ? ' (não ganham automaticamente)' : ''}` : ''}${qtdMarcas.errada && qtdMarcas.duvida ? ' · ' : ''}${qtdMarcas.duvida ? `${qtdMarcas.duvida} marca(s) abreviada(s) para conferir` : ''}. Clique no aviso da marca para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.</p>` : ''}
+    ${comp.linhas.some(difSuspeita) ? `<p class="aviso-recusa small">⚠ <b>${comp.linhas.filter(difSuspeita).length} item(ns) com mais de 100% de diferença entre o 1º e o 2º preço</b>: pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso <b>⚠ confira o preço</b> na coluna Dif. 1º × 2º.</p>` : ''}
     ${qtdAlertas ? `<p class="aviso-alertas small">⚠ ${qtdAlertas} preço(s) fora do normal: mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso para ver os detalhes.</p>` : ''}
     ${tabelaComp}
   </section>
@@ -3774,9 +4423,9 @@ function linhasProdutos() {
   const q = semAcento(ui.filtroProd);
   const hist = historicoPrecos();
   const termos = q ? q.split(/\s+/) : [];
-  const lista = indiceBusca().filter(([p, t]) => (!ui.soComPreco || hist[p.id]) && termos.every(w => t.includes(w))).map(([p]) => p)
-    .sort((a, b) => COLLATOR.compare(a.descricao, b.descricao));
-  const LIMITE = 300;
+  // o índice já vem em ordem de descrição: não precisa ordenar a cada tecla
+  const lista = indiceBusca().filter(([p, t]) => (!ui.soComPreco || hist[p.id]) && termos.every(w => t.includes(w))).map(([p]) => p);
+  const LIMITE = 100;
   const extra = lista.length > LIMITE
     ? `<tr><td colspan="7" class="empty">Mostrando ${LIMITE} de ${lista.length.toLocaleString('pt-BR')} produtos. Use a busca para encontrar o que precisa.</td></tr>`
     : '';
@@ -3911,6 +4560,34 @@ function painelHistorico(h) {
   </div>`;
 }
 
+/** Produto sem marca exigida não pode ficar no banco. */
+const semMarcaExigida = p => !String(p?.marca || '').trim();
+const produtosSemMarca = () => db.produtos.filter(semMarcaExigida);
+
+/** Troca uma marca por outra só quando ela aparece como palavra inteira ("SÓ FREEMAX", "FREEMAX-COBREQ"). */
+function trocadorDeMarca(de, para) {
+  const alvo = String(de || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(^|[^A-Za-z0-9])${alvo}(?=[^A-Za-z0-9]|$)`, 'gi');
+  return s => String(s || '').replace(re, (_, antes) => antes + para);
+}
+
+function cartaoLimpezaProdutos() {
+  const sem = produtosSemMarca();
+  return `<section class="card">
+    <h3>Limpeza do cadastro</h3>
+    ${sem.length ? `<div class="aviso-recusa small" style="margin-bottom:10px">⚠ <b>${sem.length} produto(s) sem marca exigida.</b> Todo produto precisa de marca exigida (QUALQUER, SÓ COFAP…).
+      <div style="margin:6px 0">${sem.slice(0, 10).map(p => `<span class="badge">${esc(p.codigo || '—')}</span> ${esc(p.descricao)}`).join('<br>')}${sem.length > 10 ? `<br>… e mais ${sem.length - 10}` : ''}</div>
+      <button type="button" class="sm danger" data-act="excluirSemMarca">🗑 Excluir os ${sem.length} produto(s) sem marca</button>
+      <span class="muted"> ou edite cada um e preencha a marca.</span></div>` : '<p class="small muted" style="margin-top:0">✓ Todos os produtos têm marca exigida.</p>'}
+    <form data-form="trocarMarca" class="row troca-marca">
+      <b class="small">Trocar marca em todos os produtos:</b>
+      <label>De<input name="de" required placeholder="Ex.: FREEMAX" autocomplete="off"></label>
+      <label>Para<input name="para" required placeholder="Ex.: FREMAX" autocomplete="off"></label>
+      <button class="sm primary">Trocar…</button>
+    </form>
+  </section>`;
+}
+
 function renderProdutos() {
   const p = ui.editProd ? db.produtos.find(x => x.id === ui.editProd) : null;
   const v = p || { unidade: 'UN' };
@@ -3922,7 +4599,7 @@ function renderProdutos() {
       <label style="grid-column:span 2">Descrição *<input name="descricao" required value="${esc(v.descricao)}"></label>
       <label>Unidade<input name="unidade" value="${esc(v.unidade)}" placeholder="UN, CX, KG, M…"></label>
       <label>Similar (códigos equivalentes)<input name="similar" value="${esc(v.similar)}"></label>
-      <label>Marca exigida <span class="muted small">(QUALQUER, SÓ COFAP, NAK-COF-TRW…)</span><input name="marca" value="${esc(v.marca)}"></label>
+      <label>Marca exigida * <span class="muted small">(QUALQUER, SÓ COFAP, NAK-COF-TRW…)</span><input name="marca" required value="${esc(v.marca)}"></label>
       <label>Categoria<input name="categoria" value="${esc(v.categoria)}" list="categorias"></label>
       <label style="grid-column:1/-1">Observação<input name="obs" value="${esc(v.obs)}"></label>
       <datalist id="categorias">${[...new Set(db.produtos.map(x => x.categoria).filter(Boolean))].sort().map(cat => `<option value="${esc(cat)}">`).join('')}</datalist>
@@ -3932,6 +4609,7 @@ function renderProdutos() {
       </div>
     </form>
   </section>
+  ${cartaoLimpezaProdutos()}
   <section class="card">
     <div class="row-between" style="margin-bottom:10px">
       <input class="grow" id="filtroProd" placeholder="Buscar produto…" value="${esc(ui.filtroProd)}">
@@ -4136,7 +4814,7 @@ function desempenhoFornecedores(desde = inicioPeriodo()) {
       x.respondidas++;
       if (c.prazoResposta && f.respondidoEm) {
         x.comPrazo++;
-        if (f.respondidoEm.slice(0, 10) <= c.prazoResposta) x.noPrazo++;
+        if (respondeuNoPrazo(c, f)) x.noPrazo++; // data e hora do prazo
       }
       if (f.enviadoEm && f.respondidoEm && f.respondidoEm > f.enviadoEm) x.horas.push((new Date(f.respondidoEm) - new Date(f.enviadoEm)) / 3600000);
       x.itensPedidos += c.itens.length;
@@ -4264,7 +4942,7 @@ function pendencias() {
     const prazo = situacaoPrazo(c);
     if (c.status === 'aberta' && !c.fornecedores.length) add('aviso', `${nome}: nenhum fornecedor escolhido`, 'Adicione os fornecedores e envie a planilha.', 'cotacao', c.id, 'Abrir');
     else if (c.status === 'aberta' && naoEnviados.length) add('aviso', `${nome}: ${naoEnviados.length} fornecedor(es) ainda sem a planilha`, naoEnviados.map(f => f.nome).join(', '), 'cotacao', c.id, 'Enviar');
-    if (prazo) add(prazo.dias < 0 ? 'urgente' : 'aviso', `${nome}: prazo de resposta ${textoPrazo(prazo.dias)}`, `Faltam responder: ${prazo.pendentes.map(fi => c.fornecedores[fi].nome).join(', ')}`, 'cotacao', c.id, 'Cobrar');
+    if (prazo) add(prazo.dias < 0 ? 'urgente' : 'aviso', `${nome}: prazo de resposta ${textoPrazo(prazo.dias, c.prazoHora)}`, `Faltam responder: ${prazo.pendentes.map(fi => c.fornecedores[fi].nome).join(', ')}`, 'cotacao', c.id, 'Cobrar');
     if (!comp.itensCotados) continue;
     if (!comp.porLoja) { add('aviso', `${nome}: respostas chegaram, faltam as quantidades das lojas`, `${comp.itensCotados} item(ns) com preço.`, 'cotacao', c.id, 'Definir quantidades'); continue; }
     const peds = pedidosPorFornecedor(c);
@@ -4348,25 +5026,84 @@ function textoDuvidas() {
 }
 
 /**
- * Leva um item do comparativo para as dúvidas: preço e marca do fornecedor `fi`
- * (ou do vencedor), uma dúvida por loja que tem quantidade.
+ * Janela do ❓: para qual loja perguntar (pode marcar as duas), a quantidade de cada uma e a observação.
+ * Devolve { lojas: [{ sigla, qtd }], obs } ou null se cancelar.
  */
-function duvidasDoItem(c, i, fi) {
+function dialogoDuvida({ titulo, detalhe, opcoes, obs = '' }) {
+  return new Promise(resolve => {
+    const fundo = document.createElement('div');
+    fundo.className = 'dlg-fundo';
+    fundo.innerHTML = `<div class="dlg dlg-duvida" role="dialog" aria-modal="true" aria-label="Pôr em Dúvidas">
+      <h3 style="margin:0 0 4px">❓ Pôr em Dúvidas</h3>
+      <p style="margin:0"><b>${esc(titulo)}</b></p>
+      <p class="small muted" style="margin:2px 0 12px">${esc(detalhe)}</p>
+      <p class="small" style="margin:0 0 6px">Perguntar para qual loja? Pode marcar as duas.</p>
+      ${opcoes.map((o, k) => `<div class="duv-loja">
+        <label class="duv-marcar"><input type="checkbox" data-duv-loja="${k}" ${o.marcada ? 'checked' : ''}> <b>${esc(o.sigla)}</b> <span class="muted">${esc(o.nome)}</span></label>
+        <label class="duv-qtd">Qtd <input data-duv-qtd="${k}" inputmode="numeric" value="${esc(o.qtd)}" aria-label="Quantidade ${esc(o.sigla)}"></label>
+      </div>`).join('')}
+      <label style="margin-top:10px">Observação<input id="duvObs" value="${esc(obs)}" placeholder="Ex.: MARCA DIFERENTE, SÓ TEM ESSA" autocomplete="off"></label>
+      <p class="small erro-duv" id="duvErro" hidden>Marque pelo menos uma loja com quantidade.</p>
+      <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" class="primary" data-r="1">Pôr em Dúvidas</button></div>
+    </div>`;
+    const q = s => fundo.querySelector(s);
+    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const confirmar = () => {
+      const lojasEscolhidas = opcoes.map((o, k) => ({ sigla: o.sigla, qtd: Math.max(0, parseNum(q(`[data-duv-qtd="${k}"]`).value) || 0), ok: q(`[data-duv-loja="${k}"]`).checked }))
+        .filter(x => x.ok && x.qtd > 0).map(({ sigla, qtd }) => ({ sigla, qtd }));
+      if (!lojasEscolhidas.length) { q('#duvErro').hidden = false; return; }
+      fechar({ lojas: lojasEscolhidas, obs: q('#duvObs').value.trim() });
+    };
+    const tecla = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(null); }
+      else if (e.key === 'Enter' && !e.target.matches('button')) { e.preventDefault(); e.stopImmediatePropagation(); confirmar(); }
+      else e.stopImmediatePropagation();
+    };
+    // digitar a quantidade marca a loja
+    fundo.addEventListener('input', e => {
+      const k = e.target.dataset.duvQtd;
+      if (k != null) q(`[data-duv-loja="${k}"]`).checked = (parseNum(e.target.value) || 0) > 0;
+      q('#duvErro').hidden = true;
+    });
+    fundo.addEventListener('click', e => {
+      e.stopPropagation();
+      const b = e.target.closest('button[data-r]');
+      if (b) { if (b.dataset.r === '1') confirmar(); else fechar(null); }
+    });
+    document.addEventListener('keydown', tecla, true);
+    document.body.appendChild(fundo);
+    const primeira = opcoes.findIndex(o => o.marcada);
+    const campo = q(`[data-duv-qtd="${Math.max(0, primeira)}"]`);
+    campo.focus();
+    campo.select();
+  });
+}
+
+/**
+ * Leva um item do comparativo para as dúvidas: preço e marca do fornecedor `fi` (ou do vencedor).
+ * Pergunta a loja (uma ou as duas), a quantidade e a observação. Devolve quantas dúvidas entraram.
+ */
+async function duvidasDoItem(c, i, fi, obsSugerida = '') {
   const comp = comparar(c);
   const l = comp.linhas[i];
-  const j = fi ?? l.vencedor;
-  const f = c.fornecedores[j];
+  const j = fi ?? l?.vencedor;
+  const f = l && c.fornecedores[j];
   if (!l || !f || l.precos[j] == null) return 0;
   const o = f.respostas?.[i] || {};
-  const base = { codigo: l.it.codigo || '', valor: l.precos[j], marca: o.marca || '', obs: '', origem: { cotId: c.id, numero: c.numero, fornecedor: f.nome, marcaExigida: l.it.marca || '' } };
-  const novas = [];
-  if (comp.porLoja) {
-    for (const lj of lojas()) {
-      const q = qtdLoja(c, i, lj.id);
-      if (q > 0) novas.push({ ...base, id: uid(), empresa: siglaLoja(lj), qtd: q });
-    }
-  }
-  if (!novas.length) novas.push({ ...base, id: uid(), empresa: 'N/A', qtd: l.q || 1 });
+  const lj = lojas();
+  const opcoes = lj.length
+    ? lj.map(x => ({ sigla: siglaLoja(x), nome: x.nome, qtd: qtdLoja(c, i, x.id) || 1, marcada: qtdLoja(c, i, x.id) > 0 }))
+    : [{ sigla: 'N/A', nome: 'sem loja', qtd: l.q || 1, marcada: true }];
+  if (!opcoes.some(x => x.marcada)) opcoes[0].marcada = true;
+  const escolha = await dialogoDuvida({
+    titulo: `${l.it.codigo || '—'} · ${l.it.descricao || ''}`,
+    detalhe: `${f.nome} · ${fmtMoeda(l.precos[j])} · marca ${o.marca || '—'}${l.it.marca ? ` (exigida ${l.it.marca})` : ''}`,
+    opcoes,
+    obs: obsSugerida,
+  });
+  if (!escolha) return -1;
+  const base = { codigo: l.it.codigo || '', valor: l.precos[j], marca: o.marca || '', obs: escolha.obs, origem: { cotId: c.id, numero: c.numero, fornecedor: f.nome, marcaExigida: l.it.marca || '' } };
+  const novas = escolha.lojas.map(x => ({ ...base, id: uid(), empresa: x.sigla, qtd: x.qtd }));
   db.duvidas = [...db.duvidas, ...novas];
   salvar();
   return novas.length;
@@ -4378,7 +5115,7 @@ function renderDuvidas() {
   return `
   <section class="card">
     <h2>Dúvidas <span class="badge">${db.duvidas.length}</span></h2>
-    <p class="muted small" style="margin-top:0">Itens que dependem da confirmação da loja antes de fechar a compra (marca diferente, preço estranho…). Monte a lista e copie o texto para o WhatsApp. No comparativo, o botão <b>❓</b> de cada item traz o item para cá já preenchido.</p>
+    <p class="muted small" style="margin-top:0">Itens que dependem da confirmação da loja antes de fechar a compra (marca diferente, preço estranho…). Monte a lista e copie o texto para o WhatsApp. No comparativo, o botão <b>❓</b> de cada item pergunta a loja (uma ou as duas), a quantidade e a observação e traz o item para cá já preenchido.</p>
     <form data-form="duvida" class="grid form-duvida">
       <label>Empresa<select name="empresa">${empresasDuvida().map(e => `<option ${v.empresa === e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></label>
       <label>Código do produto<input name="codigo" required value="${esc(v.codigo)}" autocomplete="off"></label>
@@ -4605,7 +5342,7 @@ document.addEventListener('click', e => {
   if (linhaGrupo && ui.datacar && !e.target.closest('button')) moverGrupoDataCar(+linhaGrupo.dataset.gIdx);
   const linhaItem = e.target.closest('[data-item-linha]');
   if (linhaItem) {
-    const campo = e.target.closest('[data-marca-item], [data-similar-prod]');
+    const campo = e.target.closest('[data-marca-item], [data-similar-prod], [data-codigo-item]');
     if (campo) { ui.cursorItem = +linhaItem.dataset.itemLinha; moverCursorItem(ui.cursorItem, false); campo.dataset.original = campo.value; }
     else if (!e.target.closest('button')) moverCursorItem(+linhaItem.dataset.itemLinha);
   }
@@ -4644,54 +5381,7 @@ function formDados(form) {
   return Object.fromEntries([...new FormData(form).entries()].map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]));
 }
 
-function adicionarItem(produtoId, quantidade = 1) {
-  const r = rascunho();
-  if (r.itens.some(x => x.produtoId === produtoId)) return;
-  r.itens.push({ produtoId, quantidade });
-  salvar();
-  render();
-  const busca = $('#buscaProd');
-  if (busca) busca.focus();
-}
-
-/** Aba MONTAGEM: adiciona uma lista de códigos colada, buscando cada um no banco. */
-function colarCodigos(texto) {
-  const r = rascunho();
-  const porCodigo = new Map(db.produtos.map(p => [chaveCodigo(String(p.codigo || '').toLowerCase()), p]));
-  const res = { achados: 0, novos: [], repetidos: 0 };
-  const naCotacao = new Set(r.itens.map(x => x.produtoId));
-  for (const linha of String(texto).split(/\r?\n/)) {
-    const codigo = linha.split(/\t|;/)[0].trim().toUpperCase();
-    if (!codigo || /^c[oó]d/i.test(codigo)) continue; // linha vazia ou cabeçalho
-    let p = porCodigo.get(chaveCodigo(codigo.toLowerCase()));
-    if (p && naCotacao.has(p.id)) { res.repetidos++; continue; }
-    if (!p) {
-      p = { id: uid(), codigo, descricao: '(sem descrição)', unidade: 'UN', similar: '', marca: '', categoria: '', obs: '' };
-      db.produtos.push(p);
-      porCodigo.set(chaveCodigo(codigo.toLowerCase()), p);
-      res.novos.push(codigo);
-    } else res.achados++;
-    naCotacao.add(p.id);
-    r.itens.push({ produtoId: p.id, quantidade: 1, codigoArquivo: codigo });
-  }
-  salvar();
-  return res;
-}
-
 const acoes = {
-  colarCodigos: () => {
-    const campo = $('#colarCodigos');
-    if (!campo || !campo.value.trim()) return;
-    const res = colarCodigos(campo.value);
-    render();
-    const partes = [`${res.achados} encontrado(s) no banco`];
-    if (res.novos.length) partes.push(`${res.novos.length} novo(s) cadastrado(s) sem descrição: ${res.novos.slice(0, 8).join(', ')}${res.novos.length > 8 ? '…' : ''}`);
-    if (res.repetidos) partes.push(`${res.repetidos} já estava(m) na cotação`);
-    avisar(partes.join('\n'));
-  },
-
-  addItem: el => adicionarItem(el.dataset.id),
-
   dcDecidir: el => decidirDataCar(el.dataset.d),
   dcEditarMarca: () => editarMarcaDataCar(),
   dcSugestoes: () => aplicarSugestoesDataCar(),
@@ -4730,6 +5420,10 @@ const acoes = {
     if (!escolhidas.length) return avisar('Marque pelo menos um item.');
     const r = rascunho();
     const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
+    const novosSemMarca = escolhidas.filter(l => !l.produtoId && !String(l.marca ?? txt(l, d.colMarca) ?? '').trim());
+    if (novosSemMarca.length) {
+      return avisar(`${novosSemMarca.length} código(s) novo(s) sem marca exigida: ${novosSemMarca.slice(0, 10).map(l => l.codigo || l.chave).join(', ')}${novosSemMarca.length > 10 ? '…' : ''}\n\nProduto sem marca exigida não entra no banco. Preencha a marca desses itens (ou deixe-os de fora) e adicione de novo.`);
+    }
     let novos = 0, somados = 0;
     for (const l of escolhidas) {
       const qtd = 1; // o fornecedor informa o preço unitário
@@ -4793,16 +5487,20 @@ const acoes = {
     render();
   },
 
-  removerItem: el => {
-    const r = rascunho();
-    const [x] = r.itens.splice(+el.dataset.i, 1); // tira só este item
+  removerItem: el => perguntarRemoverItem(+el.dataset.i, false),
+  incluirDaBusca: el => incluirNaLista(el.dataset.id),
+  recolherFornCot: el => alternarFornCot(el),
+  mostrarSemResposta: () => { ui.mostrarSemResposta = !ui.mostrarSemResposta; render(); },
+  exportarPedidoForn: el => exportarPedidoForn(cotAtual(), +el.dataset.f),
+  reabrirForn: async el => {
+    const c = cotAtual();
+    const f = c?.fornecedores[+el.dataset.f];
+    if (!f || !(await confirmar(`Reabrir a cotação de ${f.nome}? (Tira a marca de concluída.)`, 'Reabrir'))) return;
+    delete f.concluidoEm;
     salvar();
     render();
-    if (x) {
-      const p = db.produtos.find(y => y.id === x.produtoId);
-      toast(`Removido só o item ${x.codigoArquivo || p?.codigo || ''}${p ? ' · ' + p.descricao : ''}. Os outros continuam na cotação.`, 5000);
-    }
   },
+  cadastrarDaBusca: () => cadastrarEIncluir(codigoParaCadastrar(ui.filtroItens)),
 
   limparRascunho: async () => {
     if (!(await confirmar('Limpar todos os itens e fornecedores desta nova cotação?'))) return;
@@ -4813,7 +5511,7 @@ const acoes = {
 
   criarCotacao: async () => {
     const r = rascunho();
-    const prod = byId(db.produtos);
+    const prod = prodPorId();
     const forn = byId(db.fornecedores);
     const itens = r.itens.filter(x => prod[x.produtoId]);
     ordenarItensRascunho({ itens }, prod);
@@ -4828,6 +5526,7 @@ const acoes = {
       titulo: r.titulo,
       data: hojeISO(),
       prazoResposta: r.prazoResposta,
+      prazoHora: r.prazoHora || '',
       obs: r.obs,
       status: 'aberta',
       criadoEm: new Date().toISOString(),
@@ -4987,6 +5686,7 @@ const acoes = {
     const f = c.fornecedores[fi];
     if (!f) return;
     const l = comparar(c).linhas[i];
+    if (l.recusas[fi]) return toast('Esta marca foi recusada. Para usar este preço, clique na marca e desfaça a recusa.');
     c.escolhas = { ...(c.escolhas || {}) };
     // clicar no vencedor escolhido (ou no menor preço) volta ao automático
     if (l.vencedor === fi) delete c.escolhas[i];
@@ -5001,8 +5701,9 @@ const acoes = {
     const it = c.itens[i], f = c.fornecedores[fi];
     const o = f.respostas?.[i];
     if (!o) return;
+    const jaRecusada = recusada(c, i, f);
     const escolha = await abrirDialogo(
-      `${it.descricao}\nMarca pedida: ${it.marca}\n${f.nome} respondeu: ${o.marca}\n\n"${o.marca}" é a marca ${it.marca}?`,
+      `${it.descricao}\nMarca pedida: ${it.marca}\n${f.nome} respondeu: ${o.marca}${jaRecusada ? '\n\n✗ Você recusou esta marca: o preço não entra neste item.' : ''}\n\n"${o.marca}" é a marca ${it.marca}?`,
       [
         { txt: 'Cancelar', valor: undefined },
         { txt: 'Corrigir a marca…', valor: 'corrigir' },
@@ -5012,7 +5713,8 @@ const acoes = {
       ]);
     if (!escolha) return;
     if (escolha === 'duvida') {
-      const n = duvidasDoItem(c, i, fi);
+      const n = await duvidasDoItem(c, i, fi, 'MARCA DIFERENTE');
+      if (n <= 0) return;
       render();
       toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila).`);
       return;
@@ -5022,9 +5724,17 @@ const acoes = {
       if (nova == null || nova.trim() === o.marca) return;
       f.respostas = { ...f.respostas, [i]: { ...o, marca: nova.trim(), marcaOriginal: o.marcaOriginal || o.marca } };
       toast('Marca corrigida.');
+    } else if (escolha === 'igual') {
+      aprenderMarca(it.marca, o.marca, escolha);
+      desfazerRecusa(c, i, f);
+      toast(`Anotado: "${o.marca}" = ${it.marca}. Vale para as próximas cotações.`);
     } else {
       aprenderMarca(it.marca, o.marca, escolha);
-      toast(escolha === 'igual' ? `Anotado: "${o.marca}" = ${it.marca}. Vale para as próximas cotações.` : `Anotado: "${o.marca}" não é ${it.marca}.`);
+      recusarMarca(c, i, f);
+      const l = comparar(c).linhas[i];
+      toast(l.vencedor >= 0
+        ? `Marca "${o.marca}" recusada. Agora vale o preço de ${c.fornecedores[l.vencedor].nome}: confira a marca dele.`
+        : `Marca "${o.marca}" recusada. O item fica aguardando outro preço.`, 6000);
     }
     salvar();
     render();
@@ -5097,7 +5807,7 @@ const acoes = {
 
   duplicarCot: async () => {
     const c = cotAtual();
-    const prod = byId(db.produtos);
+    const prod = prodPorId();
     const forn = byId(db.fornecedores);
     const r = rascunho();
     if (r.itens.length && !(await confirmar('Já existe uma nova cotação em andamento. Substituir pelos itens desta?'))) return;
@@ -5160,10 +5870,11 @@ const acoes = {
     render();
   },
   copiarDuvidas: el => copiar(textoDuvidas(), el).then(() => toast('Texto copiado para colar no WhatsApp.')),
-  duvidaItem: el => {
+  duvidaItem: async el => {
     const c = cotAtual();
-    const n = duvidasDoItem(c, +el.dataset.i, el.dataset.f != null ? +el.dataset.f : null);
+    const n = await duvidasDoItem(c, +el.dataset.i, el.dataset.f != null ? +el.dataset.f : null);
     if (!n) return avisar('Este item ainda não tem preço.');
+    if (n < 0) return; // cancelou
     render();
     toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila).`);
   },
@@ -5178,6 +5889,20 @@ const acoes = {
     render();
   },
   exportarProdutos: () => exportarProdutos(),
+  excluirSemMarca: async () => {
+    const lista = produtosSemMarca();
+    if (!lista.length) return;
+    const amostra = lista.slice(0, 15).map(p => `${p.codigo || '—'} · ${p.descricao}`).join('\n');
+    const ok = await abrirDialogo(`Excluir do banco ${lista.length} produto(s) sem marca exigida?\n\n${amostra}${lista.length > 15 ? `\n… e mais ${lista.length - 15}` : ''}\n\nNão dá para desfazer (as cotações antigas não mudam). Se quiser guardar, baixe um backup antes em Configurações.`,
+      [{ txt: 'Cancelar', valor: false }, { txt: `Excluir ${lista.length} produto(s)`, valor: true, cls: 'danger' }]);
+    if (!ok) return;
+    const ids = new Set(lista.map(p => p.id));
+    db.produtos = db.produtos.filter(p => !ids.has(p.id));
+    if (db.rascunho?.itens) db.rascunho.itens = db.rascunho.itens.filter(x => !ids.has(x.produtoId));
+    salvar();
+    render();
+    toast(`${lista.length} produto(s) sem marca exigida excluído(s) do banco.`);
+  },
 
   editarForn: el => { ui.editForn = el.dataset.id; render(); window.scrollTo(0, 0); },
   cancelarForn: () => { ui.editForn = null; render(); },
@@ -5227,16 +5952,6 @@ const acoes = {
 };
 
 const formularios = {
-  produtoRapido: async form => {
-    const d = formDados(form);
-    if (!d.descricao) return;
-    if (d.codigo && db.produtos.some(p => semAcento(p.codigo) === semAcento(d.codigo)) && !(await confirmar(`Já existe um produto com o código ${d.codigo}. Cadastrar mesmo assim?`))) return;
-    const p = { id: uid(), codigo: d.codigo, descricao: d.descricao, unidade: (d.unidade || 'UN').toUpperCase(), marca: d.marca, categoria: '', obs: '', criadoEm: new Date().toISOString() };
-    db.produtos.push(p);
-    adicionarItem(p.id, 1);
-    toast('Produto cadastrado e adicionado.');
-  },
-
   fornecedorRapido: form => {
     const d = formDados(form);
     if (!d.nome) return;
@@ -5248,9 +5963,26 @@ const formularios = {
     toast('Fornecedor cadastrado e selecionado.');
   },
 
+  trocarMarca: async form => {
+    const d = formDados(form);
+    const de = d.de, para = (d.para || '').toUpperCase();
+    if (!de || !para) return;
+    const troca = trocadorDeMarca(de, para);
+    const afetados = db.produtos.filter(p => troca(p.marca) !== p.marca);
+    if (!afetados.length) return avisar(`Nenhum produto com a marca "${de}".`);
+    const ex = afetados.slice(0, 8).map(p => `${p.codigo || '—'}: ${p.marca} → ${troca(p.marca)}`).join('\n');
+    if (!(await confirmar(`Trocar "${de}" por "${para}" em ${afetados.length} produto(s)?\n\n${ex}${afetados.length > 8 ? `\n… e mais ${afetados.length - 8}` : ''}`, 'Trocar'))) return;
+    for (const p of afetados) p.marca = troca(p.marca);
+    for (const x of db.rascunho?.itens || []) if (x.marca) x.marca = troca(x.marca);
+    salvar();
+    render();
+    toast(`Marca "${de}" trocada por "${para}" em ${afetados.length} produto(s).`);
+  },
+
   produto: async form => {
     const d = formDados(form);
     if (!d.descricao) return;
+    if (!d.marca) return avisar('Informe a marca exigida (ex.: QUALQUER, SÓ COFAP). Produto sem marca exigida não entra no banco.');
     d.unidade = (d.unidade || 'UN').toUpperCase();
     const dup = d.codigo && db.produtos.find(p => p.id !== ui.editProd && semAcento(p.codigo) === semAcento(d.codigo));
     if (dup && !(await confirmar(`O código ${d.codigo} já é usado por "${dup.descricao}". Salvar mesmo assim?`))) return;
@@ -5381,6 +6113,15 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'filtroItens') {
+    ui.filtroItens = t.value;
+    aplicarFiltroItens();
+    return;
+  }
+  if (t.dataset.marcaItem != null) {
+    if (e.inputType && e.inputType.startsWith('insert')) sugerirMarca(t); // apagando, não completa
+    return;
+  }
   if (t.id === 'duvidasCabecalho') {
     db.config.duvidasCabecalho = t.value;
     salvar();
@@ -5393,7 +6134,20 @@ document.addEventListener('input', e => {
     const c = cotAtual();
     if (!c) return;
     const i = +t.dataset.i;
-    const v = Math.max(0, parseNum(t.value) || 0);
+    let v = Math.max(0, parseNum(t.value) || 0);
+    const l = comparar(c).linhas[i];
+    if (l?.estoque != null) {
+      // o vencedor informou o estoque (Kaizen): a soma das lojas não passa dele
+      const outras = lojas().filter(lj => lj.id !== t.dataset.qtdLoja).reduce((soma, lj) => soma + qtdLoja(c, i, lj.id), 0);
+      const max = Math.max(0, l.estoque - outras);
+      if (v > max) {
+        v = max;
+        t.value = max ? String(max) : '';
+        t.classList.add('no-limite');
+        setTimeout(() => t.classList.remove('no-limite'), 1500);
+        toast(`${c.fornecedores[l.vencedor].nome} tem só ${fmtNum(l.estoque)} em estoque deste item${outras ? ` (${fmtNum(outras)} já na outra loja)` : ''}. Quantidade ajustada para ${fmtNum(max)}.`, 5000);
+      }
+    }
     c.qtds = { ...(c.qtds || {}) };
     const o = { ...(c.qtds[i] || {}) };
     if (v) o[t.dataset.qtdLoja] = v; else delete o[t.dataset.qtdLoja];
@@ -5410,11 +6164,10 @@ document.addEventListener('input', e => {
     salvar();
   } else if (t.dataset.dcMarca != null) {
     // a marca é gravada ao sair do campo (Enter, Tab, setas ou clique fora)
-  } else if (t.id === 'buscaProd') {
-    resultadosBusca(t.value);
   } else if (t.id === 'filtroProd') {
     ui.filtroProd = t.value;
-    $('#tbProd').innerHTML = linhasProdutos();
+    clearTimeout(ui.timerFiltroProd); // espera uma pausa na digitação (não trava a cada tecla)
+    ui.timerFiltroProd = setTimeout(() => { const tb = $('#tbProd'); if (tb) tb.innerHTML = linhasProdutos(); }, 90);
   } else if (t.id === 'filtroForn') {
     ui.filtroForn = t.value;
     $('#tbForn').innerHTML = linhasFornecedores();
@@ -5427,25 +6180,34 @@ document.addEventListener('input', e => {
 document.addEventListener('focusout', e => {
   const t = e.target;
   if (t.dataset && t.dataset.dcMarca != null && t.isConnected) fecharMarcaDataCar(t, true);
+  // marca completada pela sugestão e o "change" não veio: salva do mesmo jeito
+  if (t.dataset && t.dataset.sugerido && t.isConnected) {
+    delete t.dataset.sugerido;
+    t.dispatchEvent(new Event('change', { bubbles: true }));
+  }
 });
 
 /* ---------------- lista de itens da cotação: setas + digitar direto na marca ---------------- */
 
 function moverCursorItem(i, focarTabela = true) {
-  const linhas = document.querySelectorAll('[data-item-linha]');
-  if (!linhas.length) return;
-  ui.cursorItem = Math.max(0, Math.min(linhas.length - 1, i));
-  linhas.forEach(tr => tr.classList.toggle('item-atual', +tr.dataset.itemLinha === ui.cursorItem));
-  linhas[ui.cursorItem].scrollIntoView({ block: 'nearest' });
-  if (focarTabela) $('#tabItens')?.focus({ preventScroll: true });
+  const tab = $('#tabItens');
+  const total = tab ? tab.querySelectorAll('[data-item-linha]').length : 0;
+  if (!total) return;
+  ui.cursorItem = Math.max(0, Math.min(total - 1, i));
+  // só troca a marcação da linha anterior e da nova (e não das centenas de linhas)
+  const nova = tab.querySelector(`[data-item-linha="${ui.cursorItem}"]`);
+  tab.querySelectorAll('tr.item-atual').forEach(tr => { if (tr !== nova) tr.classList.remove('item-atual'); });
+  nova.classList.add('item-atual');
+  nova.scrollIntoView({ block: 'nearest' });
+  if (focarTabela) tab.focus({ preventScroll: true });
 }
 
 /** Põe o foco num campo (marca ou similar) da linha i. modo: 'fim' | 'tudo' | texto inicial. */
 function focarCampoItem(i, campo, modo) {
-  const attr = campo === 'similar' ? 'data-similar-prod' : 'data-marca-item';
+  const attr = { similar: 'data-similar-prod', codigo: 'data-codigo-item' }[campo] || 'data-marca-item';
   const tr = document.querySelector(`[data-item-linha="${i}"]`);
   const inp = tr && tr.querySelector(`[${attr}]`);
-  if (!inp) return;
+  if (!inp) { moverCursorItem(i); return; } // linha sem esse campo (código só nos KIT CORREIA/TENSOR)
   moverCursorItem(i, false);
   inp.dataset.original = inp.value;
   inp.focus();
@@ -5453,26 +6215,132 @@ function focarCampoItem(i, campo, modo) {
   else {
     if (modo !== 'fim' && modo != null) inp.value = modo;
     inp.setSelectionRange(inp.value.length, inp.value.length);
+    if (campo === 'marca' && modo !== 'fim' && modo) sugerirMarca(inp); // abriu digitando uma letra
   }
+}
+
+/* sugestão de marca ao digitar: as marcas do cadastro, as mais usadas primeiro */
+const dobrarMarca = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+let cacheMarcas = null;
+function marcasConhecidas() {
+  if (cacheMarcas && cacheMarcas.versao === versaoDados) return cacheMarcas.lista;
+  const cont = new Map();
+  for (const p of db.produtos) {
+    const m = String(p.marca || '').trim();
+    if (m) cont.set(m, (cont.get(m) || 0) + 1);
+  }
+  const lista = [...cont].sort((a, b) => b[1] - a[1] || a[0].length - b[0].length || a[0].localeCompare(b[0])).map(([m]) => ({ m, d: dobrarMarca(m) }));
+  cacheMarcas = { versao: versaoDados, lista };
+  return lista;
+}
+
+/** Completa a marca digitada com a mais usada que começa igual; o que foi completado fica selecionado. */
+function sugerirMarca(inp) {
+  const digitado = inp.value;
+  if (!digitado.trim() || inp.selectionStart !== digitado.length) return;
+  const d = dobrarMarca(digitado);
+  const achada = marcasConhecidas().find(x => x.d.length > d.length && x.d.startsWith(d));
+  if (!achada) return;
+  inp.value = achada.m;
+  inp.setSelectionRange(digitado.length, achada.m.length);
+  inp.dataset.sugerido = '1'; // valor posto pelo código: o navegador pode não disparar "change" ao sair
+
+}
+
+const ENTER_PADRAO_MS = 1500; // tempo para o segundo Enter (marca vira padrão no cadastro)
+
+/** Enter duas vezes na marca: a marca desta cotação passa a ser a marca do cadastro do produto. */
+function marcaComoPadrao(i) {
+  const item = rascunho().itens[i];
+  const p = item && db.produtos.find(x => x.id === item.produtoId);
+  if (!p) return;
+  const nome = p.codigo || p.descricao;
+  if (!item.marca) {
+    toast(p.marca ? `"${p.marca}" já é a marca padrão no cadastro de ${nome}.` : 'Sem marca para salvar no cadastro.');
+    return;
+  }
+  const antiga = p.marca;
+  p.marca = item.marca;
+  item.marca = '';
+  salvar();
+  atualizarLinhaItem(i);
+  moverCursorItem(ui.cursorItem); // o cursor fica no item seguinte
+  toast(`Marca "${p.marca}" agora é o padrão no cadastro de ${nome}${antiga ? ` (antes: "${antiga}")` : ''}.`);
+}
+
+/** Linhas que aparecem na busca (índices dos itens). */
+function itensVisiveis() {
+  return [...document.querySelectorAll('[data-item-linha]:not([hidden])')].map(tr => +tr.dataset.itemLinha);
+}
+
+/** Item encontrado mais próximo de i na direção d (+1 desce, -1 sobe); pula os escondidos pela busca. */
+function itemVizinho(i, d) {
+  const v = itensVisiveis();
+  if (!v.length) return i;
+  const pos = v.indexOf(i);
+  if (pos < 0) return d > 0 ? (v.find(j => j > i) ?? v.at(-1)) : ([...v].reverse().find(j => j < i) ?? v[0]);
+  return v[Math.max(0, Math.min(v.length - 1, pos + d))];
+}
+
+function aplicarFiltroItens() {
+  const r = rascunho();
+  const prod = prodPorId();
+  const pals = palavrasBusca(ui.filtroItens);
+  document.querySelectorAll('[data-item-linha]').forEach(tr => {
+    const x = r.itens[+tr.dataset.itemLinha];
+    const esconder = !itemNaBusca(x, x && prod[x.produtoId], null, pals);
+    if (tr.hidden !== esconder) tr.hidden = esconder;
+  });
+  const c = $('#contaFiltroItens');
+  if (c) c.textContent = contaFiltroItens();
+  const fora = $('#foraDaLista');
+  if (fora) fora.innerHTML = htmlForaDaLista();
+  const v = itensVisiveis();
+  if (v.length && !v.includes(ui.cursorItem)) moverCursorItem(v[0], false);
+}
+
+/** Tira um item da cotação depois de confirmar (o produto continua no cadastro). */
+async function perguntarRemoverItem(i, focar = true) {
+  const r = rascunho();
+  const x = r.itens[i];
+  if (!x) return;
+  const p = db.produtos.find(y => y.id === x.produtoId);
+  const nome = `${x.codigoArquivo || p?.codigo || ''}${p ? ' · ' + p.descricao : ''}`;
+  if (!(await confirmar(`Tirar este item da cotação?\n\n${nome}\n\nO produto continua no cadastro.`, 'Tirar da cotação'))) {
+    if (focar) moverCursorItem(i);
+    return;
+  }
+  const pos = r.itens.indexOf(x);
+  if (pos < 0) return;
+  r.itens.splice(pos, 1);
+  salvar();
+  render();
+  const v = itensVisiveis();
+  if (v.length) moverCursorItem(v.find(j => j >= pos) ?? v.at(-1), focar);
+  toast(`Removido só o item ${nome}. Os outros continuam na cotação.`, 5000);
 }
 
 function teclaItens(e) {
   const t = e.target;
   const tab = $('#tabItens');
-  const noCampo = t.matches('[data-marca-item], [data-similar-prod]');
+  const noCampo = t.matches('[data-marca-item], [data-similar-prod], [data-codigo-item]');
   const linha = t.closest('[data-item-linha]');
   const atual = linha ? +linha.dataset.itemLinha : ui.cursorItem;
   if (noCampo) {
-    const campo = t.matches('[data-similar-prod]') ? 'similar' : 'marca';
+    const campo = t.matches('[data-similar-prod]') ? 'similar' : t.matches('[data-codigo-item]') ? 'codigo' : 'marca';
+    // a lista é reordenada ao salvar (descrição, código): acha a linha do item depois de salvar
+    const obj = rascunho().itens[atual];
+    const posicao = () => Math.max(0, rascunho().itens.indexOf(obj));
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      const prox = atual + (e.key === 'ArrowDown' ? 1 : -1);
       t.blur(); // salva (dispara "change") e redesenha
-      focarCampoItem(Math.max(0, Math.min(rascunho().itens.length - 1, prox)), campo, 'tudo');
+      focarCampoItem(itemVizinho(posicao(), e.key === 'ArrowDown' ? 1 : -1), campo, 'tudo');
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      t.blur();
-      moverCursorItem(atual);
+      t.blur(); // salva nesta cotação
+      moverCursorItem(itemVizinho(posicao(), 1)); // e vai para o item de baixo (entre os encontrados na busca)
+      // um segundo Enter logo em seguida grava a marca do item salvo como padrão no cadastro
+      if (campo === 'marca') ui.enterPadrao = { i: posicao(), cursor: ui.cursorItem, ate: Date.now() + ENTER_PADRAO_MS };
     } else if (e.key === 'Escape') {
       e.preventDefault();
       if (t.dataset.original != null) t.value = t.dataset.original;
@@ -5482,19 +6350,30 @@ function teclaItens(e) {
     return;
   }
   if (t !== tab) return;
+  const armado = ui.enterPadrao;
+  ui.enterPadrao = null;
+  if (e.key === 'Enter' && armado && armado.cursor === ui.cursorItem && Date.now() < armado.ate) {
+    e.preventDefault();
+    marcaComoPadrao(armado.i);
+    return;
+  }
   const letra = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
-    moverCursorItem(ui.cursorItem + (e.key === 'ArrowDown' ? 1 : -1));
+    moverCursorItem(itemVizinho(ui.cursorItem, e.key === 'ArrowDown' ? 1 : -1));
   } else if (e.key === 'Home' || e.key === 'End') {
     e.preventDefault();
-    moverCursorItem(e.key === 'Home' ? 0 : rascunho().itens.length - 1);
+    const v = itensVisiveis();
+    if (v.length) moverCursorItem(e.key === 'Home' ? v[0] : v.at(-1));
   } else if (e.key === 'F2' || e.key === 'Enter') {
     e.preventDefault();
     focarCampoItem(ui.cursorItem, 'marca', 'fim');
   } else if (letra && e.key !== ' ') {
     e.preventDefault();
     focarCampoItem(ui.cursorItem, 'marca', e.key);
+  } else if (e.key === 'Delete' && e.ctrlKey) {
+    e.preventDefault();
+    perguntarRemoverItem(ui.cursorItem);
   } else if (e.key === 'Backspace' || e.key === 'Delete') {
     e.preventDefault();
     focarCampoItem(ui.cursorItem, 'marca', '');
@@ -5538,11 +6417,13 @@ document.addEventListener('focusin', e => {
 
 document.addEventListener('keydown', e => {
   if (e.target.dataset?.qtdLoja != null) {
-    // Enter / ↓ vai para o item de baixo na mesma loja; ↑ volta
-    const d = e.key === 'Enter' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+    // Tab: próxima quantidade na linha (Paranoá → São Sebastião → item de baixo); Shift+Tab volta.
+    // Enter / ↓: item de baixo na mesma loja; ↑ sobe.
+    const tab = e.key === 'Tab';
+    const d = tab ? (e.shiftKey ? -1 : 1) : e.key === 'Enter' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
     if (!d) return;
     e.preventDefault();
-    const todos = [...document.querySelectorAll('[data-qtd-loja]')].filter(x => x.dataset.qtdLoja === e.target.dataset.qtdLoja);
+    const todos = [...document.querySelectorAll('[data-qtd-loja]')].filter(x => (tab || x.dataset.qtdLoja === e.target.dataset.qtdLoja) && !x.closest('tr').hidden);
     const prox = todos[todos.indexOf(e.target) + d];
     if (prox) prox.focus();
     return;
@@ -5555,15 +6436,28 @@ document.addEventListener('keydown', e => {
     teclaDataCar(e);
     return;
   }
-  if (e.target.id === 'buscaProd') {
-    if (e.key === 'Enter') {
+  if (e.target.matches?.('[data-act=recolherFornCot]') && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    alternarFornCot(e.target);
+    return;
+  }
+  if (e.target.id === 'filtroItens') {
+    if (e.key === 'Enter' || e.key === 'ArrowDown') {
       e.preventDefault();
-      const primeiro = $('#resultadosProd button:not(:disabled)');
-      if (primeiro) primeiro.click();
+      const v = itensVisiveis();
+      if (v.length) moverCursorItem(v.includes(ui.cursorItem) && e.key === 'ArrowDown' ? ui.cursorItem : v[0]);
+      else if (e.key === 'Enter') {
+        const [p] = foraDaLista(ui.filtroItens, 1).lista; // não está na lista: inclui o primeiro do cadastro
+        if (p) incluirNaLista(p.id);
+        else cadastrarEIncluir(codigoParaCadastrar(ui.filtroItens)); // nem no banco: cadastra
+      }
     } else if (e.key === 'Escape') {
+      e.preventDefault();
       e.target.value = '';
-      resultadosBusca('');
+      ui.filtroItens = '';
+      aplicarFiltroItens();
     }
+    return;
   }
 });
 
@@ -5583,7 +6477,17 @@ document.addEventListener('change', async e => {
     p.similar = t.value.trim();
     salvar();
     toast(p.similar ? `Similar salvo no cadastro de ${p.codigo || p.descricao}.` : 'Similar removido do cadastro.');
+  } else if (t.dataset.codigoItem != null) {
+    const item = rascunho().itens[+t.dataset.codigoItem];
+    const p = item && db.produtos.find(x => x.id === item.produtoId);
+    if (!p) return;
+    const valor = t.value.trim();
+    item.codigoArquivo = valor && valor !== p.codigo ? valor : '';
+    toast(item.codigoArquivo ? `Código "${valor}" vale só nesta cotação. O cadastro continua "${p.codigo}".` : `Voltou para o código do cadastro: "${p.codigo}".`);
+    salvar();
+    render();
   } else if (t.dataset.marcaItem != null) {
+    delete t.dataset.sugerido;
     const item = rascunho().itens[+t.dataset.marcaItem];
     const p = item && db.produtos.find(x => x.id === item.produtoId);
     if (!p) return;
@@ -5594,10 +6498,10 @@ document.addEventListener('change', async e => {
       toast(valor ? `Marca "${valor}" salva no cadastro de ${p.codigo || p.descricao}.` : 'Marca removida.');
     } else {
       item.marca = valor && valor !== p.marca ? valor : '';
-      toast(item.marca ? `Marca "${valor}" vale só nesta cotação. O cadastro continua "${p.marca}".` : `Voltou para a marca do cadastro: "${p.marca}".`);
+      toast(item.marca ? `Marca "${valor}" vale só nesta cotação. O cadastro continua "${p.marca}" (Enter de novo grava como padrão).` : `Voltou para a marca do cadastro: "${p.marca}".`);
     }
     salvar();
-    render();
+    atualizarLinhaItem(+t.dataset.marcaItem); // a marca não muda a ordem da lista
   } else if (t.id === 'dcColCod' || t.id === 'dcCol') {
     if (t.id === 'dcColCod') ui.datacar.colCod = +t.value; else ui.datacar.col = +t.value;
     casarLinhasDataCar();
@@ -5605,6 +6509,20 @@ document.addEventListener('change', async e => {
     Object.assign(ui.datacar, { pos: 0, gcur: 0, grupoAberto: null });
     renderSoDataCar();
     focarDataCar();
+  } else if (t.id === 'filtroVencedor') {
+    const c = cotAtual();
+    if (!c) return;
+    ui.filtroVenc = { cotId: c.id, valor: t.value };
+    const bt = $('#pedidoFiltro');
+    if (bt) bt.outerHTML = botaoPedidoFiltro(c, t.value);
+    const comp = comparar(c);
+    for (const l of comp.linhas) {
+      const tr = document.querySelector(`[data-comp-linha="${l.i}"]`);
+      if (tr) tr.hidden = !linhaNoFiltroVenc(c, l, t.value);
+    }
+    // já deixa o cursor na 1ª quantidade da 1ª loja dos itens mostrados
+    const primeiro = [...document.querySelectorAll('[data-qtd-loja]')].find(x => !x.closest('tr').hidden);
+    primeiro?.focus();
   } else if (t.id === 'verArquivadas') {
     ui.verArquivadas = t.checked;
     render();
@@ -5640,6 +6558,10 @@ document.addEventListener('change', async e => {
     render();
   } else if (t.dataset.change === 'prazoCot') {
     cotAtual().prazoResposta = t.value;
+    salvar();
+    render();
+  } else if (t.dataset.change === 'prazoHoraCot') {
+    cotAtual().prazoHora = t.value;
     salvar();
     render();
   } else if (t.dataset.change === 'statusCot') {
@@ -5679,14 +6601,6 @@ document.addEventListener('change', async e => {
         avisar('Não foi possível restaurar: ' + err.message);
       }
     }
-  }
-});
-
-// Fecha a lista de busca ao clicar fora.
-document.addEventListener('click', e => {
-  if (!e.target.closest('.search')) {
-    const box = $('#resultadosProd');
-    if (box) box.innerHTML = '';
   }
 });
 

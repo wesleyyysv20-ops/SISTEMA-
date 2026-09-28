@@ -252,7 +252,6 @@ tbody tr:hover { background: var(--hover); }
 .badge.danger { background: var(--danger-bg); color: var(--danger); }
 .badge.blue { background: var(--blue-bg); color: var(--primary-2); }
 
-.search { position: relative; margin-bottom: 10px; }
 .results {
   position: absolute;
   left: 0; right: 0;
@@ -508,6 +507,20 @@ details > summary { cursor: pointer; color: var(--primary-2); font-weight: 600; 
 .tab-itens tbody tr.item-atual td:first-child { box-shadow: inset 3px 0 0 var(--primary-2); }
 .tab-itens input { background: var(--card); border: 1px solid var(--input-line); }
 .tab-itens input.falta { background: var(--field); border-style: dashed; }
+.tab-itens input.cod-item { width: 150px; }
+.tab-itens tr[hidden] { display: none; }
+.busca-itens { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; }
+.busca-itens input { flex: 1; min-width: 0; }
+.busca-itens span { white-space: nowrap; }
+.dlg-duvida { max-width: 460px; }
+.duv-loja { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.duv-loja label { margin: 0; display: flex; align-items: center; gap: 6px; }
+.duv-marcar input { width: auto; }
+.duv-qtd input { width: 70px; text-align: right; }
+.erro-duv { color: var(--danger); margin: 6px 0 0; }
+.fora-lista { margin: 0 0 10px; }
+.fora-lista p { margin: 0 0 4px; }
+.fora-item { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 4px 0; border-bottom: 1px dashed var(--line, #dde2ee); }
 .tab-itens input.so-cotacao { color: var(--primary-2); font-weight: 600; border-color: var(--primary-2); background: var(--card); }
 .tab-itens input:focus {
   border: 2px solid var(--primary-2);
@@ -773,6 +786,16 @@ input.qtd-loja:not(:placeholder-shown) { border-color: var(--primary-2); font-we
 .chip-marca .link { font-size: 11px; color: inherit; }
 td.marca-errada:not(.best) { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 td.marca-errada .chip-marca, td.marca-errada .small { text-decoration: none; display: inline-block; }
+td.recusada { background: var(--danger-bg); color: var(--danger); text-decoration: line-through; text-decoration-thickness: 2px; }
+td.recusada .chip-marca, td.recusada .small { text-decoration: none; display: inline-block; }
+.chip-marca.recusada { background: var(--danger); color: #fff; cursor: pointer; }
+tr.linha-aguardando > td:first-child { box-shadow: inset 4px 0 0 var(--danger); }
+tr.linha-aguardando > td { background: color-mix(in srgb, var(--danger-bg) 55%, transparent); }
+.aguardando { color: var(--danger); font-weight: 700; }
+.troca-marca { align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.troca-marca label { margin: 0; }
+.troca-marca input { width: 160px; }
+.aviso-recusa { background: var(--danger-bg); color: var(--danger); border-radius: 6px; padding: 6px 10px; }
 .tab-lojas input { min-width: 120px; }
 
 /* backup e arquivo */
@@ -815,7 +838,6 @@ button.link.small { font-size: 12px; }
 .btn-duvida { font-size: 14px; padding: 0 2px; }
 .nav-alerta.nav-info { background: var(--primary-2); }
 nav a.active .nav-alerta { box-shadow: 0 0 0 1.5px #fff; }
-.colar-codigos textarea { font-family: var(--mono); }
 
 /* início */
 .lista-pend { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -883,3 +905,73 @@ a.link-nota { text-decoration: none; }
 .login-msg { min-height: 1.2em; color: var(--danger); font-size: 14px; }
 .login-msg.info { color: var(--muted); }
 .login-card button.link { justify-self: center; background: none; border: 0; color: var(--primary-2); cursor: pointer; }
+
+/* estoque informado pelo fornecedor (Kaizen: "MARCA/estoque") */
+.estoque { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 600; color: var(--primary-2); background: var(--blue-bg); border-radius: 4px; padding: 1px 6px; }
+.acima-estoque { color: var(--danger); font-weight: 700; font-size: 12px; }
+input.qtd-loja.no-limite { border-color: var(--danger); background: var(--danger-bg); }
+
+/* quadro recolhível (clique no título abre e fecha) */
+h3.recolhe { cursor: pointer; user-select: none; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 0; }
+h3.recolhe:hover .seta-recolhe, h3.recolhe:focus-visible .seta-recolhe { color: var(--primary-2); }
+h3.recolhe[aria-expanded="true"] { margin-bottom: 10px; }
+.seta-recolhe { display: inline-block; width: 1em; color: var(--muted); }
+.resumo-recolhe { font-weight: 400; }
+
+/* comparativo: colunas # e Produto fixas ao rolar para o lado */
+.tab-comp { --larg-num: 44px; }
+.tab-comp > thead > tr > :nth-child(-n+2),
+.tab-comp > tbody > tr > :nth-child(-n+2) { position: sticky; z-index: 1; background: var(--card); background-clip: padding-box; }
+.tab-comp > thead > tr > :nth-child(-n+2) { z-index: 3; background: var(--card-2); }
+.tab-comp > * > tr > :nth-child(1) { left: 0; width: var(--larg-num); min-width: var(--larg-num); max-width: var(--larg-num); }
+.tab-comp > * > tr > :nth-child(2) { left: var(--larg-num); min-width: 220px; max-width: 320px; box-shadow: 6px 0 6px -6px rgba(0, 0, 0, .25); }
+/* as colunas fixas acompanham a cor da linha (passar o mouse, total, aguardando outro preço) */
+.tab-comp > tbody > tr:hover > :nth-child(-n+2) { background: linear-gradient(var(--hover), var(--hover)), var(--card); }
+.tab-comp > tbody > tr.total > :nth-child(-n+2) { background: var(--card-2); }
+.tab-comp > tbody > tr.linha-aguardando > :nth-child(-n+2) { background: linear-gradient(color-mix(in srgb, var(--danger-bg) 55%, transparent), color-mix(in srgb, var(--danger-bg) 55%, transparent)), var(--card); }
+.tab-comp > tbody > tr.linha-aguardando > :nth-child(1) { box-shadow: inset 4px 0 0 var(--danger); }
+
+/* comparativo: filtro "Mostrar itens de" (fornecedor vencedor) */
+.filtro-venc { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 600; }
+.filtro-venc select { width: auto; max-width: 260px; }
+.tab-comp tr[hidden] { display: none; }
+
+/* botão desligado com explicação ao passar o mouse (o title fica no invólucro: botão desligado não mostra dica) */
+.btn-desligado { display: inline-flex; cursor: help; }
+.btn-desligado button:disabled { pointer-events: none; opacity: .55; }
+
+/* exportar pedido: escolha do formato e selo de concluída */
+.dlg-formato { max-width: 480px; }
+.formato-opcao { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; margin: 0 0 6px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-weight: 400; }
+.formato-opcao:has(input:checked) { border-color: var(--primary-2); background: var(--blue-bg); }
+.formato-opcao input { width: auto; margin-top: 3px; }
+.formato-opcao.desligada { opacity: .55; cursor: not-allowed; }
+.badge.concluida { background: var(--ok); color: var(--card); border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 700; }
+
+/* prazo de resposta: data + hora */
+.prazo-campos { display: flex; gap: 6px; }
+.prazo-campos input[type=time], .prazo-inline input[type=time] { width: auto; margin-left: 6px; }
+.prazo-campos input[type=time] { margin-left: 0; }
+
+/* comparativo: marca de quem ganhou, embaixo do preço escolhido */
+.marca-venc { font-size: 12px; font-weight: 600; color: var(--primary-2); }
+
+/* comparativo mais confortável: painel com rolagem própria, cabeçalho fixo, linhas alternadas */
+.painel-comp { max-height: calc(100vh - 150px); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.tab-comp > thead > tr > th { position: sticky; top: 0; z-index: 2; background: var(--card-2); box-shadow: inset 0 -1px 0 var(--line); }
+.tab-comp > thead > tr > :nth-child(-n+2) { z-index: 4; }
+:where(.tab-comp > tbody > tr:nth-child(even)) > td { background: var(--card-2); }
+.tab-comp > tbody > tr:nth-child(even) > :nth-child(-n+2) { background: var(--card-2); }
+.tab-comp > tbody > tr:nth-child(even):hover > :nth-child(-n+2) { background: linear-gradient(var(--hover), var(--hover)), var(--card-2); }
+.tab-comp td { vertical-align: top; }
+.tab-comp > tbody > tr > td:first-child { vertical-align: middle; }
+.barra-comp { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 10px; }
+.ajuda-comp { margin-left: auto; }
+.ajuda-comp summary { cursor: pointer; color: var(--primary-2); font-weight: 600; }
+.ajuda-comp[open] { flex-basis: 100%; margin-left: 0; background: var(--card-2); border-radius: 8px; padding: 6px 12px; }
+.ajuda-comp p { margin: 6px 0; }
+.aviso-recusa, .aviso-marca, .aviso-alertas { margin: 0 0 8px; }
+
+/* diferença acima de 100% entre o 1º e o 2º: possível preço errado */
+.dif-seg.suspeita { color: var(--danger); }
+.chip-alerta-dif { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 700; color: var(--danger); background: var(--danger-bg); border-radius: 4px; padding: 1px 6px; cursor: help; white-space: nowrap; }
