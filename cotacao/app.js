@@ -318,13 +318,17 @@ function adaptadorSupabase(cli) {
 
 async function iniciarSupabase(cfg) {
   mostrarStatus('carregando');
+  // link do e-mail de convite ou de "esqueci a senha": o Supabase manda #access_token=…&type=invite|recovery
+  const tipoLink = new URLSearchParams(location.hash.slice(1)).get('type');
   try {
     if (!window.supabase) await carregarScript('vendor/supabase.min.js');
     const cli = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
-      auth: { persistSession: true, autoRefreshToken: true, storageKey: 'cotacao-disppar-auth' },
+      // implicit: os links de convite e de "esqueci a senha" chegam com o token no endereço (#access_token=…)
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit', storageKey: 'cotacao-disppar-auth' },
     });
     nuvem.supabase = cli;
     let { data: { session } } = await cli.auth.getSession();
+    if (session && (tipoLink === 'invite' || tipoLink === 'recovery')) await telaCriarSenha(cli, tipoLink);
     for (;;) {
       if (!session) session = await telaLogin(cli);
       // só entra quem estiver na lista de acesso (tabela cotacao_usuarios)
@@ -380,6 +384,40 @@ function telaLogin(cli) {
       if (!email) return mensagemLogin('Digite o e-mail para receber o link de nova senha.');
       const { error } = await cli.auth.resetPasswordForEmail(email, { redirectTo: location.origin });
       mensagemLogin(error ? error.message : 'Se o e-mail estiver cadastrado, você vai receber um link para criar uma nova senha.', !error);
+    };
+  });
+}
+
+/** Depois do convite (ou de "esqueci a senha"): a pessoa cria a senha que vai usar para entrar. */
+function telaCriarSenha(cli, tipo) {
+  return new Promise(resolve => {
+    let tela = $('#telaLogin');
+    if (!tela) {
+      tela = document.createElement('div');
+      tela.id = 'telaLogin';
+      document.body.appendChild(tela);
+    }
+    tela.innerHTML = `<form class="login-card" autocomplete="on">
+      <div class="login-logo">${$('.logo-marca')?.outerHTML || ''}</div>
+      <h1>${tipo === 'invite' ? 'Bem-vindo! Crie sua senha' : 'Crie uma nova senha'}</h1>
+      <p class="muted small">Você vai usar esta senha, com o seu e-mail, para entrar no sistema.</p>
+      <label>Nova senha<input name="senha" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label>Repita a senha<input name="senha2" type="password" required minlength="8" autocomplete="new-password"></label>
+      <p class="login-msg" role="alert"></p>
+      <button class="primary" type="submit">Salvar senha e entrar</button>
+    </form>`;
+    tela.hidden = false;
+    const form = tela.querySelector('form');
+    form.senha.focus();
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      if (form.senha.value !== form.senha2.value) return mensagemLogin('As duas senhas não são iguais.');
+      mensagemLogin('Salvando…', true);
+      const { error } = await cli.auth.updateUser({ password: form.senha.value });
+      if (error) return mensagemLogin(error.message);
+      tela.remove();
+      history.replaceState(null, '', location.pathname + location.search);
+      resolve();
     };
   });
 }

@@ -27,7 +27,11 @@ function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', docs = 
       return json(route, 200, { access_token: 'tk-' + b.email, token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: 'rf', user });
     }
     if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, headers: cors });
-    if (url.pathname === '/auth/v1/user') return json(route, 200, { id: '1', email });
+    if (url.pathname === '/auth/v1/user') {
+      const user = { id: '11111111-1111-1111-1111-111111111111', aud: 'authenticated', role: 'authenticated', email };
+      if (req.method() === 'PUT') { log.push('SENHA ' + JSON.parse(req.postData()).password); }
+      return json(route, 200, user);
+    }
     if (url.pathname === '/rest/v1/cotacao_usuarios') {
       return json(route, 200, email && liberados.includes(email) ? [{ email }] : []);
     }
@@ -57,7 +61,7 @@ function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', docs = 
   return { handler, docs, log };
 }
 
-async function abrirSite(sb) {
+async function abrirSite(sb, sufixo = '') {
   const b = await navegador();
   const context = await b.newContext({ viewport: { width: 1300, height: 900 } });
   await context.route(URL_SB + '/**', sb.handler);
@@ -65,7 +69,7 @@ async function abrirSite(sb) {
   const page = await context.newPage();
   const erros = [];
   page.on('pageerror', e => erros.push(e.message));
-  await page.goto(URL_SISTEMA);
+  await page.goto(URL_SISTEMA + sufixo);
   return { page, context, erros };
 }
 
@@ -116,6 +120,25 @@ test('Supabase: e-mail que não está liberado não entra', async () => {
   await page.waitForFunction(() => /não tem acesso/.test(document.querySelector('#telaLogin .login-msg')?.textContent || ''));
   assert.equal(await page.locator('#telaLogin:not([hidden])').count(), 1);
   assert.ok(!sb.log.some(l => l.startsWith('SET')), 'nada foi gravado');
+  assert.deepEqual(erros, []);
+  await context.close();
+});
+
+test('Supabase: link do convite abre "crie sua senha" e já entra no sistema', async () => {
+  const sb = supabaseFalso({ docs: new Map([['sistema/config', { loja: 'DISPPAR' }]]) });
+  const hash = '#access_token=tk-wes@loja.com&refresh_token=rf&expires_in=3600&expires_at=' + (Math.floor(Date.now() / 1000) + 3600) + '&token_type=bearer&type=invite';
+  const { page, context, erros } = await abrirSite(sb, hash);
+  await page.waitForSelector('#telaLogin h1:text("Bem-vindo! Crie sua senha")');
+  await page.fill('#telaLogin [name=senha]', 'senhaNova123');
+  await page.fill('#telaLogin [name=senha2]', 'outra-coisa');
+  await page.click('#telaLogin button[type=submit]');
+  await page.waitForFunction(() => /não são iguais/.test(document.querySelector('#telaLogin .login-msg')?.textContent || ''));
+  await page.fill('#telaLogin [name=senha2]', 'senhaNova123');
+  await page.click('#telaLogin button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('#statusNuvem')?.dataset.s === 'salvo');
+  assert.ok(sb.log.includes('SENHA senhaNova123'), 'senha salva no Supabase');
+  assert.equal(await page.locator('#telaLogin:not([hidden])').count(), 0);
+  assert.equal(await page.evaluate(() => location.hash), '', 'o token some do endereço');
   assert.deepEqual(erros, []);
   await context.close();
 });

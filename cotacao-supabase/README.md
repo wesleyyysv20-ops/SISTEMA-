@@ -3,6 +3,24 @@
 Tudo fica **separado do seu outro projeto**: um projeto novo no Supabase (banco e login) e um
 projeto novo no Cloudflare Pages (o site). Nada é compartilhado com o que já existe lá.
 
+## Publicação automática (recomendado)
+
+O workflow **Publicar cotação (Supabase + Cloudflare)** (`.github/workflows/cotacao-publicar.yml`, script
+[`publicar.mjs`](publicar.mjs)) faz tudo sozinho: cria o projeto `cotacoes-disppar` no Supabase (São Paulo),
+roda o `schema.sql`, fecha os cadastros, cria o projeto Pages `cotacoes-disppar`, gera o `config.js`,
+publica o site e manda um **convite por e-mail** para você criar a senha. Depois, cada alteração em
+`cotacao/` é publicada de novo.
+
+Você só precisa, uma vez:
+1. Criar um token no Supabase: <https://supabase.com/dashboard/account/tokens> → **Generate new token**.
+2. Criar um token na Cloudflare: **My Profile → API Tokens → Create Token → Custom token**, com a
+   permissão **Account → Cloudflare Pages → Edit**.
+3. No GitHub do repositório: **Settings → Secrets and variables → Actions → New repository secret**,
+   criar `SUPABASE_ACCESS_TOKEN` e `CLOUDFLARE_API_TOKEN` com esses valores.
+4. Enviar `cotacao-supabase/publicar.json` com o seu e-mail de login: `{"email": "voce@exemplo.com"}`.
+
+## Publicação manual (se preferir fazer pelos painéis)
+
 ## 1. Supabase — projeto novo
 
 1. Em <https://supabase.com/dashboard>, clique em **New project**. Nome sugerido: `cotacoes-disppar`.

@@ -21,6 +21,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `14-nota-fornecedores` | nota dos fornecedores (resposta, prazo, cobertura, marca, notas fiscais) |
 | `15-repetidos-kit` | códigos repetidos (regra do KIT do DISPPAR), etiqueta KIT, vermelho na planilha |
 | `16-supabase` | site publicado: login, lista de acesso, dados salvos no Supabase (Supabase simulado) |
+| `17-publicar` | robô de publicação (Supabase e Cloudflare simulados): cria, configura, convida e gera o config.js; pode rodar de novo |
 
 ## Rodar
 
