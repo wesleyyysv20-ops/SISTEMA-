@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sistema de Cotação</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='158 164 314 196'%3E%3Cpath fill='%23253d83' d='M277 168H432C452 168 468 186 461 206L413 330C407 346 395 356 378 356H209L225 313H352C358 313 362 310 364 305L393 226C396 218 392 213 385 213H261Z'/%3E%3Cpath fill='%23ce0704' d='M175 246H326C330 246 332 249 330 253L319 279H163Z'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo-marca" viewBox="158 164 314 196" role="img" aria-label="Logo"><path class="azul" d="M277 168H432C452 168 468 186 461 206L413 330C407 346 395 356 378 356H209L225 313H352C358 313 362 310 364 305L393 226C396 218 392 213 385 213H261Z"/><path class="vermelho" d="M175 246H326C330 246 332 249 330 253L319 279H163Z"/></svg>
+      <span id="brand">Cotações</span>
+    </div>
+    <span id="statusNuvem" class="status-nuvem" data-s="local">Salvo neste navegador</span>
+    <nav id="nav">
+      <a href="#" data-route="inicio">Início</a>
+      <a href="#" data-route="nova">Nova cotação</a>
+      <a href="#" data-route="cotacoes">Cotações</a>
+      <a href="#" data-route="produtos">Produtos</a>
+      <a href="#" data-route="fornecedores">Fornecedores</a>
+      <a href="#" data-route="duvidas">Dúvidas</a>
+      <a href="#" data-route="relatorios">Relatórios</a>
+      <a href="#" data-route="config">Configurações</a>
+    </nav>
+  </header>
+  <main id="app"></main>
+  <div id="toast" role="status"></div>
+  <script src="vendor/exceljs.min.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
