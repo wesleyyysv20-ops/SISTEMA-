@@ -436,6 +436,44 @@ function renderSeguro() {
 }
 
 setInterval(puxarNuvem, 60000);
+
+/* ---------------- versão nova do sistema ----------------
+ * Uma aba aberta antes de publicar continua com o sistema antigo. Confere de tempos em tempos
+ * (e ao voltar para a aba) se o app.js mudou e mostra uma faixa para atualizar. */
+const versaoSistema = { atual: null, avisado: false };
+async function assinaturaApp() {
+  if (location.protocol === 'file:') return null;
+  try {
+    const r = await fetch('app.js', { method: 'HEAD', cache: 'no-store' });
+    return r.ok ? r.headers.get('etag') || r.headers.get('last-modified') : null;
+  } catch (e) {
+    return null; // sem internet: tenta depois
+  }
+}
+async function verificarVersaoNova() {
+  if (versaoSistema.avisado) return;
+  const a = await assinaturaApp();
+  if (!a) return;
+  if (!versaoSistema.atual) { versaoSistema.atual = a; return; }
+  if (a !== versaoSistema.atual) mostrarVersaoNova();
+}
+function mostrarVersaoNova() {
+  versaoSistema.avisado = true;
+  if (document.getElementById('faixaVersao')) return;
+  const faixa = document.createElement('div');
+  faixa.id = 'faixaVersao';
+  faixa.setAttribute('role', 'status');
+  faixa.innerHTML = '🔄 Saiu uma versão nova do sistema. <button type="button" class="sm primary" data-act="atualizarSistema">Atualizar agora</button>';
+  document.body.appendChild(faixa);
+}
+async function atualizarSistema() {
+  // antes de recarregar, termina de salvar o que estiver pendente
+  try { if (timerLocal) gravarLocal(); if (nuvem.timer || nuvem.gravando) await sincronizar(); } catch (e) { console.error(e); }
+  location.reload();
+}
+verificarVersaoNova();
+setInterval(verificarVersaoNova, 5 * 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) verificarVersaoNova(); });
 window.addEventListener('focus', () => puxarNuvem());
 
 async function comRetentativa(fn) {
@@ -6384,6 +6422,7 @@ const acoes = {
 
   backup: () => fazerBackup(),
   sairSupabase: () => sairSupabase(),
+  atualizarSistema: () => atualizarSistema(),
   abrirPip: () => abrirPip(),
   senhaUsuario: async el => {
     const email = el.dataset.email;

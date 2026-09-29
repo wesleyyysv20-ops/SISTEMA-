@@ -1112,3 +1112,7 @@ input.qtd-loja.zerada { color: var(--muted); background: var(--card-2); text-dec
 .estoque-info { font-size: 12px; font-weight: 600; color: var(--primary-2); white-space: nowrap; }
 .alerta-estoque { margin-top: 4px; padding: 5px 8px; border-radius: 6px; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); font-size: 12px; line-height: 1.35; min-width: 190px; white-space: normal; text-align: left; }
 input.qtd-loja.no-limite, input.qtd-loja.no-limite.preenchida, input.qtd-loja.no-limite.zerada { border: 2px solid var(--danger); background: var(--danger-bg); color: var(--danger); text-decoration: none; }
+
+/* aviso de versão nova */
+#faixaVersao { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 9000; display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-radius: 10px; background: var(--primary); color: #fff; font-weight: 600; box-shadow: 0 6px 24px rgba(0, 0, 0, .25); }
+#faixaVersao button { background: #fff; color: var(--primary); border-color: #fff; }
