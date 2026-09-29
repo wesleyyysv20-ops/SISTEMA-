@@ -3984,7 +3984,7 @@ function celulaDifSegundo(c, l) {
   }
   if (l.difSegundo == null) return '<span class="muted">—</span>';
   // conta a partir do 1º lugar: quanto o 2º está mais caro que o 1º
-  return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span> <span class="small muted">mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>`;
+  return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span> <span class="small muted">o 2º é mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>`;
 }
 
 /** Colunas de fornecedores do comparativo: esconde quem ainda não mandou nenhum preço (dá para mostrar). */
