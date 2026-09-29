@@ -34,8 +34,12 @@ Você só precisa, uma vez:
    (só você cria as contas).
 5. **Project Settings → API**: copie a **Project URL** e a chave **anon public**.
 
-Para liberar outra pessoa depois: crie o usuário (passo 3) e rode no SQL Editor
-`insert into public.cotacao_usuarios (email) values ('email@dela.com');`
+6. Rode também [`usuarios.sql`](usuarios.sql) no SQL Editor (troque o e-mail da última linha pelo seu):
+   ele cria o cadastro de usuários pelo próprio sistema, marca você como administrador e liga o
+   tempo real (o que um computador salva aparece na hora nos outros).
+
+Para liberar outra pessoa depois: no sistema, **Configurações → Conta → Usuários → + Adicionar usuário**
+(e-mail e senha inicial; a conta já nasce confirmada). Lá também dá para trocar a senha e tirar o acesso.
 
 ## 2. Configurar o site
 

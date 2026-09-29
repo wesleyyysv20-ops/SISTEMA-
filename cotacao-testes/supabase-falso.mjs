@@ -9,7 +9,8 @@ export const URL_SB = 'https://teste-cotacao.supabase.co';
  * Supabase simulado: login por senha, lista de acesso (cotacao_usuarios) e a tabela cotacao_documentos
  * (select por coleção, upsert e delete), respondendo como o PostgREST/GoTrue.
  */
-export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', docs = new Map() } = {}) {
+export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', docs = new Map(), admins = [] } = {}) {
+  const senhas = new Map(); // senhas dos usuários cadastrados pelo administrador
   const log = [];
   // versão (atualizado_em) de cada documento, como o gatilho do banco faz a cada gravação
   const vers = new Map();
@@ -38,7 +39,7 @@ export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', 
     const email = token.startsWith('tk-') ? token.slice(3) : null;
     if (url.pathname === '/auth/v1/token') {
       const b = JSON.parse(req.postData() || '{}');
-      if (b.password !== senha) return json(route, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials', msg: 'Invalid login credentials', code: 'invalid_credentials' });
+      if (b.password !== (senhas.get(b.email) ?? senha)) return json(route, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials', msg: 'Invalid login credentials', code: 'invalid_credentials' });
       const user = { id: '11111111-1111-1111-1111-111111111111', aud: 'authenticated', role: 'authenticated', email: b.email };
       return json(route, 200, { access_token: 'tk-' + b.email, token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: 'rf', user });
     }
@@ -47,6 +48,29 @@ export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', 
       const user = { id: '11111111-1111-1111-1111-111111111111', aud: 'authenticated', role: 'authenticated', email };
       if (req.method() === 'PUT') { log.push('SENHA ' + JSON.parse(req.postData()).password); }
       return json(route, 200, user);
+    }
+    if (url.pathname.startsWith('/rest/v1/rpc/')) {
+      // funções do usuarios.sql (só administradores, menos a que pergunta se é administrador)
+      const fn = url.pathname.slice('/rest/v1/rpc/'.length);
+      const b = JSON.parse(req.postData() || '{}');
+      const admin = !!email && admins.includes(email) && liberados.includes(email);
+      if (fn === 'cotacao_sou_admin') return json(route, 200, admin);
+      if (!admin) return json(route, 400, { code: '42501', message: 'Só administradores podem cadastrar usuários.' });
+      log.push(`RPC ${fn} ${JSON.stringify(b)}`);
+      if (fn === 'cotacao_listar_usuarios') return json(route, 200, liberados.map(e => ({ email: e, nome: null, admin: admins.includes(e), criado_em: null, ultimo_acesso: null })));
+      if (fn === 'cotacao_adicionar_usuario') {
+        if ((b.p_senha || '').length < 6) return json(route, 400, { code: 'P0001', message: 'A senha precisa ter pelo menos 6 caracteres.' });
+        if (!liberados.includes(b.p_email)) liberados.push(b.p_email);
+        senhas.set(b.p_email, b.p_senha);
+        if (b.p_admin && !admins.includes(b.p_email)) admins.push(b.p_email);
+        return route.fulfill({ status: 204, headers: cors });
+      }
+      if (fn === 'cotacao_definir_senha') { senhas.set(b.p_email, b.p_senha); return route.fulfill({ status: 204, headers: cors }); }
+      if (fn === 'cotacao_remover_usuario') {
+        if (b.p_email === email) return json(route, 400, { code: 'P0001', message: 'Você não pode tirar o seu próprio acesso.' });
+        liberados.splice(liberados.indexOf(b.p_email), 1);
+        return route.fulfill({ status: 204, headers: cors });
+      }
     }
     if (url.pathname === '/rest/v1/cotacao_usuarios') {
       return json(route, 200, email && liberados.includes(email) ? [{ email }] : []);
@@ -83,7 +107,7 @@ export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', 
     }
     return json(route, 404, { message: 'não simulado: ' + url.pathname });
   };
-  return { handler, docs, vers, log };
+  return { handler, docs, vers, log, liberados, admins, senhas };
 }
 
 export async function abrirSite(sb, sufixo = '') {

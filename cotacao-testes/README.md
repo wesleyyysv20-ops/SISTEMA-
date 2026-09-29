@@ -39,6 +39,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `32-duvida-fora-pedido` | item marcado em Dúvidas: linha destacada (roxo) e fora do pedido exportado da loja da dúvida; sai da fila e volta ao pedido |
 | `33-setas-quantidade` | quantidades: ↑ ↓ ← → andam pela grade (loja e item); número digitado fora do campo vai para a quantidade da linha marcada |
 | `34-duvidas-agrupadas` | fila de dúvidas: itens iguais numa linha só ("2 DPR e 5 DSS", também no texto do WhatsApp); filtro por fornecedor; editar a quantidade de cada loja |
+| `35-usuarios` | usuários: administrador cadastra (e-mail + senha inicial), troca a senha e tira o acesso; a pessoa entra e troca a própria senha; outro computador recebe as alterações |
 
 ## Rodar
 

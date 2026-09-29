@@ -660,6 +660,8 @@ async function iniciarSupabase(cfg) {
     nuvem.usuario = session.user.email;
     fecharLogin();
     await usarNuvem(adaptadorSupabase(cli));
+    assinarMudancas(cli);
+    verSeAdmin(cli);
     render();
   } catch (e) {
     console.error(e);
@@ -751,6 +753,80 @@ function mensagemLogin(texto, info = false) {
 function fecharLogin() {
   const tela = $('#telaLogin');
   if (tela) tela.hidden = true;
+}
+
+/**
+ * Tempo real: quando outro computador salva, o Supabase avisa e este puxa as alterações na hora
+ * (sem esperar a verificação de cada minuto). Só o aviso; os dados vêm pelo caminho de sempre.
+ */
+function assinarMudancas(cli) {
+  if (typeof cli.channel !== 'function') return;
+  let timer = null;
+  try {
+    nuvem.canal = cli.channel('cotacao-documentos')
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABELA_SUPABASE }, () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => puxarNuvem(), 700); // junta vários avisos seguidos
+      })
+      .subscribe(status => { nuvem.tempoReal = status === 'SUBSCRIBED'; });
+  } catch (e) {
+    console.error(e); // sem tempo real: continua verificando a cada minuto
+  }
+}
+
+/** Administrador pode cadastrar usuários (funções do usuarios.sql no Supabase). */
+async function verSeAdmin(cli) {
+  try {
+    const { data, error } = await cli.rpc('cotacao_sou_admin');
+    nuvem.admin = !error && data === true;
+  } catch (e) {
+    nuvem.admin = false;
+  }
+  if (nuvem.admin && rota().nome === 'config') { await carregarUsuarios(); render(); }
+}
+
+async function carregarUsuarios() {
+  const { data, error } = await nuvem.supabase.rpc('cotacao_listar_usuarios');
+  ui.usuarios = error ? { erro: error.message } : { lista: data || [] };
+}
+
+const msgErroSb = e => String(e?.message || e || 'Erro no Supabase');
+
+function renderConta() {
+  if (!nuvem.supabase) return '';
+  const U = ui.usuarios;
+  if (nuvem.admin && !U) { ui.usuarios = { carregando: true }; carregarUsuarios().then(() => { if (rota().nome === 'config') render(); }); }
+  const fmtAcesso = d => (d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'nunca entrou');
+  return `<section class="card" id="cardConta">
+    <div class="row-between"><h2>Conta</h2><button data-act="sairSupabase">Sair</button></div>
+    <p class="muted small" style="margin:0">Conectado como <b>${esc(nuvem.usuario || '')}</b>${nuvem.admin ? ' <span class="badge ok">administrador</span>' : ''}. Os dados ficam no Supabase e aparecem em qualquer computador em que você entrar.</p>
+    <p class="muted small">🔄 Vários computadores podem usar o sistema ao mesmo tempo: o que um salva aparece nos outros ${nuvem.tempoReal ? '<b>na hora</b>' : 'em até 1 minuto'}. Se duas pessoas mexerem na mesma cotação, as alterações das duas são juntadas.</p>
+    <details class="minha-senha"><summary>Trocar a minha senha</summary>
+      <form data-form="minhaSenha" class="grid" autocomplete="off">
+        <label>Nova senha<input name="senha" type="password" minlength="6" required autocomplete="new-password"></label>
+        <label>Repita a nova senha<input name="senha2" type="password" minlength="6" required autocomplete="new-password"></label>
+        <div class="actions" style="grid-column:1/-1"><button class="primary">Trocar a senha</button></div>
+      </form>
+    </details>
+    ${nuvem.admin ? `<h3 style="margin-top:18px">Usuários</h3>
+      <p class="muted small" style="margin-top:0">Cadastre quem pode usar o sistema. A pessoa entra com o e-mail e a senha que você definir aqui (e pode trocar a senha depois, em Configurações).</p>
+      ${!U || U.carregando ? '<p class="muted small">Carregando…</p>' : U.erro ? `<p class="aviso-erro small">Não consegui ler os usuários: ${esc(U.erro)}</p>` : `<div class="table-wrap"><table>
+        <thead><tr><th>Usuário</th><th>Acesso</th><th>Último acesso</th><th></th></tr></thead>
+        <tbody>${U.lista.map(u => `<tr>
+          <td><b>${esc(u.nome || u.email)}</b>${u.nome ? `<br><span class="small muted">${esc(u.email)}</span>` : ''}</td>
+          <td>${u.admin ? '<span class="badge ok">administrador</span>' : '<span class="badge">usuário</span>'}</td>
+          <td class="small">${esc(fmtAcesso(u.ultimo_acesso))}</td>
+          <td class="actions-cell"><button class="sm" data-act="senhaUsuario" data-email="${esc(u.email)}">Trocar senha</button>${u.email !== String(nuvem.usuario || '').toLowerCase() ? ` <button class="sm danger" data-act="removerUsuario" data-email="${esc(u.email)}">Tirar acesso</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`}
+      <form data-form="usuario" class="grid form-usuario" autocomplete="off">
+        <label>Nome<input name="nome" placeholder="Ex.: Maria" autocomplete="off"></label>
+        <label>E-mail<input name="email" type="email" required autocomplete="off"></label>
+        <label>Senha inicial<input name="senha" type="text" minlength="6" required autocomplete="off" placeholder="mínimo 6 caracteres"></label>
+        <label class="check-inline" style="align-self:end"><input type="checkbox" name="admin"> pode cadastrar usuários</label>
+        <div class="actions" style="grid-column:1/-1"><button class="primary">+ Adicionar usuário</button></div>
+      </form>` : ''}
+  </section>`;
 }
 
 async function sairSupabase() {
@@ -5480,10 +5556,7 @@ function renderConfig() {
       <div class="actions"><button class="primary">Salvar configurações</button></div>
     </form>
   </section>
-  ${nuvem.supabase ? `<section class="card">
-    <div class="row-between"><h2>Conta</h2><button data-act="sairSupabase">Sair</button></div>
-    <p class="muted small" style="margin:0">Conectado como <b>${esc(nuvem.usuario || '')}</b>. Os dados ficam no Supabase e aparecem em qualquer computador em que você entrar.</p>
-  </section>` : ''}
+  ${renderConta()}
   ${renderMarcasCfg()}
   <section class="card">
     <h2>Backup dos dados</h2>
@@ -6301,6 +6374,24 @@ const acoes = {
 
   backup: () => fazerBackup(),
   sairSupabase: () => sairSupabase(),
+  senhaUsuario: async el => {
+    const email = el.dataset.email;
+    const senha = await pedirValor(`Nova senha para ${email} (mínimo 6 caracteres). Passe a senha para a pessoa; ela pode trocar depois.`, { ok: 'Trocar a senha' });
+    if (senha == null) return;
+    if (senha.length < 6) return avisar('A senha precisa ter pelo menos 6 caracteres.');
+    const { error } = await nuvem.supabase.rpc('cotacao_definir_senha', { p_email: email, p_senha: senha });
+    if (error) return avisar('Não consegui trocar a senha: ' + msgErroSb(error));
+    toast(`Senha de ${email} trocada.`);
+  },
+  removerUsuario: async el => {
+    const email = el.dataset.email;
+    if (!(await confirmar(`Tirar o acesso de ${email}?\n\nA pessoa não consegue mais entrar no sistema. Dá para liberar de novo depois, adicionando o e-mail outra vez.`, 'Tirar acesso'))) return;
+    const { error } = await nuvem.supabase.rpc('cotacao_remover_usuario', { p_email: email });
+    if (error) return avisar('Não consegui tirar o acesso: ' + msgErroSb(error));
+    await carregarUsuarios();
+    render();
+    toast(`${email} não tem mais acesso.`);
+  },
   adiarBackup: () => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
@@ -6384,6 +6475,29 @@ const formularios = {
     form.ownerDocument.querySelector('[data-form=produto] input[name=codigo]')?.focus();
   },
 
+  minhaSenha: async form => {
+    const d = formDados(form);
+    if ((d.senha || '').length < 6) return avisar('A senha precisa ter pelo menos 6 caracteres.');
+    if (d.senha !== d.senha2) return avisar('As duas senhas não são iguais.');
+    const { error } = await nuvem.supabase.auth.updateUser({ password: d.senha });
+    if (error) return avisar('Não consegui trocar a senha: ' + msgErroSb(error));
+    form.reset();
+    form.closest('details').open = false;
+    toast('Senha trocada. Use a nova senha no próximo login.');
+  },
+  usuario: async form => {
+    const d = formDados(form);
+    const email = String(d.email || '').trim().toLowerCase();
+    if (!email || (d.senha || '').length < 6) return avisar('Informe o e-mail e uma senha com pelo menos 6 caracteres.');
+    const botao = form.querySelector('button.primary');
+    botao.disabled = true;
+    const { error } = await nuvem.supabase.rpc('cotacao_adicionar_usuario', { p_email: email, p_senha: d.senha, p_nome: d.nome || null, p_admin: !!form.admin.checked });
+    botao.disabled = false;
+    if (error) return avisar('Não consegui adicionar: ' + msgErroSb(error));
+    await carregarUsuarios();
+    render();
+    avisar(`✓ ${email} pode usar o sistema.\n\nPasse para a pessoa:\n• endereço: ${location.origin}\n• e-mail: ${email}\n• senha: a que você definiu\n\nEla pode trocar a senha em Configurações → Conta.`);
+  },
   duvida: form => {
     const d = formDados(form);
     if (!d.codigo) return avisar('Informe empresa e código do produto.');

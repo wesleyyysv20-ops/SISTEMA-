@@ -1083,3 +1083,10 @@ input.qtd-loja.zerada { color: var(--muted); background: var(--card-2); text-dec
 .nomes-export h4 { margin: 12px 0 4px; font-size: 14px; }
 .nome-export { display: block; margin: 4px 0; }
 .nome-export input { width: 100%; font-family: inherit; }
+
+/* conta: senha e usuários */
+.minha-senha { margin-top: 8px; }
+.minha-senha summary { cursor: pointer; color: var(--primary-2); font-weight: 600; }
+.minha-senha form { margin-top: 8px; }
+.form-usuario { margin-top: 12px; }
+.aviso-erro { color: var(--danger); }

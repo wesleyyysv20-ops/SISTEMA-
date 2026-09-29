@@ -19,7 +19,8 @@ Sistema web de cotação de autopeças para duas lojas (Paranoá = DPR, São Seb
 
 - **Site:** <https://cotacoes-disppar.pages.dev> (Cloudflare Pages, projeto `cotacoes-disppar`, envio direto pelo wrangler).
 - **Banco:** Supabase, projeto `cotacoes-disppar` (São Paulo). Login por e-mail e senha; só entram os e-mails da
-  tabela `cotacao_usuarios`. Cadastro aberto desligado.
+  tabela `cotacao_usuarios`. Cadastro aberto desligado: administradores cadastram usuários em Configurações → Conta
+  (funções do `cotacao-supabase/usuarios.sql`, já aplicado em 29/09/2026, junto com o tempo real).
 - **Publicar de novo** depois de mudar o sistema (na pasta do repositório, com `npx wrangler login` feito uma vez):
 
       npx wrangler pages deploy cotacao --project-name cotacoes-disppar --branch main
