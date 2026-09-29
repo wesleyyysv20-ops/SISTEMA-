@@ -110,6 +110,9 @@ function separarEstoque(marca) {
   return m ? { marca: m[1].trim(), estoque: Number(m[2]) } : null;
 }
 
+/** Comando: ganha o item quando o preço dela está até 5% acima do 1º lugar (só para a Comando). */
+const PREFERENCIA = { teste: f => /\bcomando\b/.test(semAcento(f?.nome)), ate: 0.05 };
+
 /** Rio Juntas: item com a marca "GO" demora mais para chegar (só para a Rio Juntas). */
 function entregaDemorada(f, o) {
   return !!o && /\brio\s*juntas\b/.test(semAcento(f?.nome)) && normMarca(o.marca).split(' ').includes('GO');
@@ -1231,10 +1234,16 @@ function comparar(c) {
     const minIdx = ordem.length ? ordem[0][1] : -1; // quem ganharia sozinho (menor preço; empate: respondeu primeiro)
     let vencedor = minIdx;
     let manual = false;
+    // Comando: até 5% acima do 1º lugar também ganha (a não ser que você escolha outro)
+    let preferencia = false;
+    if (minIdx >= 0 && min > 0) {
+      const jc = c.fornecedores.findIndex((f, j) => j !== minIdx && aptos[j] != null && PREFERENCIA.teste(f));
+      if (jc >= 0 && aptos[jc] <= min * (1 + PREFERENCIA.ate) + 1e-9) { vencedor = jc; preferencia = true; }
+    }
     const escolhido = c.escolhas?.[i];
     if (escolhido) {
       const j = c.fornecedores.findIndex(f => f.fornecedorId === escolhido);
-      if (j >= 0 && precos[j] != null && !recusas[j]) { vencedor = j; manual = precos[j] !== min; }
+      if (j >= 0 && precos[j] != null && !recusas[j]) { vencedor = j; manual = precos[j] !== min; preferencia = false; }
     }
     // só tinha preço com marca recusada: aguardando o próximo valor
     const aguardando = vencedor < 0 && recusas.some((r, j) => r && precos[j] != null);
@@ -1245,7 +1254,7 @@ function comparar(c) {
     const q = qtdItem(c, i, porLoja);
     // estoque informado pelo vencedor (Kaizen: "MARCA/estoque"): limite de quantidade
     const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
-    return { it, i, q, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, segundo: seg, segundoIdx: segIdx, difSegundo };
+    return { it, i, q, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -3855,6 +3864,28 @@ function linhaNoFiltroVenc(c, l, valor = filtroVencedor(c)) {
   if (valor === '__sem') return l.vencedor < 0;
   return l.vencedor >= 0 && c.fornecedores[l.vencedor].fornecedorId === valor;
 }
+/** Filtro pelas etiquetas de aviso ('aguardando', 'dif', 'marca', 'regra', 'demora', 'alertas'); '' = nenhum. */
+function filtroAviso(c) {
+  return ui.filtroAviso && ui.filtroAviso.cotId === c.id ? ui.filtroAviso.tipo : '';
+}
+
+/** Mostra só as linhas do fornecedor escolhido e do aviso escolhido (sem redesenhar a tabela). */
+function aplicarFiltrosComp(c) {
+  const fa = filtroAviso(c);
+  const comp = comparar(c);
+  for (const l of comp.linhas) {
+    const tr = document.querySelector(`[data-comp-linha="${l.i}"]`);
+    if (tr) tr.hidden = !(linhaNoFiltroVenc(c, l) && (!fa || tr.dataset.avisos.split(' ').includes(fa)));
+  }
+  const barra = $('.avisos-comp');
+  if (barra) {
+    barra.dataset.filtro = fa;
+    barra.querySelectorAll('.pill-aviso').forEach(b => b.classList.toggle('ativo', b.dataset.tipo === fa));
+    const limpar = barra.querySelector('.limpar-aviso');
+    if (limpar) { limpar.hidden = !fa; limpar.dataset.tipo = fa; }
+  }
+}
+
 function seletorVencedor(c, comp) {
   const atual = filtroVencedor(c);
   const cont = {};
@@ -3970,7 +4001,7 @@ function botaoPedidoFiltro(c, valor) {
 /** Diferença acima de 100% entre o 1º e o 2º (ou entre o escolhido e o menor): possível preço errado na planilha. */
 const LIMITE_DIF_SUSPEITA = 1;
 function difDaLinha(l) {
-  if (l.manual && l.minIdx >= 0 && l.min > 0) return l.preco / l.min - 1;
+  if ((l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0) return l.preco / l.min - 1;
   return l.difSegundo;
 }
 const difSuspeita = l => difDaLinha(l) != null && difDaLinha(l) > LIMITE_DIF_SUSPEITA;
@@ -3978,9 +4009,9 @@ const avisoDifSuspeita = '<br><span class="chip-alerta-dif" title="Diferença ac
 
 function celulaDifSegundo(c, l) {
   const alerta = difSuspeita(l);
-  if (l.manual && l.minIdx >= 0 && l.min > 0) {
+  if ((l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0) {
     const dif = difDaLinha(l);
-    return `<span class="dif-seg${dif >= 0.1 ? ' grande' : ''}${alerta ? ' suspeita' : ''}" title="Quanto o escolhido está mais caro que o menor preço">+${fmtPct(dif)}</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="Menor preço (ganharia sem a sua escolha)">1º ${esc(c.fornecedores[l.minIdx].nome)} ${fmtMoeda(l.min)}</span>`;
+    return `<span class="dif-seg${dif >= 0.1 ? ' grande' : ''}${alerta ? ' suspeita' : ''}" title="${l.preferencia ? 'Regra da Comando: ganha até 5% acima do menor preço' : 'Quanto o escolhido está mais caro que o menor preço'}">+${fmtPct(dif)}</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="Menor preço (ganharia sem a sua escolha)">1º ${esc(c.fornecedores[l.minIdx].nome)} ${fmtMoeda(l.min)}</span>`;
   }
   if (l.difSegundo == null) return '<span class="muted">—</span>';
   // conta a partir do 1º lugar: quanto o 2º está mais caro que o 1º
@@ -4319,30 +4350,38 @@ function renderCotacao(id) {
       <tbody>
         ${comp.linhas.map(l => {
           const ult = l.it.produtoId ? ultimos[l.it.produtoId] : null;
+          const avisosLinha = new Set(); // para as etiquetas de aviso levarem aos itens
+          if (l.aguardando) avisosLinha.add('aguardando');
+          if (difSuspeita(l)) avisosLinha.add('dif');
+          if (l.preferencia) avisosLinha.add('regra');
           const celulas = ordemForn.map(j => {
             const p = l.precos[j];
             const o = c.fornecedores[j].respostas?.[l.i];
             const st = l.marcas[j];
-            if (p != null && (st === 'errada' || st === 'duvida') && !l.recusas[j]) qtdMarcas[st]++;
+            if (p != null && (st === 'errada' || st === 'duvida') && !l.recusas[j]) { qtdMarcas[st]++; avisosLinha.add('marca'); }
             const extra = p == null ? '' : [o?.prazo, o?.obs].filter(Boolean).join(' · '); // sem preço: desconsidera a resposta
             const avs = alertasPreco(p, ult, l.precos);
+            if (avs.length) avisosLinha.add('alertas');
             if (avs.length) qtdAlertas++;
             const venc = j === l.vencedor && (nf > 1 || l.manual);
             const demora = p != null && entregaDemorada(c.fornecedores[j], o);
-            if (demora) qtdDemora++;
+            const pelaRegra = j === l.vencedor && l.preferencia;
+            if (demora) { qtdDemora++; avisosLinha.add('demora'); }
             const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : '', l.recusas[j] && p != null ? 'recusada' : ''].filter(Boolean).join(' ');
-            const dica = p == null ? '' : l.recusas[j] ? 'Marca recusada: este preço não entra. Clique na marca para desfazer.' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
+            const dica = p == null ? '' : pelaRegra ? `Regra da Comando: ganha estando ${fmtPct(l.preco / l.min - 1)} acima do menor preço (${fmtMoeda(l.min)}). Clique no preço do mais barato para escolher ele.` : l.recusas[j] ? 'Marca recusada: este preço não entra. Clique na marca para desfazer.' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? `<button type="button" class="rm-preco" data-act="removerPreco" data-i="${l.i}" data-f="${j}" title="Preço errado? Remover ou corrigir" aria-label="Remover ou corrigir este preço"></button>` : ''}${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
+            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? `<button type="button" class="rm-preco" data-act="removerPreco" data-i="${l.i}" data-f="${j}" title="Preço errado? Remover ou corrigir" aria-label="Remover ou corrigir este preço"></button>` : ''}${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
           }).join('');
-          return `<tr class="${l.aguardando ? 'linha-aguardando' : ''}" data-comp-linha="${l.i}" ${linhaNoFiltroVenc(c, l) ? '' : 'hidden'}>
+          const tiposLinha = [...avisosLinha].join(' ');
+          const fa = filtroAviso(c);
+          return `<tr class="${l.aguardando ? 'linha-aguardando' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
           <td>${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.codigo || '—')}<br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
             ${nf > 1 ? `<td class="r">${celulaDifSegundo(c, l)}</td>` : ''}
-            <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.estoque != null ? `<br><span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : '') + (entregaDemorada(c.fornecedores[l.vencedor], c.fornecedores[l.vencedor].respostas?.[l.i]) ? '<br>' + chipDemora : '') + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</td>
+            <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.estoque != null ? `<br><span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : '') + (entregaDemorada(c.fornecedores[l.vencedor], c.fornecedores[l.vencedor].respostas?.[l.i]) ? '<br>' + chipDemora : '') + (l.preferencia ? `<br><span class="chip-regra" title="O menor preço é ${fmtMoeda(l.min)} (${esc(c.fornecedores[l.minIdx].nome)})">pela regra dos 5% (+${fmtPct(l.preco / l.min - 1)} do 1º)</span>` : '') + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</td>
             ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${qtdLoja(c, l.i, lj.id) || ''}" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
@@ -4421,12 +4460,16 @@ function renderCotacao(id) {
       const nAg = comp.linhas.filter(l => l.aguardando).length;
       const nDif = comp.linhas.filter(difSuspeita).length;
       const et = [];
-      if (nAg) et.push(`<span class="pill-aviso perigo aviso-recusa" title="Linhas em vermelho. Quando chegar a resposta de outro fornecedor, confira a marca dele.">✗ ${nAg} item(ns) com a marca recusada, aguardando outro preço</span>`);
-      if (nDif) et.push(`<span class="pill-aviso perigo aviso-dif" title="Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} item(ns) com mais de 100% de diferença — confira o preço</span>`);
-      if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<span class="pill-aviso perigo aviso-marca" title="Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} com marca diferente da pedida` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abreviação(ões) para conferir` : ''].filter(Boolean).join(' · ')}</span>`);
-      if (qtdDemora) et.push(`<span class="pill-aviso demora" title="Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} item(ns) GO da Rio Juntas (demoram mais para chegar)</span>`);
-      if (qtdAlertas) et.push(`<span class="pill-aviso atencao aviso-alertas" title="Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} preço(s) fora do normal</span>`);
-      return et.length ? `<div class="avisos-comp">${et.join('')}</div>` : '';
+      if (nAg) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-recusa" data-tipo="aguardando" title="Clique para ver só esses itens. Linhas em vermelho. Quando chegar a resposta de outro fornecedor, confira a marca dele.">✗ ${nAg} item(ns) com a marca recusada, aguardando outro preço</button>`);
+      if (nDif) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-dif" data-tipo="dif" title="Clique para ver só esses itens. Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} item(ns) com mais de 100% de diferença — confira o preço</button>`);
+      if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} com marca diferente da pedida` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abreviação(ões) para conferir` : ''].filter(Boolean).join(' · ')}</button>`);
+      const nRegra = comp.linhas.filter(l => l.preferencia).length;
+      if (nRegra) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso regra" data-tipo="regra" title="Clique para ver só esses itens. A Comando ganha quando está até 5% acima do 1º lugar. Em cada item, clique no preço do mais barato para escolher ele.">⭐ ${nRegra} item(ns) da Comando ganhando pela regra dos 5%</button>`);
+      if (qtdDemora) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso demora" data-tipo="demora" title="Clique para ver só esses itens. Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} item(ns) GO da Rio Juntas (demoram mais para chegar)</button>`);
+      if (qtdAlertas) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso atencao aviso-alertas" data-tipo="alertas" title="Clique para ver só esses itens. Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} preço(s) fora do normal</button>`);
+      const fa = filtroAviso(c);
+      const ets = et.map(x => (fa && x.includes(`data-tipo="${fa}"`) ? x.replace('class="pill-aviso', 'class="pill-aviso ativo') : x));
+      return et.length ? `<div class="avisos-comp" data-filtro="${fa}">${ets.join('')}<button type="button" class="link limpar-aviso" data-act="filtroAviso" data-tipo="${fa}" ${fa ? '' : 'hidden'}>✕ ver todos os itens</button></div>` : '';
     })()}
     ${tabelaComp}
   </section>
@@ -4736,7 +4779,7 @@ function dadosRelatorio() {
       x.cotados += comp.totais[fi].cotados;
       x.ganhos += comp.totais[fi].vencidos;
       x.valor += comp.totais[fi].valorVencido;
-      for (const l of comp.linhas) if (l.vencedor === fi && !l.manual && l.difSegundo != null) x.difs.push(l.difSegundo);
+      for (const l of comp.linhas) if (l.vencedor === fi && !l.manual && !l.preferencia && l.difSegundo != null) x.difs.push(l.difSegundo);
     });
     porCot.push(r);
     res.cotacoes++;
@@ -5531,6 +5574,21 @@ const acoes = {
   removerItem: el => perguntarRemoverItem(+el.dataset.i, false),
   incluirDaBusca: el => incluirNaLista(el.dataset.id),
   recolherFornCot: el => alternarFornCot(el),
+  filtroAviso: el => {
+    // etiqueta de aviso: mostra só os itens dela (clicar de novo, ou em "ver todos", volta tudo)
+    const c = cotAtual();
+    if (!c) return;
+    const tipo = el.dataset.tipo || '';
+    ui.filtroAviso = tipo && filtroAviso(c) !== tipo ? { cotId: c.id, tipo } : null;
+    aplicarFiltrosComp(c);
+    const painel = $('.painel-comp');
+    if (painel) {
+      painel.scrollTop = 0;
+      painel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    const n = document.querySelectorAll('[data-comp-linha]:not([hidden])').length;
+    if (ui.filtroAviso) toast(n ? `Mostrando ${n} item(ns). Clique de novo na etiqueta ou em "ver todos" para voltar.` : 'Nenhum item com este aviso entre os itens mostrados.');
+  },
   removerPreco: async el => {
     // o fornecedor respondeu um valor errado: tira o preço dele deste item (ou corrige o valor)
     const c = cotAtual();
@@ -6587,11 +6645,7 @@ document.addEventListener('change', async e => {
     ui.filtroVenc = { cotId: c.id, valor: t.value };
     const bt = $('#pedidoFiltro');
     if (bt) bt.outerHTML = botaoPedidoFiltro(c, t.value);
-    const comp = comparar(c);
-    for (const l of comp.linhas) {
-      const tr = document.querySelector(`[data-comp-linha="${l.i}"]`);
-      if (tr) tr.hidden = !linhaNoFiltroVenc(c, l, t.value);
-    }
+    aplicarFiltrosComp(c);
     // já deixa o cursor na 1ª quantidade da 1ª loja dos itens mostrados
     const primeiro = [...document.querySelectorAll('[data-qtd-loja]')].find(x => !x.closest('tr').hidden);
     primeiro?.focus();

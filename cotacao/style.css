@@ -1009,3 +1009,14 @@ h3.recolhe[aria-expanded="true"] { margin-bottom: 10px; }
 .pill-aviso.demora { background: #fff0dc; color: #9a4a00; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip-demora, :root:not([data-theme="light"]) .pill-aviso.demora { background: #3d2a12; color: #ffc27a; } }
 :root[data-theme="dark"] .chip-demora, :root[data-theme="dark"] .pill-aviso.demora { background: #3d2a12; color: #ffc27a; }
+
+/* Comando: ganha até 5% acima do 1º lugar */
+.chip-regra { display: inline-block; margin-top: 3px; font-size: 11.5px; font-weight: 700; color: var(--primary-2); background: var(--blue-bg); border-radius: 4px; padding: 1px 6px; white-space: nowrap; cursor: help; }
+.pill-aviso.regra { background: var(--blue-bg); color: var(--primary-2); }
+
+/* etiquetas de aviso: são botões que filtram os itens */
+button.pill-aviso { border: 1px solid transparent; font-family: inherit; cursor: pointer; }
+button.pill-aviso:hover { border-color: currentColor; }
+button.pill-aviso.ativo { border-color: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 25%, transparent); }
+.avisos-comp[data-filtro]:not([data-filtro=""]) button.pill-aviso:not(.ativo) { opacity: .55; }
+.limpar-aviso { font-size: 12.5px; font-weight: 600; }

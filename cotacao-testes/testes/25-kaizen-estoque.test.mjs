@@ -69,3 +69,25 @@ test('Rio Juntas: itens com marca GO ficam destacados (demoram mais para chegar)
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('Comando: ganha até 5% acima do 1º lugar, com o detalhe; clicar no mais barato escolhe ele', async () => {
+  const s = await abrirCot([
+    forn('f1', 'KAIZEN', { 0: { preco: 100, marca: 'NGK' }, 1: { preco: 100, marca: 'CAR80' } }),
+    forn('f2', 'COMANDO', { 0: { preco: 104.9, marca: 'NGK' }, 1: { preco: 106, marca: 'CAR80' } }), // item 1: +4,9%; item 2: +6%
+  ]);
+  const { page } = s;
+  const r = await page.evaluate(() => comparar(db.cotacoes[0]).linhas.map(l => [l.vencedor, l.preferencia]));
+  assert.deepEqual(r, [[1, true], [0, false]], 'até 5% a Comando ganha; acima de 5% não');
+  const linha = page.locator('.tab-comp tbody tr[data-comp-linha]').first();
+  assert.match(n(await linha.innerText()), /⭐ regra Comando · \+4,9% do 1º/);
+  assert.match(n(await linha.innerText()), /COMANDO\s+pela regra dos 5% \(\+4,9% do 1º\)/);
+  assert.match(n(await linha.innerText()), /\+4,9%[\s\S]*1º KAIZEN R\$ 100,00/, 'a Dif. mostra o mais barato de verdade');
+  assert.match(await page.locator('.pill-aviso.regra').innerText(), /1 item\(ns\) da Comando ganhando pela regra dos 5%/);
+  // escolher o mais barato (Kaizen) desfaz a regra neste item
+  const kaizen = linha.locator('td.escolhivel', { hasText: '100,00' });
+  const caixa = await kaizen.boundingBox();
+  await kaizen.click({ position: { x: caixa.width - 14, y: 12 } });
+  assert.deepEqual(await page.evaluate(() => { const l = comparar(db.cotacoes[0]).linhas[0]; return [l.vencedor, l.preferencia]; }), [0, false]);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
