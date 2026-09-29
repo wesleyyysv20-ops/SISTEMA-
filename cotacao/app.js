@@ -5156,7 +5156,7 @@ function cartaoLimpezaProdutos() {
   const sem = produtosSemMarca();
   return `<section class="card">
     <h3>Limpeza do cadastro</h3>
-    ${sem.length ? `<div class="aviso-recusa small" style="margin-bottom:10px">⚠ <b>${sem.length} produto(s) sem marca exigida.</b> Todo produto precisa de marca exigida (QUALQUER, SÓ COFAP…).
+    ${sem.length ? `<div class="aviso-recusa small" style="margin-bottom:10px">⚠ <b>${sem.length} produto(s) sem marca exigida.</b> Preencha a marca na cotação (ela fica salva no cadastro) ou edite aqui (QUALQUER, SÓ COFAP…).
       <div style="margin:6px 0">${sem.slice(0, 10).map(p => `<span class="badge">${esc(p.codigo || '—')}</span> ${esc(p.descricao)}`).join('<br>')}${sem.length > 10 ? `<br>… e mais ${sem.length - 10}` : ''}</div>
       <button type="button" class="sm danger" data-act="excluirSemMarca">🗑 Excluir os ${sem.length} produto(s) sem marca</button>
       <span class="muted"> ou edite cada um e preencha a marca.</span></div>` : '<p class="small muted" style="margin-top:0">✓ Todos os produtos têm marca exigida.</p>'}
@@ -6162,10 +6162,8 @@ const acoes = {
     if (!escolhidas.length) return avisar('Marque pelo menos um item.');
     const r = rascunho();
     const txt = (l, c) => (c >= 0 ? l.cels[c] : '');
-    const novosSemMarca = escolhidas.filter(l => !l.produtoId && !String(l.marca ?? txt(l, d.colMarca) ?? '').trim());
-    if (novosSemMarca.length) {
-      return avisar(`${novosSemMarca.length} código(s) novo(s) sem marca exigida: ${novosSemMarca.slice(0, 10).map(l => l.codigo || l.chave).join(', ')}${novosSemMarca.length > 10 ? '…' : ''}\n\nProduto sem marca exigida não entra no banco. Preencha a marca desses itens (ou deixe-os de fora) e adicione de novo.`);
-    }
+    // código novo sem marca exigida também entra: a marca é preenchida na cotação (e fica salva no cadastro)
+    const novosSemMarca = escolhidas.filter(l => !l.produtoId && !String(l.marca ?? txt(l, d.colMarca) ?? '').trim()).length;
     let novos = 0, somados = 0;
     for (const l of escolhidas) {
       const qtd = 1; // o fornecedor informa o preço unitário
@@ -6205,7 +6203,7 @@ const acoes = {
     ui.datacar = null;
     salvar();
     render();
-    toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação` : ''}.`, 6000);
+    toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação` : ''}.${novosSemMarca ? ` ${novosSemMarca} sem marca: preencha a marca na lista (campos amarelos).` : ''}`, 7000);
   },
 
   irItem: el => {

@@ -86,7 +86,7 @@ test('não entra produto novo sem marca: formulário e planilha', async () => {
   await s.fechar();
 });
 
-test('DataCar: código novo sem marca exigida não entra no banco', async () => {
+test('DataCar: código novo sem marca entra no banco e a marca é preenchida na cotação (fica salva no cadastro)', async () => {
   const s = await abrir(base());
   const { page } = s;
   await page.click('nav [data-route=nova]');
@@ -96,10 +96,16 @@ test('DataCar: código novo sem marca exigida não entra no banco', async () => 
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
-  const aviso = page.locator('.dlg-fundo:not(#dlgDataCar) .dlg');
-  await aviso.waitFor();
-  assert.match(await aviso.innerText(), /1 código\(s\) novo\(s\) sem marca exigida: SM-1/);
-  assert.deepEqual(await codigos(page), [], 'nada entrou no banco');
+  await page.waitForSelector('#dlgDataCar', { state: 'detached' });
+  assert.deepEqual(await codigos(page), ['SM-1'], 'entrou no banco');
+  assert.equal(await page.evaluate(() => db.produtos[0].marca), '');
+  assert.match(await page.locator('#toast').innerText(), /1 sem marca: preencha a marca na lista/);
+  // na cotação o campo da marca fica amarelo; preenchido, vai para o cadastro
+  const campo = page.locator('[data-marca-item="0"]');
+  assert.match(await campo.getAttribute('class'), /falta/);
+  await campo.fill('SÓ NGK');
+  await campo.press('Tab');
+  await page.waitForFunction(() => db.produtos[0].marca === 'SÓ NGK');
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

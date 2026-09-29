@@ -26,7 +26,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `19-busca-itens` | nova cotação: procurar na lista (código, similar, marca, descrição), incluir do cadastro o que não está na lista, cadastrar no banco o que não existe e tirar item com confirmação |
 | `20-duvida-lojas` | ❓ do comparativo: escolher a loja (uma ou as duas), quantidade e observação; Paranoá antes de São Sebastião |
 | `21-marca-recusada` | "Não, é outra marca": o preço não ganha, o item fica aguardando outro preço; desfazer e nova marca do fornecedor; preço errado: remover ou corrigir pelo ✕ do preço |
-| `22-marca-obrigatoria` | produto sem marca exigida: aviso e exclusão com confirmação, trocar marca (FREEMAX → FREMAX), bloqueio no formulário, na planilha e no DataCar |
+| `22-marca-obrigatoria` | produto sem marca exigida: aviso e exclusão com confirmação, trocar marca (FREEMAX → FREMAX), bloqueio no formulário, na planilha e no DataCar; pelo DataCar o código novo sem marca entra e a marca é preenchida na cotação |
 | `23-dois-computadores` | gravação segura: juntar versões, dois computadores ao mesmo tempo, aba fechada antes de enviar, lotes antigos viram baldes |
 | `24-ordem-fornecedores` | comparativo com os fornecedores em ordem alfabética (tela, totais e Excel), cada preço no fornecedor certo |
 | `25-kaizen-estoque` | Kaizen: "MARCA/estoque" separa marca e estoque; quando ganha, a quantidade das lojas não passa do estoque; Rio Juntas: marca GO destacada (demora para chegar); Comando ganha até 5% acima do 1º (com o detalhe); estoque insuficiente: campo vermelho e aviso no item com o que foi digitado |
