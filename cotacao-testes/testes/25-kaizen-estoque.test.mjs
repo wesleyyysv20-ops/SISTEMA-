@@ -43,10 +43,12 @@ test('Kaizen ganhou: a soma das lojas não passa do estoque', async () => {
 
   // passa a comprar da Via Peças (sem limite): pode mais
   await page.click('.tab-comp tbody tr >> nth=0 >> td.escolhivel >> nth=1');
+  await page.click('.dlg button.primary'); // confirma a escolha
   await page.fill(qtd(0, 'sao-sebastiao'), '9');
   assert.equal(await page.inputValue(qtd(0, 'sao-sebastiao')), '9');
   // volta para a Kaizen: avisa que ficou acima do estoque
   await page.click('.tab-comp tbody tr >> nth=0 >> td.escolhivel >> nth=0');
+  await page.click('.dlg button.primary'); // confirma a escolha
   assert.match(n(await page.locator('#tot-0').innerText()), /acima do estoque \(10\)/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
@@ -87,6 +89,7 @@ test('Comando: ganha até 5% acima do 1º lugar, com o detalhe; clicar no mais b
   const kaizen = linha.locator('td.escolhivel', { hasText: '100,00' });
   const caixa = await kaizen.boundingBox();
   await kaizen.click({ position: { x: caixa.width - 14, y: 12 } });
+  await page.click('.dlg button.primary'); // confirma a escolha
   assert.deepEqual(await page.evaluate(() => { const l = comparar(db.cotacoes[0]).linhas[0]; return [l.vencedor, l.preferencia]; }), [0, false]);
   assert.deepEqual(s.erros, []);
   await s.fechar();

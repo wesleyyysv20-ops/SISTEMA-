@@ -7,7 +7,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | --- | --- |
 | `01-nova-cotacao` | arquivo do DataCar, conferência por grupo, itens repetidos, planilha do fornecedor |
 | `02-importar-resposta` | importação da resposta (com e sem aba de controle, sem nome, arquivo .xls antigo) |
-| `03-comparativo-pedidos` | vencedor, diferença 1º × 2º, avisos de preço, escolha manual, pedidos e comparativo em Excel |
+| `03-comparativo-pedidos` | vencedor, diferença 1º × 2º, avisos de preço, escolha manual, pedidos e comparativo em Excel (escolher outro preço pede confirmação) |
 | `04-historico-relatorios` | histórico de preços dos produtos e relatórios |
 | `05-envio-prazo` | envio em sequência, e-mail com cópia oculta, .zip das planilhas, prazo e cobrança |
 | `06-lojas-marcas` | quantidades por loja, pedidos por loja, marcas abreviadas e marca errada |
@@ -34,7 +34,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `27-coluna-fixa` | comparativo: colunas # e Produto fixas ao rolar para o lado; escolher outro preço mantém a rolagem |
 | `28-filtro-vencedor` | comparativo: "Mostrar itens de" um fornecedor (ou sem preço) para digitar só as quantidades dele; etiquetas de aviso filtram os itens delas |
 | `29-exportar-pedido` | exportar o pedido do fornecedor: planilhas individuais por loja (zip) ou somada entregue numa loja; marca a cotação dele como concluída e lembra a forma |
-| `30-prazo-hora-dif` | prazo de resposta com hora (vence no mesmo dia, conta na nota do fornecedor); Dif. 1º × 2º mostra o mais barato quando você escolheu outro ; alerta quando a diferença passa de 100% (possível preço errado) |
+| `30-prazo-hora-dif` | prazo de resposta com hora (vence no mesmo dia, conta na nota do fornecedor); Dif. 1º × 2º mostra o mais barato quando você escolheu outro ; alerta quando a diferença passa de 100% (possível preço errado); marcar preço como certo; alterar preço pelo alerta |
 
 ## Rodar
 

@@ -23,6 +23,7 @@ test('comparativo: fornecedores em ordem alfabética, cada preço no fornecedor 
 
   // clicar no preço da coluna "Via Peças" escolhe a Via Peças
   await page.locator('.tab-comp tbody tr').first().locator('td').nth(4).click();
+  await page.click('.dlg button.primary'); // confirma a escolha
   assert.equal(await page.evaluate(() => db.cotacoes[0].escolhas[0]), 'f1');
 
   const arq = await salvarDepois(s, () => page.click('[data-act=exportarComparativo]'));

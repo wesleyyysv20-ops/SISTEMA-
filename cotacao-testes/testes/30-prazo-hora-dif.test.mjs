@@ -56,6 +56,7 @@ test('Dif. 1º × 2º: escolhido o mais barato mostra o 2º; escolhido outro mos
   assert.match(await dif(), /\+21,5%\s+o 2º é mais caro\s+2º KAIZEN R\$ 13,78/);
   // escolhe a Kaizen (2º lugar): mostra quem tem o menor preço
   await page.locator('.tab-comp tbody tr').first().locator('td.escolhivel', { hasText: '13,78' }).click();
+  await page.click('.dlg button.primary'); // confirma a escolha
   assert.match(await dif(), /\+21,5%\s+1º RMP R\$ 11,34/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
@@ -95,6 +96,60 @@ test('diferença acima de 100% entre o 1º e o 2º: alerta de possível preço e
   // escolhido o mais caro: continua avisando (o escolhido está mais de 100% acima do menor)
   await linhas.nth(1).locator('td.escolhivel', { hasText: '95,00' }).click();
   assert.equal(await page.locator('.tab-comp tbody tr[data-comp-linha]').nth(1).locator('.chip-alerta-dif').count(), 1);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
+
+test('marcar como certo: diferença acima de 100% e preço fora do normal (o aviso volta se o preço mudar)', async () => {
+  const s = await abrir(base({ cotacoes: [cotacao('c1', '0037', '2026-09-28', 'aberta', [item('P1', 'VELA', 'QUALQUER'), item('P2', 'BOBINA', 'QUALQUER')], [
+    forn('f1', 'KAIZEN', { 0: { preco: 10 }, 1: { preco: 40 } }),
+    forn('f2', 'RMP', { 0: { preco: 25 }, 1: { preco: 42 } }),
+    forn('f3', 'VIA PEÇAS', { 0: { preco: 26 }, 1: { preco: 150 } }), // item 2: muito acima dos outros
+  ])] }));
+  const { page } = s;
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  const linha = k => page.locator('.tab-comp tbody tr[data-comp-linha]').nth(k);
+
+  // diferença acima de 100% (10 × 25): confere e marca como certo
+  await linha(0).locator('button.chip-alerta-dif').click();
+  assert.match(await page.locator('.dlg').innerText(), /KAIZEN: R\$\s10,00[\s\S]*RMP: R\$\s25,00[\s\S]*Os preços estão certos\?/);
+  await page.click('.dlg button.primary');
+  assert.equal(await linha(0).locator('.chip-alerta-dif').count(), 0);
+  assert.match(await linha(0).innerText(), /✓ diferença conferida/);
+  assert.equal(await page.locator('.aviso-dif').count(), 0, 'a etiqueta do topo some');
+
+  // preço muito acima dos outros: confere e marca como certo
+  const alerta = linha(1).locator('button.alerta-preco');
+  assert.equal(await alerta.count(), 1);
+  await alerta.click();
+  assert.match(await page.locator('.dlg').innerText(), /VIA PEÇAS: R\$\s150,00[\s\S]*Muito acima dos outros[\s\S]*Este preço está certo\?/);
+  await page.click('.dlg button.primary');
+  assert.equal(await linha(1).locator('.alerta-preco').count(), 0);
+  assert.match(await linha(1).innerText(), /✓ conferido/);
+
+  // se o preço mudar, os avisos voltam
+  await page.evaluate(() => { const c = db.cotacoes[0]; c.fornecedores[1].respostas[0].preco = 24; c.fornecedores[2].respostas[1].preco = 160; salvar(); render(); });
+  assert.equal(await linha(0).locator('button.chip-alerta-dif').count(), 1);
+  assert.equal(await linha(1).locator('button.alerta-preco').count(), 1);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
+
+test('alerta de preço: alterar o preço direto pela janela do alerta', async () => {
+  const s = await abrir(base({ cotacoes: [cotacao('c1', '0038', '2026-09-28', 'aberta', [item('P1', 'BOBINA', 'QUALQUER')], [
+    forn('f1', 'KAIZEN', { 0: { preco: 40 } }), forn('f2', 'RMP', { 0: { preco: 42 } }), forn('f3', 'VIA PEÇAS', { 0: { preco: 150 } }),
+  ])] }));
+  const { page } = s;
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  await page.locator('button.alerta-preco').click();
+  assert.deepEqual(await page.locator('.dlg .actions button').allInnerTexts(), ['Cancelar', 'Remover o preço', 'Alterar o preço…', 'Sim, o preço está certo']);
+  await page.click('.dlg button:text("Alterar o preço…")');
+  await page.fill('#dlgCampo', '45,00');
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await page.evaluate(() => { const o = db.cotacoes[0].fornecedores[2].respostas[0]; return [o.preco, o.precoOriginal]; }), [45, 150]);
+  assert.equal(await page.locator('.alerta-preco').count(), 0, 'com o valor certo, o alerta some');
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

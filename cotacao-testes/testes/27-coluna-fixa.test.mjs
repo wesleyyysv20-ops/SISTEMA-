@@ -51,6 +51,7 @@ test('comparativo: escolher o preço de outra empresa mantém a rolagem (não vo
     return tds.findIndex(td => { const r = td.getBoundingClientRect(); return r.top > p.top + 80 && r.bottom < p.bottom; });
   });
   await page.locator('.tab-comp td.escolhivel:not(.best)').nth(alvo).click();
+  await page.click('.dlg button.primary'); // confirma a escolha
   assert.equal(await page.evaluate(() => Object.keys(db.cotacoes[0].escolhas || {}).length), 1, 'escolheu');
   const depois = await page.evaluate(() => [document.querySelector('.painel-comp').scrollTop, window.scrollY]);
   assert.deepEqual(depois, antes, 'a tabela e a página ficam onde estavam');
