@@ -5135,22 +5135,50 @@ function empresasDuvida() {
   return [...lojas().map(siglaLoja), 'N/A'];
 }
 
-/** Um item no formato do DISPPAR: "- *CÓDIGO. OBS*" / "R$ 10,00 - MARCA" / "*PEDE 2 DSS ?*". */
-function textoItemDuvida(x) {
+/** Dúvidas iguais (mesmo código, valor, marca, observação e origem) viram uma linha só, com a quantidade de cada loja. */
+const chaveDuvida = x => [String(x.codigo || '').toUpperCase().trim(), Number(x.valor) || 0, String(x.marca || '').toUpperCase().trim(),
+  String(x.obs || '').toUpperCase().trim(), x.origem?.cotId || '', x.origem?.fornecedor || ''].join('|');
+function gruposDuvidas(lista = db.duvidas) {
+  const ordem = empresasDuvida();
+  const pos = e => (ordem.indexOf(e) < 0 ? ordem.length : ordem.indexOf(e));
+  const m = new Map();
+  for (const x of lista) {
+    const k = chaveDuvida(x);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(x);
+  }
+  return [...m.values()].map(g => g.sort((a, b) => pos(a.empresa) - pos(b.empresa)));
+}
+/** Quantidade por loja do grupo: [{ empresa, qtd }] (a mesma loja repetida é somada). */
+function qtdsGrupoDuvida(g) {
+  const m = new Map();
+  for (const x of g) m.set(x.empresa || 'N/A', (m.get(x.empresa || 'N/A') || 0) + (Number(x.qtd) || 1));
+  return [...m].map(([empresa, qtd]) => ({ empresa, qtd }));
+}
+const pedeDuvida = g => qtdsGrupoDuvida(g).map(x => `${x.qtd}${x.empresa !== 'N/A' ? ' ' + String(x.empresa).toUpperCase() : ''}`).join(' E ');
+
+/** Dúvidas da empresa escolhida no filtro da fila (sem filtro: todas). */
+function duvidasFiltradas() {
+  return ui.duvEmp ? db.duvidas.filter(x => x.empresa === ui.duvEmp) : db.duvidas;
+}
+
+/** Um item no formato do DISPPAR: "- *CÓDIGO. OBS*" / "R$ 10,00 - MARCA" / "*PEDE 2 DPR E 5 DSS ?*". */
+function textoItemDuvida(g) {
+  if (!Array.isArray(g)) g = [g];
+  const x = g[0];
   const cod = String(x.codigo || '').toUpperCase().trim() || '-';
   const obs = String(x.obs || '').toUpperCase().trim();
   const marca = String(x.marca || '').toUpperCase().trim() || '-';
-  const emp = String(x.empresa || '').toUpperCase().trim();
   return [
     `- *${obs ? `${cod}. ${obs}` : cod}*`,
     `${fmtMoeda(Number(x.valor) || 0)} - ${marca}`,
-    `*PEDE ${x.qtd || 1}${emp && emp !== 'N/A' ? ' ' + emp : ''} ?*`,
+    `*PEDE ${pedeDuvida(g)} ?*`,
   ].join('\n');
 }
 
 function textoDuvidas() {
   const cab = (db.config.duvidasCabecalho ?? DEFAULT_DB.config.duvidasCabecalho).trim();
-  return [cab, ...db.duvidas.map(textoItemDuvida)].filter(Boolean).join('\n\n');
+  return [cab, ...gruposDuvidas(duvidasFiltradas()).map(textoItemDuvida)].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -5238,16 +5266,24 @@ async function duvidasDoItem(c, i, fi, obsSugerida = '') {
 }
 
 function renderDuvidas() {
-  const ed = ui.editDuvida ? db.duvidas.find(x => x.id === ui.editDuvida) : null;
+  const grupoEd = ui.editDuvida ? gruposDuvidas().find(g => g.some(x => x.id === ui.editDuvida)) : null;
+  const ed = grupoEd ? grupoEd[0] : null;
   const v = ed || { empresa: ui.ultimaEmpresa || empresasDuvida()[0], qtd: 1 };
+  const qtdEd = e => (grupoEd ? qtdsGrupoDuvida(grupoEd).find(x => x.empresa === e)?.qtd ?? '' : '');
+  const emps = empresasDuvida();
+  if (ui.duvEmp && !db.duvidas.some(x => x.empresa === ui.duvEmp)) ui.duvEmp = null; // a empresa filtrada não tem mais dúvidas
+  const lista = duvidasFiltradas();
+  const grupos = gruposDuvidas(lista);
+  const contaEmp = e => db.duvidas.filter(x => x.empresa === e).length;
+  const empsNaFila = emps.filter(contaEmp);
   return `
   <section class="card">
     <h2>Dúvidas <span class="badge">${db.duvidas.length}</span></h2>
     <p class="muted small" style="margin-top:0">Itens que dependem da confirmação da loja antes de fechar a compra (marca diferente, preço estranho…). Monte a lista e copie o texto para o WhatsApp. No comparativo, o botão <b>❓</b> de cada item pergunta a loja (uma ou as duas), a quantidade e a observação e traz o item para cá já preenchido.</p>
     <form data-form="duvida" class="grid form-duvida">
-      <label>Empresa<select name="empresa">${empresasDuvida().map(e => `<option ${v.empresa === e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></label>
+      ${ed ? '' : `<label>Empresa<select name="empresa">${emps.map(e => `<option ${v.empresa === e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></label>`}
       <label>Código do produto<input name="codigo" required value="${esc(v.codigo)}" autocomplete="off"></label>
-      <label>Quantidade<input name="qtd" inputmode="numeric" value="${esc(v.qtd)}"></label>
+      ${ed ? emps.map(e => `<label>Qtd ${esc(e)}<input name="qtd_${esc(e)}" inputmode="numeric" value="${esc(qtdEd(e))}" placeholder="—" title="Vazio ou 0: tira ${esc(e)} desta dúvida"></label>`).join('') : `<label>Quantidade<input name="qtd" inputmode="numeric" value="${esc(v.qtd)}"></label>`}
       <label>Valor (R$)<input name="valor" inputmode="decimal" value="${v.valor ? esc(fmtNum(v.valor, 2)) : ''}"></label>
       <label>Marca<input name="marca" value="${esc(v.marca)}"></label>
       <label style="grid-column:span 2">Observação<input name="obs" value="${esc(v.obs)}" placeholder="Ex.: MARCA DIFERENTE, SÓ TEM ESSA"></label>
@@ -5260,21 +5296,24 @@ function renderDuvidas() {
   <div class="duvidas-grid">
     <section class="card">
       <div class="row-between"><h3>Fila de dúvidas</h3>${db.duvidas.length ? '<button class="sm danger" data-act="limparDuvidas">Limpar tudo</button>' : ''}</div>
-      ${db.duvidas.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>Empresa</th><th>Código</th><th class="r">Qtd</th><th class="r">Valor</th><th>Marca</th><th>Observação</th><th></th></tr></thead>
-        <tbody>${db.duvidas.map(x => `<tr class="${ui.editDuvida === x.id ? 'hist-aberto' : ''}">
-          <td><b>${esc(x.empresa)}</b></td>
+      ${empsNaFila.length ? `<div class="filtro-duv" role="group" aria-label="Empresa">
+        <button type="button" data-act="filtroDuvEmp" data-emp="" class="${ui.duvEmp ? '' : 'ativo'}">Todas <span class="badge">${db.duvidas.length}</span></button>
+        ${empsNaFila.map(e => `<button type="button" data-act="filtroDuvEmp" data-emp="${esc(e)}" class="${ui.duvEmp === e ? 'ativo' : ''}">${esc(e)} <span class="badge">${contaEmp(e)}</span></button>`).join('')}
+      </div>` : ''}
+      ${grupos.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Pede</th><th>Código</th><th class="r">Valor</th><th>Marca</th><th>Observação</th><th></th></tr></thead>
+        <tbody>${grupos.map(g => { const x = g[0]; return `<tr class="${g.some(y => y.id === ui.editDuvida) ? 'hist-aberto' : ''}">
+          <td class="pede-duv">${qtdsGrupoDuvida(g).map(q => `<span class="nowrap"><b>${esc(q.qtd)}</b> ${esc(q.empresa)}</span>`).join(' <span class="muted">e</span> ')}</td>
           <td>${esc(x.codigo)}${x.origem ? `<br><span class="small muted">nº ${esc(x.origem.numero)} · ${esc(x.origem.fornecedor)}${x.origem.marcaExigida ? ' · exigida ' + esc(x.origem.marcaExigida) : ''}</span>` : ''}</td>
-          <td class="r">${esc(x.qtd)}</td>
           <td class="r">${fmtMoeda(Number(x.valor) || 0)}</td>
           <td>${esc(x.marca || '—')}</td>
           <td class="small">${esc(x.obs || '')}</td>
-          <td class="actions-cell"><button class="sm" data-act="editarDuvida" data-id="${x.id}">Editar</button> <button class="sm danger" data-act="removerDuvida" data-id="${x.id}" title="Resolvido">✕</button></td>
-        </tr>`).join('')}</tbody>
+          <td class="actions-cell"><button class="sm" data-act="editarDuvida" data-id="${x.id}">Editar</button> <button class="sm danger" data-act="removerDuvida" data-id="${g.map(y => y.id).join(',')}" title="Resolvido${g.length > 1 ? ` (${esc(g.map(y => y.empresa).join(' e '))})` : ''}">✕</button></td>
+        </tr>`; }).join('')}</tbody>
       </table></div>` : '<p class="empty">Nenhum item em dúvida.</p>'}
     </section>
     <section class="card">
-      <div class="row-between"><h3>Texto para WhatsApp</h3><button class="sm primary" data-act="copiarDuvidas" ${db.duvidas.length ? '' : 'disabled'}>⧉ Copiar para o WhatsApp</button></div>
+      <div class="row-between"><h3>Texto para WhatsApp</h3><button class="sm primary" data-act="copiarDuvidas" ${lista.length ? '' : 'disabled'}>⧉ Copiar para o WhatsApp${ui.duvEmp ? ' (' + esc(ui.duvEmp) + ')' : ''}</button></div>
       <label>Texto fixo no topo<input id="duvidasCabecalho" value="${esc(db.config.duvidasCabecalho ?? DEFAULT_DB.config.duvidasCabecalho)}"></label>
       <pre class="texto-whats" id="textoDuvidas">${esc(textoDuvidas())}</pre>
     </section>
@@ -6150,9 +6189,11 @@ const acoes = {
 
   editarDuvida: el => { ui.editDuvida = el.dataset.id; render(); window.scrollTo(0, 0); },
   cancelarDuvida: () => { ui.editDuvida = null; render(); },
+  filtroDuvEmp: el => { ui.duvEmp = el.dataset.emp || null; render(); },
   removerDuvida: el => {
-    db.duvidas = db.duvidas.filter(x => x.id !== el.dataset.id);
-    if (ui.editDuvida === el.dataset.id) ui.editDuvida = null;
+    const ids = new Set(el.dataset.id.split(','));
+    db.duvidas = db.duvidas.filter(x => !ids.has(x.id));
+    if (ids.has(ui.editDuvida)) ui.editDuvida = null;
     salvar();
     render();
   },
@@ -6296,16 +6337,27 @@ const formularios = {
   duvida: form => {
     const d = formDados(form);
     if (!d.codigo) return avisar('Informe empresa e código do produto.');
-    const item = {
-      empresa: d.empresa || 'N/A', codigo: d.codigo.toUpperCase(), qtd: Math.max(1, parseInt(d.qtd, 10) || 1),
-      valor: parseNum(d.valor) || 0, marca: (d.marca || '').toUpperCase(), obs: d.obs || '',
-    };
-    ui.ultimaEmpresa = item.empresa;
-    if (ui.editDuvida) {
-      db.duvidas = db.duvidas.map(x => (x.id === ui.editDuvida ? { ...x, ...item } : x));
+    const comum = { codigo: d.codigo.toUpperCase(), valor: parseNum(d.valor) || 0, marca: (d.marca || '').toUpperCase(), obs: d.obs || '' };
+    const grupo = ui.editDuvida ? gruposDuvidas().find(g => g.some(x => x.id === ui.editDuvida)) : null;
+    if (grupo) {
+      // editar a linha inteira: dados comuns + a quantidade de cada loja (vazio ou 0 tira a loja)
+      const ids = new Set(grupo.map(x => x.id));
+      const novas = [];
+      for (const e of empresasDuvida()) {
+        const q = parseInt(d['qtd_' + e], 10) || 0;
+        if (q <= 0) continue;
+        const atual = grupo.find(x => x.empresa === e);
+        novas.push({ ...(atual || { id: uid(), origem: grupo[0].origem }), ...comum, empresa: e, qtd: q });
+      }
+      const pos = db.duvidas.findIndex(x => ids.has(x.id));
+      const resto = db.duvidas.filter(x => !ids.has(x.id));
+      resto.splice(pos, 0, ...novas);
+      db.duvidas = resto;
       ui.editDuvida = null;
-      toast('Item duvidoso atualizado.');
+      toast(novas.length ? 'Item duvidoso atualizado.' : 'Item tirado das dúvidas (nenhuma loja com quantidade).');
     } else {
+      const item = { empresa: d.empresa || 'N/A', qtd: Math.max(1, parseInt(d.qtd, 10) || 1), ...comum };
+      ui.ultimaEmpresa = item.empresa;
       db.duvidas = [...db.duvidas, { id: uid(), ...item }];
       toast('Item duvidoso adicionado.');
     }

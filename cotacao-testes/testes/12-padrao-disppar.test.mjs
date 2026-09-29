@@ -82,14 +82,15 @@ test('dúvidas: do comparativo para a fila, texto no formato do WhatsApp', async
   await page.click('.dlg-duvida button.primary'); // as duas lojas já vêm marcadas com a quantidade da cotação
   assert.match(await page.locator('#nav a[data-route=duvidas]').innerText(), /Dúvidas\s*2/);
   await irPara(page, 'duvidas');
-  await page.click('[data-act=editarDuvida] >> nth=1');
+  // as duas lojas do mesmo item ficam numa linha só
+  assert.equal(await page.locator('[data-act=editarDuvida]').count(), 1);
+  await page.click('[data-act=editarDuvida]');
   await page.fill('[data-form=duvida] [name=obs]', 'marca diferente');
   await page.click('[data-form=duvida] button.primary');
   const texto = n(await page.locator('#textoDuvidas').innerText());
   assert.equal(texto, [
     'Segue a relação dos itens em dúvida para avaliação:',
-    '- *GP30562*\nR$ 120,50 - MONROE\n*PEDE 1 DPR ?*',
-    '- *GP30562. MARCA DIFERENTE*\nR$ 120,50 - MONROE\n*PEDE 2 DSS ?*',
+    '- *GP30562. MARCA DIFERENTE*\nR$ 120,50 - MONROE\n*PEDE 1 DPR E 2 DSS ?*',
   ].join('\n\n'));
   // item manual
   await page.selectOption('[data-form=duvida] [name=empresa]', 'N/A');

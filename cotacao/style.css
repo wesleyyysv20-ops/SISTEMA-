@@ -1071,3 +1071,10 @@ input.qtd-loja.zerada { color: var(--muted); background: var(--card-2); text-dec
 .chip-duvida { display: inline-block; margin-bottom: 3px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; color: #fff; background: #7c4ddb; white-space: nowrap; }
 .pill-aviso.aviso-duvida { background: color-mix(in srgb, #8b5cf6 14%, var(--card)); border-color: #8b5cf6; color: #6d3fd0; }
 .txt-duvida { color: #6d3fd0; }
+
+/* fila de dúvidas: filtro por empresa e quantidade por loja */
+.filtro-duv { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.filtro-duv button { border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+.filtro-duv button.ativo { background: var(--primary); border-color: var(--primary); color: #fff; }
+.filtro-duv button.ativo .badge { background: rgba(255, 255, 255, .25); color: #fff; }
+.pede-duv .nowrap { white-space: nowrap; }
