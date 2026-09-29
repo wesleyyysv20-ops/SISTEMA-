@@ -519,6 +519,12 @@ function renderSeguro(caminhos = null) {
   const ativo = document.activeElement;
   const noPip = pip.win && !pip.win.closed ? pip.win.document.activeElement : null;
   const emQtd = ativo?.dataset?.qtdLoja != null || noPip?.dataset?.qtdLoja != null;
+  if (!emQtd && Date.now() - ultimaTecla < PAUSA_DIGITACAO && $('#app')?.contains(ativo)) {
+    // digitando ou andando pela lista com as setas: redesenha quando der uma pausa
+    clearTimeout(ui.timerRenderAdiado);
+    ui.timerRenderAdiado = setTimeout(() => renderSeguro(), PAUSA_DIGITACAO);
+    return;
+  }
   if (emQtd && Date.now() - ultimaTecla < PAUSA_DIGITACAO) {
     // digitando quantidades: atualiza só os números agora; a tela inteira quando der uma pausa
     atualizarQtdsTela();
@@ -6009,7 +6015,9 @@ function voltarRolagem(r) {
 /** Campo com o cursor (para voltar a ele depois de redesenhar a tela, ex.: ao voltar com Alt+Tab). */
 function guardarFoco() {
   const el = document.activeElement;
-  if (!el || !el.matches?.('input, textarea, select') || !$('#app')?.contains(el)) return null;
+  if (!el || !$('#app')?.contains(el)) return null;
+  // campos e áreas navegáveis pelo teclado com id (ex.: a lista de itens da nova cotação)
+  if (!el.matches?.('input, textarea, select') && !el.id) return null;
   let sel = el.id ? '#' + CSS.escape(el.id) : '';
   if (!sel) {
     const dados = Object.keys(el.dataset);
@@ -6258,7 +6266,7 @@ const acoes = {
     render();
   },
 
-  removerItem: el => perguntarRemoverItem(+el.dataset.i, false),
+  removerItem: el => perguntarRemoverItem(+el.dataset.i, false, !!el.closest('.painel-dup')),
   incluirDaBusca: el => incluirNaLista(el.dataset.id),
   recolherFornCot: el => alternarFornCot(el),
   filtroAviso: el => {
@@ -7211,7 +7219,7 @@ function aplicarFiltroItens() {
 }
 
 /** Tira um item da cotação depois de confirmar (o produto continua no cadastro). */
-async function perguntarRemoverItem(i, focar = true) {
+async function perguntarRemoverItem(i, focar = true, doPainel = false) {
   const r = rascunho();
   const x = r.itens[i];
   if (!x) return;
@@ -7225,9 +7233,15 @@ async function perguntarRemoverItem(i, focar = true) {
   if (pos < 0) return;
   r.itens.splice(pos, 1);
   salvar();
-  render();
-  const v = itensVisiveis();
-  if (v.length) moverCursorItem(v.find(j => j >= pos) ?? v.at(-1), focar);
+  if (doPainel) {
+    // tirado pelo painel de repetidos: a tela fica onde está (não pula para a linha na lista)
+    ui.cursorItem = Math.max(0, Math.min(ui.cursorItem > pos ? ui.cursorItem - 1 : ui.cursorItem, r.itens.length - 1));
+    render();
+  } else {
+    render();
+    const v = itensVisiveis();
+    if (v.length) moverCursorItem(v.find(j => j >= pos) ?? v.at(-1), focar);
+  }
   toast(`Removido só o item ${nome}. Os outros continuam na cotação.`, 5000);
 }
 
@@ -7720,6 +7734,24 @@ document.addEventListener('focusin', e => {
     const c = cotAtual();
     if (c) ui.ultQtd = { cotId: c.id, i: e.target.dataset.i, loja: e.target.dataset.qtdLoja }; // para voltar a ela pelo teclado
   }
+});
+
+/*
+ * Nova cotação: setas andam pelos itens e qualquer letra começa a preencher a marca do item atual,
+ * mesmo quando o cursor não está na lista (depois de um clique fora ou de a tela ser atualizada).
+ */
+document.addEventListener('keydown', e => {
+  if (e.defaultPrevented || rota().nome !== 'nova' || ui.datacar || document.querySelector('.dlg-fundo')) return;
+  const tab = document.getElementById('tabItens');
+  const t = e.target;
+  if (!tab || tab.contains(t) || t.closest?.('input, textarea, select, [contenteditable], #telaLogin')) return;
+  const letra = e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey;
+  const navega = ['ArrowDown', 'ArrowUp', 'Home', 'End', 'Backspace', 'Delete'].includes(e.key) && !e.altKey;
+  const abre = (e.key === 'Enter' || e.key === 'F2') && !t.closest?.('button, a, label, summary');
+  if (!letra && !navega && !abre) return;
+  tab.focus({ preventScroll: true });
+  // a tecla vale como se tivesse sido apertada na lista
+  teclaItens({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey, target: tab, preventDefault: () => e.preventDefault() });
 });
 
 /** Campo de quantidade para onde vai o teclado: o último usado, senão o da linha marcada, senão o 1º item mostrado. */

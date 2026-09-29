@@ -48,6 +48,8 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `41-presenca` | quem está nesta cotação agora: cabeçalho da cotação, lista de cotações e aviso quando duas pessoas estão no mesmo fornecedor |
 | `42-checklist-pedido` | checklist antes de exportar o pedido: sem quantidade, marca, preço fora do normal, estoque, dúvidas; "Revisar no comparativo" ou "Exportar mesmo assim" |
 | `43-escolher-arquivo` | escolher arquivo (DataCar): uma vez basta, mesmo se a tela for redesenhada com a janela do Windows aberta |
+| `44-tirar-repetido` | repetidos: "Tirar" no painel tira só aquele item e a tela não pula para a lista |
+| `45-teclado-nova` | nova cotação: setas e letras funcionam com o cursor fora da lista; atualizar a tela não tira o cursor da lista; Enter duas vezes grava no cadastro |
 
 ## Rodar
 
