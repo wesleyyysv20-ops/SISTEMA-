@@ -1063,3 +1063,11 @@ input.qtd-loja.zerada { color: var(--muted); background: var(--card-2); text-dec
 .tab-comp > tbody > tr:hover > td.col-escolhido, .tab-comp > tbody > tr.linha-atual > td.col-escolhido { background: var(--ok-bg) !important; }
 .preco-escolhido { font-size: 17px; color: var(--ok); }
 .nome-venc { display: inline-block; margin-top: 2px; font-size: 12px; font-weight: 800; color: var(--text); text-transform: uppercase; letter-spacing: .02em; }
+
+/* item em Dúvidas: linha em destaque e fora do pedido */
+.tab-comp > tbody > tr.sit-duvida { --faixa: #8b5cf6; }
+.tab-comp > tbody > tr.sit-duvida > td { background-color: color-mix(in srgb, #8b5cf6 10%, var(--card)); }
+.tab-comp > tbody > tr.sit-duvida > td.best { background-color: color-mix(in srgb, #8b5cf6 16%, var(--card)); }
+.chip-duvida { display: inline-block; margin-bottom: 3px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; color: #fff; background: #7c4ddb; white-space: nowrap; }
+.pill-aviso.aviso-duvida { background: color-mix(in srgb, #8b5cf6 14%, var(--card)); border-color: #8b5cf6; color: #6d3fd0; }
+.txt-duvida { color: #6d3fd0; }

@@ -1223,8 +1223,30 @@ function comparar(c) {
   return r;
 }
 
+/**
+ * Itens desta cotação que estão na fila de Dúvidas: Map(i -> Set(ids das lojas)).
+ * Enquanto a dúvida não sai da fila, o item não vai no pedido daquela loja.
+ */
+function duvidasPorItem(c) {
+  const m = new Map();
+  const LJ = lojas();
+  const cod = x => String(x || '').trim().toUpperCase();
+  for (const d of db.duvidas || []) {
+    const o = d.origem;
+    if (!o || o.cotId !== c.id) continue;
+    // dúvidas antigas não têm o número do item: acha pelo código
+    const i = o.i != null && c.itens[o.i] ? o.i : c.itens.findIndex(it => cod(it.codigo) && cod(it.codigo) === cod(d.codigo));
+    if (i < 0) continue;
+    if (!m.has(i)) m.set(i, new Set());
+    const lj = LJ.find(x => siglaLoja(x) === d.empresa);
+    for (const x of lj ? [lj] : LJ) m.get(i).add(x.id);
+  }
+  return m;
+}
+
 function compararCalculo(c) {
   const porLoja = temQtdLojas(c);
+  const duvidas = duvidasPorItem(c);
   const linhas = c.itens.map((it, i) => {
     const precos = c.fornecedores.map(f => {
       const p = f.respostas?.[i]?.preco;
@@ -1269,7 +1291,8 @@ function compararCalculo(c) {
     // estoque informado pelo vencedor (Kaizen: "MARCA/estoque"): limite de quantidade
     const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
     const difConferida = !!c.difConferida?.[i] && c.difConferida[i] === assinaturaPrecos(precos);
-    return { it, i, q, naoComprar, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
+    const duvida = duvidas.get(i) || null; // lojas com o item em Dúvidas
+    return { it, i, q, naoComprar, duvida, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -1822,10 +1845,12 @@ function pedidosPorFornecedor(c, lojaId = null) {
   const LJ = lojas();
   return c.fornecedores.map((f, fi) => {
     const itens = linhas.filter(l => l.vencedor === fi).map(l => {
-      const qtds = Object.fromEntries(LJ.map(lj => [lj.id, qtdLoja(c, l.i, lj.id)]));
+      // item em Dúvidas: fica fora do pedido da loja da dúvida até sair da fila
+      const qtds = Object.fromEntries(LJ.map(lj => [lj.id, l.duvida?.has(lj.id) ? 0 : qtdLoja(c, l.i, lj.id)]));
+      const soma = !l.duvida ? l.q : porLoja ? LJ.reduce((s, lj) => s + qtds[lj.id], 0) : 0;
       return {
         it: l.it, i: l.i, preco: l.preco, marca: marcaPedido(l.it.marca, f.respostas?.[l.i]?.marca, l.marcas[fi]),
-        qtds, qtd: lojaId ? qtds[lojaId] : l.q,
+        qtds, qtd: lojaId ? qtds[lojaId] : soma,
       };
     }).filter(x => x.qtd > 0);
     return { fi, f, itens, porLoja, total: itens.reduce((s, x) => s + x.preco * x.qtd, 0) };
@@ -4188,6 +4213,7 @@ function secaoPedidos(c, comp) {
   const peds = pedidosPorFornecedor(c);
   const semVencedor = comp.linhas.filter(l => l.vencedor < 0).length;
   const semQtd = comp.porLoja ? comp.linhas.filter(l => l.vencedor >= 0 && !l.q).length : 0;
+  const emDuvida = comp.linhas.filter(l => l.duvida && l.vencedor >= 0).length;
   if (!peds.length) {
     return `<section class="card" id="secPedidos"><h3>Pedidos de compra</h3><p class="muted small">Nenhum item com quantidade ainda. Digite as quantidades das lojas no comparativo.</p></section>`;
   }
@@ -4207,7 +4233,7 @@ function secaoPedidos(c, comp) {
         ${peds.length > 1 || comp.porLoja ? `<button class="sm" data-act="baixarPedidos" title="Um arquivo Excel com uma aba para cada fornecedor${comp.porLoja ? ', com a quantidade de cada loja' : ''}">⬇ Todos os pedidos${comp.porLoja ? ' (lojas juntas)' : ' (um arquivo)'}</button>` : ''}
       </div>
     </div>
-    <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
+    <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${emDuvida ? ` <b class="txt-duvida">❓ ${emDuvida} item(ns) em Dúvidas ficam fora dos pedidos até saírem da fila.</b>` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
     ${avisosMinimo(c, an)}
     <div class="table-wrap"><table>
       <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th>${temFrete ? '<th class="r">Frete / mínimo</th>' : ''}<th>Pagamento / entrega</th><th>Recebimento</th><th></th></tr></thead>
@@ -4381,6 +4407,7 @@ function renderCotacao(id) {
           if (l.aguardando) avisosLinha.add('aguardando');
           if (difSuspeita(l)) avisosLinha.add('dif');
           if (l.preferencia) avisosLinha.add('regra');
+          if (l.duvida) avisosLinha.add('duvida');
           const celulas = ordemForn.map(j => {
             const p = l.precos[j];
             const o = c.fornecedores[j].respostas?.[l.i];
@@ -4403,10 +4430,10 @@ function renderCotacao(id) {
           }).join('');
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
-          const situacao = l.aguardando ? 'aguardando' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
+          const situacao = l.aguardando ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
           return `<tr class="${l.aguardando ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
-          <td>${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.codigo || '—')}<br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
+          <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.codigo || '—')}<br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `<td class="r col-escolhido"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 ? `<br><span class="nome-venc">${esc(c.fornecedores[l.vencedor].nome)}</span>` : ''}${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
@@ -4494,7 +4521,9 @@ function renderCotacao(id) {
       // avisos do comparativo em etiquetas curtas, lado a lado (o texto completo aparece ao passar o mouse)
       const nAg = comp.linhas.filter(l => l.aguardando).length;
       const nDif = comp.linhas.filter(difSuspeita).length;
+      const nDuv = comp.linhas.filter(l => l.duvida).length;
       const et = [];
+      if (nDuv) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso aviso-duvida" data-tipo="duvida" title="Clique para ver só esses itens. Itens na fila de Dúvidas não vão no pedido exportado até saírem da fila.">❓ ${nDuv} item(ns) em dúvida — fora do pedido</button>`);
       if (nAg) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-recusa" data-tipo="aguardando" title="Clique para ver só esses itens. Linhas em vermelho. Quando chegar a resposta de outro fornecedor, confira a marca dele.">✗ ${nAg} item(ns) com a marca recusada, aguardando outro preço</button>`);
       if (nDif) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-dif" data-tipo="dif" title="Clique para ver só esses itens. Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} item(ns) com mais de 100% de diferença — confira o preço</button>`);
       if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} com marca diferente da pedida` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abreviação(ões) para conferir` : ''].filter(Boolean).join(' · ')}</button>`);
@@ -5201,7 +5230,7 @@ async function duvidasDoItem(c, i, fi, obsSugerida = '') {
     obs: obsSugerida,
   });
   if (!escolha) return -1;
-  const base = { codigo: l.it.codigo || '', valor: l.precos[j], marca: o.marca || '', obs: escolha.obs, origem: { cotId: c.id, numero: c.numero, fornecedor: f.nome, marcaExigida: l.it.marca || '' } };
+  const base = { codigo: l.it.codigo || '', valor: l.precos[j], marca: o.marca || '', obs: escolha.obs, origem: { cotId: c.id, numero: c.numero, i, fornecedor: f.nome, marcaExigida: l.it.marca || '' } };
   const novas = escolha.lojas.map(x => ({ ...base, id: uid(), empresa: x.sigla, qtd: x.qtd }));
   db.duvidas = [...db.duvidas, ...novas];
   salvar();

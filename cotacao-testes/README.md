@@ -36,6 +36,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `29-exportar-pedido` | exportar o pedido do fornecedor: planilhas individuais por loja (zip) ou somada entregue numa loja; marca a cotação dele como concluída e lembra a forma |
 | `30-prazo-hora-dif` | prazo de resposta com hora (vence no mesmo dia, conta na nota do fornecedor); Dif. 1º × 2º mostra o mais barato quando você escolheu outro ; alerta quando a diferença passa de 100% (possível preço errado); marcar preço como certo; alterar preço pelo alerta |
 | `31-foco-alt-tab` | quantidade: o cursor continua no mesmo campo ao redesenhar a tela e ao sair e voltar para a janela (Alt+Tab) |
+| `32-duvida-fora-pedido` | item marcado em Dúvidas: linha destacada (roxo) e fora do pedido exportado da loja da dúvida; sai da fila e volta ao pedido |
 
 ## Rodar
 
