@@ -4390,7 +4390,12 @@ function renderCotacao(id) {
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
-            ${nf > 1 ? `<td class="r">${celulaDifSegundo(c, l)}</td>` : ''}
+            ${nf > 1 ? (() => {
+              // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
+              const alvo = (l.manual || l.preferencia) && l.minIdx >= 0 ? l.minIdx : l.segundoIdx;
+              const acao = alvo >= 0 && alvo !== l.vencedor ? ` class="r escolhe-dif" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvo}" title="Clique para comprar de ${esc(c.fornecedores[alvo].nome)} (${fmtMoeda(l.precos[alvo])})"` : ' class="r"';
+              return `<td${acao}>${celulaDifSegundo(c, l)}</td>`;
+            })() : ''}
             <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.estoque != null ? `<br><span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : '') + (entregaDemorada(c.fornecedores[l.vencedor], c.fornecedores[l.vencedor].respostas?.[l.i]) ? '<br>' + chipDemora : '') + (l.preferencia ? `<br><span class="chip-regra" title="O menor preço é ${fmtMoeda(l.min)} (${esc(c.fornecedores[l.minIdx].nome)})">pela regra dos 5% (+${fmtPct(l.preco / l.min - 1)} do 1º)</span>` : '') + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</td>
             ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${qtdLoja(c, l.i, lj.id) || ''}" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r" id="tot-${l.i}">${celTotal(l)}</td>` : ''}

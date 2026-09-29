@@ -153,3 +153,27 @@ test('alerta de preço: alterar o preço direto pela janela do alerta', async ()
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('clicar na Dif. 1º × 2º pergunta e escolhe o 2º lugar; depois oferece voltar para o mais barato', async () => {
+  const s = await abrir(base({ cotacoes: [cotacao('c1', '0039', '2026-09-28', 'aberta', [item('P1', 'AMORTECEDOR', 'QUALQUER')], [
+    forn('f1', 'KAIZEN', { 0: { preco: 189.26 } }), forn('f2', 'DPK', { 0: { preco: 199.20 } }),
+  ])] }));
+  const { page } = s;
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  const dif = () => page.locator('.tab-comp tbody tr').first().locator('td.escolhe-dif');
+  await dif().click();
+  assert.match(n(await page.locator('.dlg').innerText()), /Comprar este item de DPK por R\$ 199,20\?[\s\S]*Hoje: KAIZEN por R\$ 189,26/);
+  await page.click('.dlg button:text("Cancelar")');
+  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 0, 'Cancelar não muda');
+  await dif().click();
+  await page.click('.dlg button.primary');
+  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 1, 'comprando da DPK');
+  // agora a célula mostra o mais barato; clicar oferece voltar para ele
+  await dif().click();
+  assert.match(n(await page.locator('.dlg').innerText()), /KAIZEN/);
+  await page.click('.dlg button.primary');
+  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 0);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
