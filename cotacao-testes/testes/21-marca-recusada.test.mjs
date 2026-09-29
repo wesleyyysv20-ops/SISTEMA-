@@ -28,7 +28,7 @@ test('marca recusada: único preço não ganha, item fica aguardando outro preç
   const txt = n(await linha(page, 0).innerText());
   assert.match(txt, /✗ SUN ELETRI\/318 — marca recusada/);
   assert.match(txt, /⏳ aguardando outro preço/);
-  assert.equal(await linha(page, 0).getAttribute('class'), 'linha-aguardando');
+  assert.match(await linha(page, 0).getAttribute('class'), /\blinha-aguardando\b.*\bsit-aguardando\b/, 'linha vermelha, com a faixa de aguardando');
   assert.equal(await linha(page, 0).locator('td.recusada').count(), 1);
   assert.match(n(await page.locator('.aviso-recusa').innerText()), /1 item\(ns\) com a marca recusada, aguardando outro preço/);
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), -1);

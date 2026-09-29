@@ -105,3 +105,27 @@ test('etiquetas de aviso levam aos itens: clicar mostra só eles; clicar de novo
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('tabela fácil de seguir: faixa pela situação, linha atual marcada e quantidade preenchida em destaque', async () => {
+  const itens = ['A', 'B', 'C'].map(x => item('P' + x, 'PECA ' + x, x === 'B' ? 'SÓ NGK' : 'QUALQUER', { codigo: x }));
+  const s = await abrir(base({ cotacoes: [cotacao('c1', '0040', '2026-09-28', 'aberta', itens, [
+    forn('f1', 'KAIZEN', { 0: { preco: 10 }, 1: { preco: 10, marca: 'BOSCH' } }),
+    forn('f2', 'VIA PEÇAS', { 0: { preco: 11 }, 1: { preco: 12, marca: 'BOSCH' } }),
+  ])] }));
+  const { page } = s;
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  const classes = () => page.locator('.tab-comp tbody tr[data-comp-linha]').evaluateAll(trs => trs.map(tr => [...tr.classList].filter(c => c.startsWith('sit-') || c === 'linha-atual').join(' ')));
+  assert.deepEqual(await classes(), ['sit-ok', 'sit-conferir', 'sit-sem']);
+  // digitar uma quantidade marca a linha e destaca o campo
+  await page.fill('[data-qtd-loja=paranoa][data-i="0"]', '3');
+  assert.deepEqual(await classes(), ['sit-ok linha-atual', 'sit-conferir', 'sit-sem']);
+  assert.equal(await page.locator('[data-qtd-loja=paranoa][data-i="0"].preenchida').count(), 1);
+  // clicar em outra linha passa a marca para ela; continua depois de redesenhar
+  await page.locator('.tab-comp tbody tr[data-comp-linha]').nth(2).locator('td').first().click();
+  await page.evaluate(() => render());
+  assert.deepEqual(await classes(), ['sit-ok', 'sit-conferir', 'sit-sem linha-atual']);
+  assert.equal(await page.locator('[data-qtd-loja=paranoa][data-i="0"].preenchida').count(), 1, 'continua destacada depois de redesenhar');
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

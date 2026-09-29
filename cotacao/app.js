@@ -431,7 +431,7 @@ const docsMudaramAqui = () => { const a = docsDoEstado(); return Object.keys(a).
 function renderSeguro() {
   const ativo = document.activeElement;
   if (ativo && ativo.matches?.('input, textarea, select') && !ativo.closest('#telaLogin') && $('#app')?.contains(ativo)) {
-    ativo.addEventListener('blur', () => setTimeout(render, 0), { once: true });
+    ativo.addEventListener('blur', () => setTimeout(() => (document.hasFocus() ? render() : renderSeguro()), 0), { once: true });
   } else if (!document.querySelector('.dlg-fundo')) render();
 }
 
@@ -1163,7 +1163,7 @@ function siglaLoja(l) {
 
 /** true quando já foi digitada alguma quantidade por loja nesta cotação. */
 function temQtdLojas(c) {
-  return !!c.qtds && Object.values(c.qtds).some(o => o && Object.values(o).some(v => v > 0));
+  return !!c.qtds && Object.values(c.qtds).some(o => o && Object.values(o).some(v => v != null && v >= 0));
 }
 
 function qtdLoja(c, i, lojaId) {
@@ -1189,6 +1189,7 @@ function recusada(c, i, f) {
 }
 
 function recusarMarca(c, i, f) {
+  versaoDados++; // o comparativo precisa ser refeito
   const alvo = normMarca(f.respostas?.[i]?.marca);
   c.recusadas = { ...(c.recusadas || {}) };
   const r = { ...(c.recusadas[i] || {}) };
@@ -1213,7 +1214,16 @@ const assinaturaPrecos = precos => precos.map(x => (x == null ? '' : Math.round(
  * O vencedor de cada item é o menor preço, a não ser que a pessoa tenha escolhido outro fornecedor
  * (c.escolhas[i] = fornecedorId). l.preco é o preço do vencedor; l.min continua sendo o menor preço.
  */
+const cacheComparar = new WeakMap();
 function comparar(c) {
+  const m = cacheComparar.get(c);
+  if (m && m.v === versaoDados) return m.r;
+  const r = compararCalculo(c);
+  cacheComparar.set(c, { v: versaoDados, r });
+  return r;
+}
+
+function compararCalculo(c) {
   const porLoja = temQtdLojas(c);
   const linhas = c.itens.map((it, i) => {
     const precos = c.fornecedores.map(f => {
@@ -1235,6 +1245,7 @@ function comparar(c) {
       .sort((x, y) => Math.round(x[0] * 100) - Math.round(y[0] * 100) || chegada(x[1]) - chegada(y[1]) || x[1] - y[1]);
     const min = ordem.length ? ordem[0][0] : null;
     const minIdx = ordem.length ? ordem[0][1] : -1; // quem ganharia sozinho (menor preço; empate: respondeu primeiro)
+    const naoComprar = porLoja && lojas().every(lj => c.qtds?.[i]?.[lj.id] === 0); // 0 em todas as lojas
     let vencedor = minIdx;
     let manual = false;
     // Comando: até 5% acima do 1º lugar também ganha (a não ser que você escolha outro)
@@ -1258,7 +1269,7 @@ function comparar(c) {
     // estoque informado pelo vencedor (Kaizen: "MARCA/estoque"): limite de quantidade
     const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
     const difConferida = !!c.difConferida?.[i] && c.difConferida[i] === assinaturaPrecos(precos);
-    return { it, i, q, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
+    return { it, i, q, naoComprar, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -3834,7 +3845,7 @@ function celTotal(l) {
   if (l.preco == null) return '—';
   const acima = l.estoque != null && l.q > l.estoque
     ? `<br><span class="acima-estoque" title="O fornecedor tem só ${fmtNum(l.estoque)} em estoque">⚠ acima do estoque (${fmtNum(l.estoque)})</span>` : '';
-  if (!l.q) return '<span class="muted small">sem qtd.</span>';
+  if (!l.q) return l.naoComprar ? '<span class="nao-comprar" title="0 nas duas lojas: não vai em nenhum pedido">não comprar</span>' : '<span class="muted small">sem qtd.</span>';
   return `${fmtMoeda(l.preco * l.q)}${l.q !== 1 ? `<br><span class="small muted">${fmtNum(l.q)} un.</span>` : ''}${acima}`;
 }
 
@@ -4220,16 +4231,24 @@ function secaoPedidos(c, comp) {
 }
 
 /** Atualiza totais e pedidos sem redesenhar a tabela (para não perder o campo em edição). */
-function atualizarTotaisComp(c) {
+function atualizarTotaisComp(c, i = null) {
   const comp = comparar(c);
-  for (const l of comp.linhas) {
-    const td = document.getElementById('tot-' + l.i);
+  // quando as quantidades passam a valer (1ª digitada) todos os totais mudam; senão, só o da linha digitada
+  const todas = i == null || ui.porLojaComp?.cotId !== c.id || ui.porLojaComp.v !== comp.porLoja;
+  ui.porLojaComp = { cotId: c.id, v: comp.porLoja };
+  for (const l of todas ? comp.linhas : [comp.linhas[i]]) {
+    const td = l && document.getElementById('tot-' + l.i);
     if (td) td.innerHTML = celTotal(l);
   }
   const tot = $('#totalComp');
   if (tot) tot.outerHTML = linhaTotalComp(c, comp);
-  const sec = $('#secPedidos');
-  if (sec) sec.outerHTML = secaoPedidos(c, comp);
+  // a seção de pedidos é pesada: atualiza quando a pessoa para de digitar
+  clearTimeout(ui.timerPedidos);
+  ui.timerPedidos = setTimeout(() => {
+    const sec = $('#secPedidos');
+    const atual = cotAtual();
+    if (sec && atual === c) sec.outerHTML = secaoPedidos(c, comparar(c));
+  }, 350);
 }
 
 function renderCotacao(id) {
@@ -4352,7 +4371,7 @@ function renderCotacao(id) {
       <thead><tr>
         <th class="c">#</th><th>Produto</th>${temResposta ? '' : '<th class="r">Qtd.</th>'}
         ${ordemForn.map(j => `<th class="r">${esc(c.fornecedores[j].nome)}</th>`).join('')}
-        ${temResposta ? `<th class="r">Preço escolhido</th>${nf > 1 ? '<th class="r" title="Quanto o 2º melhor preço é mais caro que o melhor">Dif. 1º × 2º</th>' : ''}<th>Fornecedor</th>
+        ${temResposta ? `<th class="r col-escolhido">Preço escolhido</th>${nf > 1 ? '<th class="r" title="Quanto o 2º melhor preço é mais caro que o melhor">Dif. 1º × 2º</th>' : ''}<th>Fornecedor</th>
           ${LJ.map(lj => `<th class="c col-qtd" title="Quantidade para ${esc(lj.nome)}">Qtd.<br>${esc(lj.nome)}</th>`).join('')}<th class="r">Total</th>` : ''}
       </tr></thead>
       <tbody>
@@ -4384,12 +4403,13 @@ function renderCotacao(id) {
           }).join('');
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
-          return `<tr class="${l.aguardando ? 'linha-aguardando' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
+          const situacao = l.aguardando ? 'aguardando' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
+          return `<tr class="${l.aguardando ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
           <td>${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.codigo || '—')}<br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
-          ${temResposta ? `<td class="r"><b>${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
+          ${temResposta ? `<td class="r col-escolhido"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 ? `<br><span class="nome-venc">${esc(c.fornecedores[l.vencedor].nome)}</span>` : ''}${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
               const alvo = (l.manual || l.preferencia) && l.minIdx >= 0 ? l.minIdx : l.segundoIdx;
@@ -4397,7 +4417,7 @@ function renderCotacao(id) {
               return `<td${acao}>${celulaDifSegundo(c, l)}</td>`;
             })() : ''}
             <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.estoque != null ? `<br><span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : '') + (entregaDemorada(c.fornecedores[l.vencedor], c.fornecedores[l.vencedor].respostas?.[l.i]) ? '<br>' + chipDemora : '') + (l.preferencia ? `<br><span class="chip-regra" title="O menor preço é ${fmtMoeda(l.min)} (${esc(c.fornecedores[l.minIdx].nome)})">pela regra dos 5% (+${fmtPct(l.preco / l.min - 1)} do 1º)</span>` : '') + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</td>
-            ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${qtdLoja(c, l.i, lj.id) || ''}" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
+            ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}" title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
         }).join('')}
@@ -5396,12 +5416,34 @@ function voltarRolagem(r) {
   window.scrollTo(r.x, r.y);
 }
 
+/** Campo com o cursor (para voltar a ele depois de redesenhar a tela, ex.: ao voltar com Alt+Tab). */
+function guardarFoco() {
+  const el = document.activeElement;
+  if (!el || !el.matches?.('input, textarea, select') || !$('#app')?.contains(el)) return null;
+  let sel = el.id ? '#' + CSS.escape(el.id) : '';
+  if (!sel) {
+    const dados = Object.keys(el.dataset);
+    if (!dados.length) return null;
+    sel = el.tagName.toLowerCase() + dados.map(k => `[data-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}="${CSS.escape(el.dataset[k])}"]`).join('');
+  }
+  let ini = null, fim = null;
+  try { ini = el.selectionStart; fim = el.selectionEnd; } catch (e) { /* campo sem seleção */ }
+  return { sel, ini, fim };
+}
+function voltarFoco(f) {
+  const el = f && document.querySelector('#app ' + f.sel);
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  try { if (f.ini != null) el.setSelectionRange(f.ini, f.fim); } catch (e) { /* campo sem seleção */ }
+}
+
 function render() {
   const { nome, id } = rota();
   const app = $('#app');
   // redesenhar a mesma tela (ex.: escolher o preço de outra empresa) não pode jogar a rolagem para o começo
   const tela = `${nome}|${id ?? ''}`;
   const rolagem = telaDesenhada === tela ? guardarRolagem() : null;
+  const foco = telaDesenhada === tela ? guardarFoco() : null;
   telaDesenhada = tela;
   const views = {
     inicio: renderInicio,
@@ -5424,6 +5466,7 @@ function render() {
       <p class="muted small">Tente recarregar a página. Se continuar, avise com a mensagem acima.</p></section>`;
   }
   if (rolagem) voltarRolagem(rolagem);
+  if (foco) voltarFoco(foco);
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
@@ -6357,6 +6400,8 @@ document.addEventListener('input', e => {
     if (!c) return;
     const i = +t.dataset.i;
     let v = Math.max(0, parseNum(t.value) || 0);
+    t.classList.toggle('preenchida', v > 0);
+    t.classList.toggle('zerada', t.value.trim() !== '' && v === 0);
     const l = comparar(c).linhas[i];
     if (l?.estoque != null) {
       // o vencedor informou o estoque (Kaizen): a soma das lojas não passa dele
@@ -6372,10 +6417,11 @@ document.addEventListener('input', e => {
     }
     c.qtds = { ...(c.qtds || {}) };
     const o = { ...(c.qtds[i] || {}) };
-    if (v) o[t.dataset.qtdLoja] = v; else delete o[t.dataset.qtdLoja];
+    // 0 digitado = não comprar nesta loja (fica gravado); campo vazio = ainda não informado
+    if (t.value.trim() === '') delete o[t.dataset.qtdLoja]; else o[t.dataset.qtdLoja] = v;
     if (Object.keys(o).length) c.qtds[i] = o; else delete c.qtds[i];
     salvar();
-    atualizarTotaisComp(c);
+    atualizarTotaisComp(c, i);
     return;
   }
   if (t.dataset.draft) {
@@ -6632,6 +6678,17 @@ document.addEventListener('mouseout', e => {
     wrap.querySelector('.hf-cruz').style.display = 'none';
   }
 });
+
+/** Linha atual do comparativo: fica marcada para o olho não se perder (clique ou foco numa quantidade). */
+function marcarLinhaComp(tr) {
+  const c = cotAtual();
+  if (!tr || !c) return;
+  ui.linhaComp = { cotId: c.id, i: +tr.dataset.compLinha };
+  document.querySelectorAll('tr.linha-atual').forEach(x => { if (x !== tr) x.classList.remove('linha-atual'); });
+  tr.classList.add('linha-atual');
+}
+document.addEventListener('click', e => marcarLinhaComp(e.target.closest?.('[data-comp-linha]')), true);
+document.addEventListener('focusin', e => marcarLinhaComp(e.target.closest?.('[data-comp-linha]')));
 
 document.addEventListener('focusin', e => {
   if (e.target.dataset?.qtdLoja != null) e.target.select();

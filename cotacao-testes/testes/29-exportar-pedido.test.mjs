@@ -123,3 +123,28 @@ test('pedido exportado: itens em ordem alfabética da descrição, numerados em 
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('quantidade 0 = não comprar: fica gravada e o item só vai na planilha da loja que tem quantidade', async () => {
+  const s = await abrirCot();
+  const { page } = s;
+  // item A: Paranoá 1, São Sebastião 0; item C: 0 nas duas lojas
+  await page.fill('[data-qtd-loja=paranoa][data-i="0"]', '1');
+  await page.fill('[data-qtd-loja=sao-sebastiao][data-i="0"]', '0');
+  await page.fill('[data-qtd-loja=sao-sebastiao][data-i="2"]', '0');
+  await page.fill('[data-qtd-loja=paranoa][data-i="2"]', '0');
+  assert.deepEqual(await page.evaluate(() => db.cotacoes[0].qtds[0]), { paranoa: 1, 'sao-sebastiao': 0 }, 'o 0 fica gravado');
+  await page.evaluate(() => render());
+  assert.equal(await page.inputValue('[data-qtd-loja=sao-sebastiao][data-i="0"]'), '0', 'e continua aparecendo');
+  assert.equal(await page.locator('[data-qtd-loja=sao-sebastiao][data-i="0"].zerada').count(), 1);
+  assert.match(await page.locator('#tot-2').innerText(), /não comprar/);
+
+  await page.click('[data-act=exportarPedidoForn] >> nth=0'); // KAIZEN
+  await page.check('input[name=formatoExport][value=individual]');
+  const arq = await salvarDepois(s, () => page.click('.dlg-formato button.primary'));
+  // só o Paranoá tem item com quantidade: vem uma planilha só, com o item A
+  assert.equal(arq.nome, 'Pedido_0029_kaizen_paranoa.xlsx');
+  const p = lerPedido((await lerXlsx(arq.buffer)).worksheets[0]);
+  assert.deepEqual(p.linhas.map(l => [l[1], l[p.col('QTD')]]), [['COD-A', 1]]);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

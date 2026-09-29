@@ -1029,3 +1029,37 @@ button.alerta-preco:hover, button.chip-alerta-dif:hover { outline: 1px solid cur
 /* Dif. 1º × 2º: clicar escolhe o 2º lugar (com confirmação) */
 .tab-comp td.escolhe-dif { cursor: pointer; }
 .tab-comp td.escolhe-dif:hover { background: var(--blue-bg); box-shadow: inset 0 0 0 1px var(--primary-2); }
+
+/* ===== comparativo: fácil de seguir com o olho ===== */
+/* preço vencedor grande e forte; os outros menores e mais claros */
+.tab-comp td.r.escolhivel:not(.best), .tab-comp td.r:not(.best):not(.escolhe-dif):not(.col-qtd) { color: var(--muted); }
+.tab-comp td.best { font-size: 16px; }
+.tab-comp td.r.escolhivel:not(.best) { font-size: 14px; }
+/* faixa lateral pela situação do item */
+.tab-comp > tbody > tr > td:first-child { box-shadow: inset 5px 0 0 var(--faixa, transparent); font-weight: 700; }
+.tab-comp > tbody > tr.sit-ok { --faixa: #3fb57a; }
+.tab-comp > tbody > tr.sit-conferir { --faixa: #f0a040; }
+.tab-comp > tbody > tr.sit-aguardando { --faixa: var(--danger); }
+.tab-comp > tbody > tr.sit-sem { --faixa: #b8c0d4; }
+/* a linha inteira acende ao passar o mouse; a linha atual fica marcada */
+.tab-comp > tbody > tr:hover > td { background-color: color-mix(in srgb, var(--primary-2) 8%, var(--card)); }
+.tab-comp > tbody > tr:hover > td.best { background-color: color-mix(in srgb, var(--ok-bg) 80%, var(--primary-2) 10%); }
+.tab-comp > tbody > tr.linha-atual > td { background-color: color-mix(in srgb, var(--primary-2) 14%, var(--card)); border-top: 2px solid var(--primary-2); border-bottom: 2px solid var(--primary-2); }
+.tab-comp > tbody > tr.linha-atual > td.best { background-color: color-mix(in srgb, var(--ok-bg) 75%, var(--primary-2) 18%); }
+.tab-comp > tbody > tr.linha-atual > td:first-child { box-shadow: inset 8px 0 0 var(--primary-2); }
+.tab-comp > tbody > tr.linha-atual > :nth-child(-n+2),
+.tab-comp > tbody > tr:hover > :nth-child(-n+2) { background: color-mix(in srgb, var(--primary-2) 12%, var(--card)); }
+/* quantidade já digitada em destaque */
+input.qtd-loja.preenchida { background: var(--blue-bg); border-color: var(--primary-2); color: var(--primary-2); font-weight: 700; }
+input.qtd-loja:focus { outline: 3px solid color-mix(in srgb, var(--primary-2) 40%, transparent); }
+
+/* quantidade 0 = não comprar nesta loja */
+input.qtd-loja.zerada { color: var(--muted); background: var(--card-2); text-decoration: line-through; }
+.nao-comprar { font-size: 12px; font-weight: 700; color: var(--muted); }
+
+/* coluna "Preço escolhido": faixa verde de cima a baixo, preço grande e quem ganhou */
+.tab-comp th.col-escolhido { background: var(--ok-bg); color: var(--ok); font-weight: 800; box-shadow: inset 2px 0 0 var(--ok), inset -2px 0 0 var(--ok), inset 0 -1px 0 var(--line); }
+.tab-comp td.col-escolhido { background: color-mix(in srgb, var(--ok-bg) 70%, var(--card)) !important; box-shadow: inset 2px 0 0 var(--ok), inset -2px 0 0 var(--ok); color: var(--text); min-width: 130px; }
+.tab-comp > tbody > tr:hover > td.col-escolhido, .tab-comp > tbody > tr.linha-atual > td.col-escolhido { background: var(--ok-bg) !important; }
+.preco-escolhido { font-size: 17px; color: var(--ok); }
+.nome-venc { display: inline-block; margin-top: 2px; font-size: 12px; font-weight: 800; color: var(--text); text-transform: uppercase; letter-spacing: .02em; }
