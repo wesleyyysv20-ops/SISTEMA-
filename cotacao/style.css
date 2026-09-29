@@ -1078,3 +1078,8 @@ input.qtd-loja.zerada { color: var(--muted); background: var(--card-2); text-dec
 .filtro-duv button.ativo { background: var(--primary); border-color: var(--primary); color: #fff; }
 .filtro-duv button.ativo .badge { background: rgba(255, 255, 255, .25); color: #fff; }
 .pede-duv .nowrap { white-space: nowrap; }
+
+/* exportar pedido: nome dos arquivos */
+.nomes-export h4 { margin: 12px 0 4px; font-size: 14px; }
+.nome-export { display: block; margin: 4px 0; }
+.nome-export input { width: 100%; font-family: inherit; }

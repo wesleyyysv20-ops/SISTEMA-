@@ -33,12 +33,12 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `26-recolher-fornecedores` | quadro Fornecedores da cotação recolhível: começa fechado com resumo, abre/fecha no clique ou Enter, lembra a escolha |
 | `27-coluna-fixa` | comparativo: colunas # e Produto fixas ao rolar para o lado; escolher outro preço mantém a rolagem |
 | `28-filtro-vencedor` | comparativo: "Mostrar itens de" um fornecedor (ou sem preço) para digitar só as quantidades dele; etiquetas de aviso filtram os itens delas |
-| `29-exportar-pedido` | exportar o pedido do fornecedor: planilhas individuais por loja (zip) ou somada entregue numa loja; marca a cotação dele como concluída e lembra a forma |
+| `29-exportar-pedido` | exportar o pedido do fornecedor: planilhas individuais por loja (zip) ou somada entregue numa loja; marca a cotação dele como concluída e lembra a forma; nome do arquivo editável; itens com o nº da planilha enviada aos fornecedores |
 | `30-prazo-hora-dif` | prazo de resposta com hora (vence no mesmo dia, conta na nota do fornecedor); Dif. 1º × 2º mostra o mais barato quando você escolheu outro ; alerta quando a diferença passa de 100% (possível preço errado); marcar preço como certo; alterar preço pelo alerta |
 | `31-foco-alt-tab` | quantidade: o cursor continua no mesmo campo ao redesenhar a tela e ao sair e voltar para a janela (Alt+Tab) |
 | `32-duvida-fora-pedido` | item marcado em Dúvidas: linha destacada (roxo) e fora do pedido exportado da loja da dúvida; sai da fila e volta ao pedido |
 | `33-setas-quantidade` | quantidades: ↑ ↓ ← → andam pela grade (loja e item); número digitado fora do campo vai para a quantidade da linha marcada |
-| `34-duvidas-agrupadas` | fila de dúvidas: itens iguais numa linha só ("2 DPR e 5 DSS", também no texto do WhatsApp); filtro por empresa; editar a quantidade de cada loja |
+| `34-duvidas-agrupadas` | fila de dúvidas: itens iguais numa linha só ("2 DPR e 5 DSS", também no texto do WhatsApp); filtro por fornecedor; editar a quantidade de cada loja |
 
 ## Rodar
 

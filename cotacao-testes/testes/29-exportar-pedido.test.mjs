@@ -109,7 +109,7 @@ test('exportar pedido: planilha somada entregue numa loja (e a janela lembra a f
   await s.fechar();
 });
 
-test('pedido exportado: itens em ordem alfabética da descrição, numerados em sequência', async () => {
+test('pedido exportado: ordem alfabética, nº do item da planilha enviada aos fornecedores e nome do arquivo editável', async () => {
   const s = await abrir(base({ cotacoes: [cotacao('c1', '0030', '2026-09-28', 'aberta',
     [item('P1', 'SENSOR DETONACAO', 'QUALQUER', { codigo: 'S1' }), item('P2', 'COLA RAPIDA', 'QUALQUER', { codigo: 'C1' }), item('P3', 'JUNTA FIXA', 'QUALQUER', { codigo: 'J1' })],
     [forn('f1', 'KAIZEN', { 0: { preco: 10 }, 1: { preco: 5 }, 2: { preco: 7 } })])] }));
@@ -117,9 +117,15 @@ test('pedido exportado: itens em ordem alfabética da descrição, numerados em 
   await page.click('nav [data-route=cotacoes]');
   await page.click('[data-route=cotacao][data-id=c1]');
   await page.click('[data-act=exportarPedidoForn]');
+  // nome sugerido, que dá para trocar (a extensão entra sozinha; caracteres proibidos viram _)
+  const campo = page.locator('.dlg-formato [data-nome-arq=somada]');
+  assert.match(await campo.inputValue(), /^Pedido_0030_kaizen_entrega_.+\.xlsx$/);
+  await campo.fill('KAIZEN pedido 28/09');
   const arq = await salvarDepois(s, () => page.keyboard.press('Enter'));
+  assert.equal(arq.nome, 'KAIZEN pedido 28_09.xlsx');
   const p = lerPedido((await lerXlsx(arq.buffer)).worksheets[0]);
-  assert.deepEqual(p.linhas.map(l => [l[0], l[p.col('Descrição')]]), [[1, 'COLA RAPIDA'], [2, 'JUNTA FIXA'], [3, 'SENSOR DETONACAO']]);
+  // em ordem alfabética, mas com o nº que o item tem na cotação (o mesmo da planilha do fornecedor)
+  assert.deepEqual(p.linhas.map(l => [l[0], l[p.col('Descrição')]]), [[2, 'COLA RAPIDA'], [3, 'JUNTA FIXA'], [1, 'SENSOR DETONACAO']]);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

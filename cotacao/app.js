@@ -1877,7 +1877,7 @@ function abaPedido(wb, c, ped, nomeAba, loja = null, { somada = false } = {}) {
   const LJ = lojas();
   const colunasLoja = !loja && ped.porLoja;
   const cols = [
-    { h: 'Item', v: (x, k) => k + 1, centro: true, larg: 5.1 },
+    { h: 'Item', v: x => x.i + 1, centro: true, larg: 5.1 }, // mesmo nº da planilha enviada aos fornecedores
     { h: 'Código', v: x => x.it.codigo || '', larg: 18 },
     { h: 'Similar', v: x => x.it.similar || '', larg: 15.1 },
     ...(colunasLoja
@@ -3946,7 +3946,14 @@ function seletorVencedor(c, comp) {
  *  { tipo: 'somada', lojaId }         uma planilha com as quantidades das lojas somadas, entregue numa loja
  *                                     (depois a loja transfere para a outra).
  */
-function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja }) {
+/** Nome de arquivo válido no Windows, com a extensão certa. */
+function nomeArquivoSeguro(nome, ext, padrao) {
+  let n = String(nome || '').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
+  if (!n) n = padrao;
+  return n.toLowerCase().endsWith(ext) ? n : n + ext;
+}
+
+function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos = () => [] }) {
   const LJ = lojas();
   const opcoes = [
     { valor: 'individual', titulo: 'Planilhas individuais por loja', texto: `Um arquivo para cada loja, com a quantidade e o endereço de entrega dela${lojasComItens.length > 1 ? ` (${lojasComItens.map(x => x.nome).join(' e ')}, num .zip)` : ''}.`, desligada: !porLoja || !lojasComItens.length },
@@ -3964,14 +3971,24 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja }) {
         <input type="radio" name="formatoExport" value="${esc(o.valor)}" ${o === marcada ? 'checked' : ''} ${o.desligada ? 'disabled' : ''}>
         <span><b>${esc(o.titulo)}</b><br><span class="small muted">${esc(o.desligada ? 'Digite as quantidades de cada loja no comparativo para usar esta opção.' : o.texto)}</span></span>
       </label>`).join('')}
+      <div class="nomes-export"></div>
       <p class="small muted" style="margin:10px 0 0">Depois de salvar, a cotação de ${esc(f.nome)} fica marcada como <b>concluída</b>.</p>
       <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" class="primary" data-r="1">Exportar</button></div>
     </div>`;
+    // nomes sugeridos para a forma marcada (trocar a forma sugere os nomes dela)
+    const mostrarNomes = () => {
+      const v = fundo.querySelector('input[name=formatoExport]:checked')?.value;
+      const lista = v ? nomesArquivos(v) : [];
+      fundo.querySelector('.nomes-export').innerHTML = lista.length ? `<h4>Nome do arquivo</h4>${lista.map(x => `<label class="nome-export"><span class="small muted">${esc(x.rotulo)}</span>
+        <input data-nome-arq="${esc(x.id)}" value="${esc(x.nome)}" autocomplete="off" spellcheck="false"></label>`).join('')}` : '';
+    };
+    fundo.addEventListener('change', e => { if (e.target.name === 'formatoExport') mostrarNomes(); });
     const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
     const confirmar = () => {
       const v = fundo.querySelector('input[name=formatoExport]:checked')?.value;
       if (!v) return;
-      fechar(v === 'individual' ? { tipo: 'individual' } : { tipo: 'somada', lojaId: v.slice(7) });
+      const nomes = Object.fromEntries([...fundo.querySelectorAll('[data-nome-arq]')].map(x => [x.dataset.nomeArq, x.value]));
+      fechar({ formato: v === 'individual' ? { tipo: 'individual' } : { tipo: 'somada', lojaId: v.slice(7) }, nomes });
     };
     const tecla = e => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(null); }
@@ -3985,6 +4002,7 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja }) {
     });
     document.addEventListener('keydown', tecla, true);
     document.body.appendChild(fundo);
+    mostrarNomes();
     fundo.querySelector('input[name=formatoExport]:checked')?.focus();
   });
 }
@@ -3998,24 +4016,36 @@ async function exportarPedidoForn(c, fi) {
   if (!f || !total) return avisar('Este fornecedor não ganhou nenhum item com quantidade.');
   const porLoja = LJ.map(lj => ({ lj, ped: pedidosPorFornecedor(c, lj.id).find(p => p.fi === fi) })).filter(x => x.ped);
   const cad = db.fornecedores.find(x => x.id === f.fornecedorId);
-  const escolha = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja });
-  if (!escolha) return;
+  const nomeSomada = lj => `Pedido_${c.numero}_${slug(f.nome)}_entrega_${slug(lj.nome)}.xlsx`;
+  const nomeZip = `Pedidos_${c.numero}_${slug(f.nome)}_por_loja.zip`;
+  const nomesArquivos = v => {
+    if (v !== 'individual') {
+      const lj = LJ.find(x => x.id === v.slice(7)) || LJ[0];
+      return [{ id: 'somada', rotulo: `Planilha somada (entrega em ${lj.nome})`, nome: nomeSomada(lj) }];
+    }
+    const lista = porLoja.map(({ lj }) => ({ id: lj.id, rotulo: lj.nome, nome: nomePedido(c, f, lj) }));
+    return lista.length > 1 ? [{ id: 'zip', rotulo: 'Arquivo .zip (com as planilhas das lojas)', nome: nomeZip }, ...lista] : lista;
+  };
+  const resp = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja, nomesArquivos });
+  if (!resp) return;
+  const escolha = resp.formato;
+  const nomeDe = (id, padrao) => nomeArquivoSeguro(resp.nomes?.[id], padrao.slice(padrao.lastIndexOf('.')), padrao);
   const novoWb = () => { const wb = new ExcelJS.Workbook(); wb.creator = db.config.loja || 'Sistema de Cotação'; wb.created = new Date(); return wb; };
   let ok;
   if (escolha.tipo === 'individual') {
     const arquivos = porLoja.map(({ lj, ped }) => {
       const wb = novoWb();
       abaPedido(wb, c, ped, nomeAbaSeguro(lj.nome, new Set()), lj);
-      return { nome: nomePedido(c, f, lj), wb };
+      return { nome: nomeDe(lj.id, nomePedido(c, f, lj)), wb };
     });
     ok = arquivos.length === 1
       ? await baixarWorkbook(arquivos[0].wb, arquivos[0].nome)
-      : await salvarComo(`Pedidos_${c.numero}_${slug(f.nome)}_por_loja.zip`, async () => criarZip(await Promise.all(arquivos.map(async a => ({ nome: a.nome, dados: new Uint8Array(await a.wb.xlsx.writeBuffer()) })))), TIPO_ZIP);
+      : await salvarComo(nomeDe('zip', nomeZip), async () => criarZip(await Promise.all(arquivos.map(async a => ({ nome: a.nome, dados: new Uint8Array(await a.wb.xlsx.writeBuffer()) })))), TIPO_ZIP);
   } else {
     const lj = LJ.find(x => x.id === escolha.lojaId) || LJ[0];
     const wb = novoWb();
     abaPedido(wb, c, total, nomeAbaSeguro(f.nome, new Set()), lj, { somada: true });
-    ok = await baixarWorkbook(wb, `Pedido_${c.numero}_${slug(f.nome)}_entrega_${slug(lj.nome)}.xlsx`);
+    ok = await baixarWorkbook(wb, nomeDe('somada', nomeSomada(lj)));
   }
   if (!ok) return; // cancelou a janela de salvar: não marca nada
   // lembra a forma deste fornecedor (nesta cotação e no cadastro, para as próximas)
@@ -5157,9 +5187,13 @@ function qtdsGrupoDuvida(g) {
 }
 const pedeDuvida = g => qtdsGrupoDuvida(g).map(x => `${x.qtd}${x.empresa !== 'N/A' ? ' ' + String(x.empresa).toUpperCase() : ''}`).join(' E ');
 
-/** Dúvidas da empresa escolhida no filtro da fila (sem filtro: todas). */
+/** Fornecedor da dúvida (as digitadas à mão não têm). */
+const SEM_FORN_DUV = 'Digitadas à mão';
+const fornDuvida = x => x.origem?.fornecedor || SEM_FORN_DUV;
+
+/** Dúvidas do fornecedor escolhido no filtro da fila (sem filtro: todas). */
 function duvidasFiltradas() {
-  return ui.duvEmp ? db.duvidas.filter(x => x.empresa === ui.duvEmp) : db.duvidas;
+  return ui.duvForn ? db.duvidas.filter(x => fornDuvida(x) === ui.duvForn) : db.duvidas;
 }
 
 /** Um item no formato do DISPPAR: "- *CÓDIGO. OBS*" / "R$ 10,00 - MARCA" / "*PEDE 2 DPR E 5 DSS ?*". */
@@ -5271,11 +5305,14 @@ function renderDuvidas() {
   const v = ed || { empresa: ui.ultimaEmpresa || empresasDuvida()[0], qtd: 1 };
   const qtdEd = e => (grupoEd ? qtdsGrupoDuvida(grupoEd).find(x => x.empresa === e)?.qtd ?? '' : '');
   const emps = empresasDuvida();
-  if (ui.duvEmp && !db.duvidas.some(x => x.empresa === ui.duvEmp)) ui.duvEmp = null; // a empresa filtrada não tem mais dúvidas
+  if (ui.duvForn && !db.duvidas.some(x => fornDuvida(x) === ui.duvForn)) ui.duvForn = null; // o fornecedor filtrado não tem mais dúvidas
   const lista = duvidasFiltradas();
   const grupos = gruposDuvidas(lista);
-  const contaEmp = e => db.duvidas.filter(x => x.empresa === e).length;
-  const empsNaFila = emps.filter(contaEmp);
+  // fornecedores com dúvidas, em ordem alfabética (as digitadas à mão no fim); conta os itens (linhas da fila)
+  const todosGrupos = gruposDuvidas();
+  const fornsNaFila = [...new Set(db.duvidas.map(fornDuvida))]
+    .sort((a, b) => (a === SEM_FORN_DUV) - (b === SEM_FORN_DUV) || COLLATOR.compare(a, b));
+  const contaForn = fo => todosGrupos.filter(g => fornDuvida(g[0]) === fo).length;
   return `
   <section class="card">
     <h2>Dúvidas <span class="badge">${db.duvidas.length}</span></h2>
@@ -5296,9 +5333,9 @@ function renderDuvidas() {
   <div class="duvidas-grid">
     <section class="card">
       <div class="row-between"><h3>Fila de dúvidas</h3>${db.duvidas.length ? '<button class="sm danger" data-act="limparDuvidas">Limpar tudo</button>' : ''}</div>
-      ${empsNaFila.length ? `<div class="filtro-duv" role="group" aria-label="Empresa">
-        <button type="button" data-act="filtroDuvEmp" data-emp="" class="${ui.duvEmp ? '' : 'ativo'}">Todas <span class="badge">${db.duvidas.length}</span></button>
-        ${empsNaFila.map(e => `<button type="button" data-act="filtroDuvEmp" data-emp="${esc(e)}" class="${ui.duvEmp === e ? 'ativo' : ''}">${esc(e)} <span class="badge">${contaEmp(e)}</span></button>`).join('')}
+      ${fornsNaFila.length ? `<div class="filtro-duv" role="group" aria-label="Fornecedor">
+        <button type="button" data-act="filtroDuvForn" data-forn="" class="${ui.duvForn ? '' : 'ativo'}">Todos <span class="badge">${todosGrupos.length}</span></button>
+        ${fornsNaFila.map(fo => `<button type="button" data-act="filtroDuvForn" data-forn="${esc(fo)}" class="${ui.duvForn === fo ? 'ativo' : ''}">${esc(fo)} <span class="badge">${contaForn(fo)}</span></button>`).join('')}
       </div>` : ''}
       ${grupos.length ? `<div class="table-wrap"><table>
         <thead><tr><th>Pede</th><th>Código</th><th class="r">Valor</th><th>Marca</th><th>Observação</th><th></th></tr></thead>
@@ -5313,7 +5350,7 @@ function renderDuvidas() {
       </table></div>` : '<p class="empty">Nenhum item em dúvida.</p>'}
     </section>
     <section class="card">
-      <div class="row-between"><h3>Texto para WhatsApp</h3><button class="sm primary" data-act="copiarDuvidas" ${lista.length ? '' : 'disabled'}>⧉ Copiar para o WhatsApp${ui.duvEmp ? ' (' + esc(ui.duvEmp) + ')' : ''}</button></div>
+      <div class="row-between"><h3>Texto para WhatsApp</h3><button class="sm primary" data-act="copiarDuvidas" ${lista.length ? '' : 'disabled'}>⧉ Copiar para o WhatsApp${ui.duvForn ? ' (' + esc(ui.duvForn) + ')' : ''}</button></div>
       <label>Texto fixo no topo<input id="duvidasCabecalho" value="${esc(db.config.duvidasCabecalho ?? DEFAULT_DB.config.duvidasCabecalho)}"></label>
       <pre class="texto-whats" id="textoDuvidas">${esc(textoDuvidas())}</pre>
     </section>
@@ -6189,7 +6226,7 @@ const acoes = {
 
   editarDuvida: el => { ui.editDuvida = el.dataset.id; render(); window.scrollTo(0, 0); },
   cancelarDuvida: () => { ui.editDuvida = null; render(); },
-  filtroDuvEmp: el => { ui.duvEmp = el.dataset.emp || null; render(); },
+  filtroDuvForn: el => { ui.duvForn = el.dataset.forn || null; render(); },
   removerDuvida: el => {
     const ids = new Set(el.dataset.id.split(','));
     db.duvidas = db.duvidas.filter(x => !ids.has(x.id));
