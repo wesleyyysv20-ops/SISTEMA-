@@ -510,6 +510,12 @@ function atualizarQtdsTela() {
  */
 function renderSeguro(caminhos = null) {
   if (caminhos && !afetaTela(caminhos)) return;
+  // janela de escolher arquivo aberta: redesenha depois (senão a escolha do arquivo se perde)
+  if (ui.escolhendoArquivo && Date.now() - ui.escolhendoArquivo < 120000) {
+    clearTimeout(ui.timerRenderAdiado);
+    ui.timerRenderAdiado = setTimeout(() => renderSeguro(), 1500);
+    return;
+  }
   const ativo = document.activeElement;
   const noPip = pip.win && !pip.win.closed ? pip.win.document.activeElement : null;
   const emQtd = ativo?.dataset?.qtdLoja != null || noPip?.dataset?.qtdLoja != null;
@@ -7779,7 +7785,30 @@ document.addEventListener('keydown', e => {
   }
 });
 
-document.addEventListener('change', async e => {
+/*
+ * Escolher arquivo: ao voltar da janela do Windows, o sistema pode redesenhar a tela (alterações de outro
+ * computador) e trocar o campo de arquivo antes de o navegador avisar qual arquivo foi escolhido — a escolha
+ * se perdia e era preciso escolher de novo. Enquanto a janela está aberta não redesenha; e o campo antigo
+ * continua sendo ouvido mesmo se sair da tela.
+ */
+document.addEventListener('click', e => {
+  const inp = e.target.closest?.('input[type=file]');
+  if (!inp || inp.dataset.vigiado) return;
+  inp.dataset.vigiado = '1';
+  ui.escolhendoArquivo = Date.now();
+  inp.addEventListener('change', ev => {
+    ui.escolhendoArquivo = 0;
+    delete inp.dataset.vigiado;
+    if (!inp.isConnected) aoMudarCampo(ev); // saiu da tela: a delegação no document não recebe
+  }, { once: true });
+}, true);
+window.addEventListener('focus', () => {
+  // cancelou a janela de arquivo: libera o redesenho logo depois
+  if (ui.escolhendoArquivo) setTimeout(() => { if (Date.now() - ui.escolhendoArquivo > 1500) ui.escolhendoArquivo = 0; }, 2000);
+});
+
+document.addEventListener('change', e => aoMudarCampo(e));
+async function aoMudarCampo(e) {
   const t = e.target;
   if (t.dataset.forn) {
     const ids = rascunho().fornecedorIds;
@@ -7915,7 +7944,7 @@ document.addEventListener('change', async e => {
       }
     }
   }
-});
+}
 
 navegacao.nome = db.config.loja ? 'cotacoes' : 'config';
 render();
