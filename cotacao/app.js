@@ -6720,13 +6720,59 @@ document.addEventListener('click', e => marcarLinhaComp(e.target.closest?.('[dat
 document.addEventListener('focusin', e => marcarLinhaComp(e.target.closest?.('[data-comp-linha]')));
 
 document.addEventListener('focusin', e => {
-  if (e.target.dataset?.qtdLoja != null) e.target.select();
+  if (e.target.dataset?.qtdLoja != null) {
+    e.target.select();
+    const c = cotAtual();
+    if (c) ui.ultQtd = { cotId: c.id, i: e.target.dataset.i, loja: e.target.dataset.qtdLoja }; // para voltar a ela pelo teclado
+  }
+});
+
+/** Campo de quantidade para onde vai o teclado: o último usado, senão o da linha marcada, senão o 1º item mostrado. */
+function campoQtdAtual() {
+  const c = cotAtual();
+  if (!c || rota().nome !== 'cotacao') return null;
+  const visivel = x => x && !x.closest('tr').hidden;
+  const loja = ui.ultQtd?.cotId === c.id ? ui.ultQtd.loja : null; // continua na loja em que estava
+  const naLinha = i => {
+    const campos = [...document.querySelectorAll(`[data-qtd-loja][data-i="${CSS.escape(String(i))}"]`)];
+    return campos.find(x => x.dataset.qtdLoja === loja) || campos[0];
+  };
+  // a linha marcada (clicada por último) manda; senão a da última quantidade; senão o 1º item mostrado
+  const linha = ui.linhaComp?.cotId === c.id ? naLinha(ui.linhaComp.i) : null;
+  if (visivel(linha)) return linha;
+  const ult = loja ? naLinha(ui.ultQtd.i) : null;
+  if (visivel(ult)) return ult;
+  return [...document.querySelectorAll('[data-qtd-loja]')].find(visivel) || null;
+}
+
+// no comparativo, fora de qualquer campo: número digitado vai para a quantidade; as setas voltam para ela
+document.addEventListener('keydown', e => {
+  if (e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return;
+  const ehNumero = /^[0-9]$/.test(e.key);
+  if (!ehNumero && !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+  const t = e.target;
+  if (t.closest?.('input, textarea, select, [contenteditable], .dlg-fundo') || document.querySelector('.dlg-fundo') || ui.datacar) return;
+  const campo = campoQtdAtual();
+  if (!campo) return;
+  e.preventDefault();
+  campo.focus();
+  if (ehNumero) {
+    campo.value = e.key;
+    campo.setSelectionRange(1, 1);
+    campo.dispatchEvent(new Event('input', { bubbles: true }));
+  }
 });
 
 document.addEventListener('keydown', e => {
   if (e.target.dataset?.qtdLoja != null) {
     // Tab: próxima quantidade na linha (Paranoá → São Sebastião → item de baixo); Shift+Tab volta.
-    // Enter / ↓: item de baixo na mesma loja; ↑ sobe.
+    // Enter / ↓: item de baixo na mesma loja; ↑ sobe. ← → trocam de loja na mesma linha.
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.shiftKey) {
+      e.preventDefault();
+      const naLinha = [...document.querySelectorAll(`[data-qtd-loja][data-i="${e.target.dataset.i}"]`)];
+      naLinha[naLinha.indexOf(e.target) + (e.key === 'ArrowRight' ? 1 : -1)]?.focus();
+      return;
+    }
     const tab = e.key === 'Tab';
     const d = tab ? (e.shiftKey ? -1 : 1) : e.key === 'Enter' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
     if (!d) return;
