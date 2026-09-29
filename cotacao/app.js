@@ -917,16 +917,24 @@ const TIPO_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
  * "Salvar como"; na página publicada, o próprio Claude pede a confirmação do download.
  * gerar() devolve o Blob. Retorna false se a pessoa cancelou.
  */
+let ultimoSalvo = null; // o próximo "Salvar como" abre na mesma pasta
 async function salvarComo(nome, gerar, tipo = { description: 'Planilha do Excel', accept: { [TIPO_XLSX]: ['.xlsx'] } }) {
   if (!nuvem.downloads && typeof window.showSaveFilePicker === 'function') {
     let handle = null;
     try {
-      handle = await window.showSaveFilePicker({ suggestedName: nome, types: [tipo] });
+      const opcoes = { suggestedName: nome, types: [tipo] };
+      try {
+        handle = await window.showSaveFilePicker(ultimoSalvo ? { ...opcoes, startIn: ultimoSalvo } : opcoes);
+      } catch (e) {
+        if (!ultimoSalvo || (e && e.name === 'AbortError')) throw e;
+        handle = await window.showSaveFilePicker(opcoes); // pasta anterior não existe mais
+      }
     } catch (e) {
       if (e && e.name === 'AbortError') return false; // cancelou a janela
       handle = null; // navegador bloqueou a janela: baixa do jeito normal
     }
     if (handle) {
+      ultimoSalvo = handle;
       const blob = await gerar();
       const w = await handle.createWritable();
       await w.write(blob);
@@ -3956,7 +3964,7 @@ function nomeArquivoSeguro(nome, ext, padrao) {
 function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos = () => [] }) {
   const LJ = lojas();
   const opcoes = [
-    { valor: 'individual', titulo: 'Planilhas individuais por loja', texto: `Um arquivo para cada loja, com a quantidade e o endereço de entrega dela${lojasComItens.length > 1 ? ` (${lojasComItens.map(x => x.nome).join(' e ')}, num .zip)` : ''}.`, desligada: !porLoja || !lojasComItens.length },
+    { valor: 'individual', titulo: 'Planilhas individuais por loja', texto: `Um arquivo para cada loja, com a quantidade e o endereço de entrega dela${lojasComItens.length > 1 ? ` (${lojasComItens.map(x => x.nome).join(' e ')}, cada uma com o seu "Salvar como")` : ''}.`, desligada: !porLoja || !lojasComItens.length },
     ...LJ.map(lj => ({ valor: 'somada:' + lj.id, titulo: `Planilha somada — entregar em ${lj.nome}`, texto: `Um arquivo com as quantidades das lojas somadas, entregue em ${lj.nome}.` })),
   ];
   const atual = padrao ? (padrao.tipo === 'individual' ? 'individual' : 'somada:' + padrao.lojaId) : null;
@@ -4017,14 +4025,12 @@ async function exportarPedidoForn(c, fi) {
   const porLoja = LJ.map(lj => ({ lj, ped: pedidosPorFornecedor(c, lj.id).find(p => p.fi === fi) })).filter(x => x.ped);
   const cad = db.fornecedores.find(x => x.id === f.fornecedorId);
   const nomeSomada = lj => `Pedido_${c.numero}_${slug(f.nome)}_entrega_${slug(lj.nome)}.xlsx`;
-  const nomeZip = `Pedidos_${c.numero}_${slug(f.nome)}_por_loja.zip`;
   const nomesArquivos = v => {
     if (v !== 'individual') {
       const lj = LJ.find(x => x.id === v.slice(7)) || LJ[0];
       return [{ id: 'somada', rotulo: `Planilha somada (entrega em ${lj.nome})`, nome: nomeSomada(lj) }];
     }
-    const lista = porLoja.map(({ lj }) => ({ id: lj.id, rotulo: lj.nome, nome: nomePedido(c, f, lj) }));
-    return lista.length > 1 ? [{ id: 'zip', rotulo: 'Arquivo .zip (com as planilhas das lojas)', nome: nomeZip }, ...lista] : lista;
+    return porLoja.map(({ lj }) => ({ id: lj.id, rotulo: `Planilha de ${lj.nome}`, nome: nomePedido(c, f, lj) }));
   };
   const resp = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja, nomesArquivos });
   if (!resp) return;
@@ -4038,9 +4044,16 @@ async function exportarPedidoForn(c, fi) {
       abaPedido(wb, c, ped, nomeAbaSeguro(lj.nome, new Set()), lj);
       return { nome: nomeDe(lj.id, nomePedido(c, f, lj)), wb };
     });
-    ok = arquivos.length === 1
-      ? await baixarWorkbook(arquivos[0].wb, arquivos[0].nome)
-      : await salvarComo(nomeDe('zip', nomeZip), async () => criarZip(await Promise.all(arquivos.map(async a => ({ nome: a.nome, dados: new Uint8Array(await a.wb.xlsx.writeBuffer()) })))), TIPO_ZIP);
+    // uma planilha Excel por loja; entre uma e outra, um clique seu abre o "Salvar como" da próxima
+    // (o navegador só abre a janela de salvar depois de um clique)
+    const salvas = [];
+    for (const [k, a] of arquivos.entries()) {
+      if (k > 0 && !(await confirmar(`✓ Planilha de ${porLoja[k - 1].lj.nome} salva.\n\nAgora salve a planilha de ${porLoja[k].lj.nome}.`, `Salvar a de ${porLoja[k].lj.nome}`))) break;
+      if (!(await baixarWorkbook(a.wb, a.nome))) break;
+      salvas.push(porLoja[k].lj.nome);
+    }
+    ok = salvas.length === arquivos.length;
+    if (!ok && salvas.length) return avisar(`Só a planilha de ${salvas.join(' e ')} foi salva. A cotação de ${f.nome} não foi marcada como concluída: exporte de novo para salvar as outras.`);
   } else {
     const lj = LJ.find(x => x.id === escolha.lojaId) || LJ[0];
     const wb = novoWb();

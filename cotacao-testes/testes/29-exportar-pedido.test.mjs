@@ -1,6 +1,5 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import JSZip from 'jszip';
 import { abrir, base, fechar, salvarDepois, lerXlsx, valor, item, forn, cotacao } from '../ajuda.mjs';
 
 after(fechar);
@@ -37,7 +36,7 @@ async function abrirCot() {
   return s;
 }
 
-test('exportar pedido: planilhas individuais por loja (zip) e cotação do fornecedor marcada como concluída', async () => {
+test('exportar pedido: uma planilha Excel por loja (cada uma com o seu Salvar como) e cotação do fornecedor marcada como concluída', async () => {
   const s = await abrirCot();
   const { page } = s;
   assert.deepEqual(await page.locator('.corpo-recolhe [data-act=exportarPedidoForn]').allInnerTexts(), ['⬇ Exportar (2)', '⬇ Exportar (1)']);
@@ -57,15 +56,20 @@ test('exportar pedido: planilhas individuais por loja (zip) e cotação do forne
   await page.click('[data-act=exportarPedidoForn] >> nth=0');
   await page.check('input[name=formatoExport][value=individual]');
   assert.equal(await page.evaluate(() => ui.formatoPedido ?? null), null, 'não mexe no formato do envio em lote');
-  const arq = await salvarDepois(s, () => page.click('.dlg-formato button.primary'));
-  assert.equal(arq.nome, 'Pedidos_0029_kaizen_por_loja.zip');
-  const zip = await JSZip.loadAsync(arq.buffer);
-  assert.deepEqual(Object.keys(zip.files).sort(), ['Pedido_0029_kaizen_paranoa.xlsx', 'Pedido_0029_kaizen_sao_sebastiao.xlsx']);
-  const pa = (await lerXlsx(await zip.file('Pedido_0029_kaizen_paranoa.xlsx').async('nodebuffer'))).worksheets[0];
+  // uma planilha Excel por loja, cada uma com o seu "Salvar como" (o nome digitado na janela vem sugerido)
+  assert.deepEqual(await page.locator('.dlg-formato [data-nome-arq]').evaluateAll(l => l.map(x => x.dataset.nomeArq)), ['paranoa', 'sao-sebastiao']);
+  await page.fill('.dlg-formato [data-nome-arq=sao-sebastiao]', 'KAIZEN SAO SEBASTIAO');
+  const arqPa = await salvarDepois(s, () => page.click('.dlg-formato button.primary'));
+  assert.equal(arqPa.nome, 'Pedido_0029_kaizen_paranoa.xlsx');
+  assert.match(await page.locator('.dlg').innerText(), /Planilha de Paranoá salva[\s\S]*Agora salve a planilha de São Sebastião/);
+  const arqSs = await salvarDepois(s, () => page.click('.dlg button.primary'));
+  assert.equal(arqSs.nome, 'KAIZEN SAO SEBASTIAO.xlsx');
+  assert.equal((await s.salvos()).length, 2, 'duas planilhas, sem .zip');
+  const pa = (await lerXlsx(arqPa.buffer)).worksheets[0];
   assert.equal(valor(pa.getCell('A1')), 'PEDIDO DE COMPRA — PARANOÁ');
   const p1 = lerPedido(pa);
   assert.deepEqual(p1.linhas.map(l => [l[1], l[p1.col('QTD')]]), [['COD-A', 2]], 'só o que o Paranoá pediu');
-  const ss = lerPedido((await lerXlsx(await zip.file('Pedido_0029_kaizen_sao_sebastiao.xlsx').async('nodebuffer'))).worksheets[0]);
+  const ss = lerPedido((await lerXlsx(arqSs.buffer)).worksheets[0]);
   assert.deepEqual(ss.linhas.map(l => [l[1], l[ss.col('QTD')]]), [['COD-A', 3], ['COD-C', 4]]);
 
   // marcada como concluída; o formato fica lembrado no cadastro do fornecedor
@@ -151,6 +155,21 @@ test('quantidade 0 = não comprar: fica gravada e o item só vai na planilha da 
   assert.equal(arq.nome, 'Pedido_0029_kaizen_paranoa.xlsx');
   const p = lerPedido((await lerXlsx(arq.buffer)).worksheets[0]);
   assert.deepEqual(p.linhas.map(l => [l[1], l[p.col('QTD')]]), [['COD-A', 1]]);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
+
+test('exportar por loja: cancelar a 2ª planilha avisa e não marca a cotação como concluída', async () => {
+  const s = await abrirCot();
+  const { page } = s;
+  await page.click('[data-act=exportarPedidoForn] >> nth=0');
+  await page.check('input[name=formatoExport][value=individual]');
+  await salvarDepois(s, () => page.click('.dlg-formato button.primary'));
+  await page.click('.dlg button:text("Cancelar")');
+  assert.match(await page.locator('.dlg').innerText(), /Só a planilha de Paranoá foi salva/);
+  await page.click('.dlg button.primary');
+  assert.equal(await page.evaluate(() => db.cotacoes[0].fornecedores[0].concluidoEm || null), null);
+  assert.equal((await s.salvos()).length, 1);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
