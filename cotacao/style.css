@@ -994,3 +994,11 @@ h3.recolhe[aria-expanded="true"] { margin-bottom: 10px; }
 .tab-comp > tbody > tr > td:nth-child(2) .small { font-weight: 400; }
 .tab-comp td.r, .tab-comp th.r { min-width: 118px; }
 .painel-comp { max-height: calc(100vh - 130px); }
+
+/* ✕ no preço (remover ou corrigir valor errado): aparece ao passar o mouse na célula */
+.tab-comp td.r { position: relative; }
+.rm-preco { position: absolute; top: 3px; left: 4px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: var(--danger-bg); color: var(--danger); font-size: 11px; font-weight: 700; line-height: 20px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+.tab-comp td:hover > .rm-preco, .rm-preco:focus-visible { opacity: 1; }
+.rm-preco::before { content: '✕'; }
+.rm-preco:hover { background: var(--danger); color: var(--card); }
+@media (hover: none) { .rm-preco { opacity: .6; } }

@@ -44,10 +44,10 @@ test('escolher outro fornecedor na mão muda os pedidos; clicar de novo desfaz',
   const s = await abrirCotacao();
   const { page } = s;
   assert.match((await pedidos(page))[0], /Auto Mix[\s\S]*1 item[\s\S]*R\$ 48,00/);
-  await page.click('td[data-i="0"][data-f="0"]', { position: { x: 8, y: 8 } });
+  await page.click('td[data-i="0"][data-f="0"]');
   assert.match((await pedidos(page))[0], /Auto Mix[\s\S]*2 item[\s\S]*R\$ 348,00/);
   assert.equal(await page.locator('td.escolhido').count(), 1);
-  await page.click('td[data-i="0"][data-f="0"]', { position: { x: 8, y: 8 } });
+  await page.click('td[data-i="0"][data-f="0"]');
   assert.match((await pedidos(page))[0], /Auto Mix[\s\S]*1 item/);
   assert.equal(await page.locator('td.escolhido').count(), 0);
   assert.deepEqual(s.erros, []);

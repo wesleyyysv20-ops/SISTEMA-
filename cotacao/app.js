@@ -4324,7 +4324,7 @@ function renderCotacao(id) {
             const cls = ['r', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : '', l.recusas[j] && p != null ? 'recusada' : ''].filter(Boolean).join(' ');
             const dica = p == null ? '' : l.recusas[j] ? 'Marca recusada: este preço não entra. Clique na marca para desfazer.' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
+            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? `<button type="button" class="rm-preco" data-act="removerPreco" data-i="${l.i}" data-f="${j}" title="Preço errado? Remover ou corrigir" aria-label="Remover ou corrigir este preço"></button>` : ''}${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
           }).join('');
           return `<tr class="${l.aguardando ? 'linha-aguardando' : ''}" data-comp-linha="${l.i}" ${linhaNoFiltroVenc(c, l) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
@@ -5521,6 +5521,37 @@ const acoes = {
   removerItem: el => perguntarRemoverItem(+el.dataset.i, false),
   incluirDaBusca: el => incluirNaLista(el.dataset.id),
   recolherFornCot: el => alternarFornCot(el),
+  removerPreco: async el => {
+    // o fornecedor respondeu um valor errado: tira o preço dele deste item (ou corrige o valor)
+    const c = cotAtual();
+    const i = +el.dataset.i, fi = +el.dataset.f;
+    const f = c?.fornecedores[fi];
+    const o = f?.respostas?.[i];
+    if (!o) return;
+    const it = c.itens[i];
+    const escolha = await abrirDialogo(`${it.codigo || '—'} · ${it.descricao}\n${f.nome}: ${fmtMoeda(o.preco)}${o.marca ? ` · marca ${o.marca}` : ''}${o.precoOriginal != null ? ` (valor original ${fmtMoeda(o.precoOriginal)})` : ''}\n\nEste preço está errado?`, [
+      { txt: 'Cancelar', valor: null },
+      { txt: 'Corrigir o valor…', valor: 'corrigir' },
+      { txt: 'Remover o preço', valor: 'remover', cls: 'danger' },
+    ]);
+    if (!escolha) return;
+    if (escolha === 'corrigir') {
+      const v = await pedirValor(`Valor correto de ${f.nome} para ${it.codigo || it.descricao}:`, { valor: fmtNum(o.preco, 2), ok: 'Salvar' });
+      if (v == null) return;
+      const novo = parseNum(v);
+      if (!(novo > 0)) return avisar('Valor inválido. Para tirar o preço, use "Remover o preço".');
+      f.respostas = { ...f.respostas, [i]: { ...o, preco: novo, precoOriginal: o.precoOriginal ?? o.preco } };
+      toast(`Preço de ${f.nome} corrigido: ${fmtMoeda(o.preco)} → ${fmtMoeda(novo)}.`);
+    } else {
+      const r = { ...f.respostas };
+      delete r[i];
+      f.respostas = r;
+      if (c.escolhas?.[i] === f.fornecedorId) { c.escolhas = { ...c.escolhas }; delete c.escolhas[i]; }
+      toast(`Preço de ${f.nome} (${fmtMoeda(o.preco)}) removido do item ${it.codigo || it.descricao}.`);
+    }
+    salvar();
+    render();
+  },
   mostrarSemResposta: () => { ui.mostrarSemResposta = !ui.mostrarSemResposta; render(); },
   exportarPedidoForn: el => exportarPedidoForn(cotAtual(), +el.dataset.f),
   reabrirForn: async el => {

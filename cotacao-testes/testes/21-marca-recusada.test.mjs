@@ -69,13 +69,45 @@ test('marca recusada: o próximo preço vale; clicar no recusado não escolhe; n
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 2);
   assert.match(n(await page.locator('#toast').innerText()), /Agora vale o preço de Casa Peças/);
 
-  await linha(page, 0).locator('td.recusada').first().click({ position: { x: 5, y: 5 } });
+  const cel = linha(page, 0).locator('td.recusada').first();
+  const caixa = await cel.boundingBox();
+  await cel.click({ position: { x: caixa.width - 14, y: 12 } }); // em cima do valor (não no ✕ nem na marca)
+  assert.equal(await page.locator('.dlg').count(), 0, 'não abriu janela');
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 2, 'preço recusado não é escolhido');
 
   // Auto Mix manda de novo com a marca certa: a recusa cai sozinha
   await page.evaluate(() => { db.cotacoes[0].fornecedores[0].respostas[0].marca = 'CAR80'; salvar(); render(); });
   assert.equal(await linha(page, 0).locator('td.recusada').count(), 1);
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 0);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
+
+test('preço errado do fornecedor: remover ou corrigir pelo ✕ do preço', async () => {
+  const s = await abrirCot([forn('f1', 'KAIZEN', { 0: { preco: 2.5, marca: 'CAR80' } }), forn('f2', 'RMP', { 0: { preco: 30, marca: 'CAR80' } })]);
+  const { page } = s;
+  const venc = () => page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor);
+  assert.equal(await venc(), 0, 'o preço errado (2,50) estava ganhando');
+  // Cancelar não muda nada
+  await page.locator('.tab-comp tbody tr').first().locator('.rm-preco').first().click();
+  assert.match(await page.locator('.dlg').innerText(), /KAIZEN: R\$\s2,50[\s\S]*Este preço está errado\?/);
+  await page.click('.dlg button:text("Cancelar")');
+  assert.equal(await venc(), 0);
+  // corrigir o valor: guarda o original
+  await page.locator('.tab-comp tbody tr').first().locator('.rm-preco').first().click();
+  await page.click('.dlg button:text("Corrigir o valor…")');
+  await page.fill('#dlgCampo', '35,00');
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await page.evaluate(() => { const o = db.cotacoes[0].fornecedores[0].respostas[0]; return [o.preco, o.precoOriginal]; }), [35, 2.5]);
+  assert.equal(await venc(), 1, 'corrigido, a RMP passa a ganhar');
+  // remover: fica como se não tivesse respondido
+  await page.locator('.tab-comp tbody tr').first().locator('.rm-preco').nth(1).click();
+  await page.click('.dlg button.danger');
+  assert.equal(await page.evaluate(() => db.cotacoes[0].fornecedores[1].respostas[0] ?? null), null);
+  assert.equal(await venc(), 0);
+  assert.match(n(await page.locator('#toast').innerText()), /Preço de RMP \(R\$ 30,00\) removido do item BI318/);
+  // o ✕ não entra no texto da célula
+  assert.doesNotMatch(await page.locator('.tab-comp tbody tr').first().innerText(), /✕/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
