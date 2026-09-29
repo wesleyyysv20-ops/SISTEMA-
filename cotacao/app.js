@@ -3978,7 +3978,7 @@ function celulaDifSegundo(c, l) {
   }
   if (l.difSegundo == null) return '<span class="muted">—</span>';
   // conta a partir do 1º lugar: quanto o 2º está mais caro que o 1º
-  return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span><br><span class="small muted">2º mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>`;
+  return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span> <span class="small muted">mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>`;
 }
 
 /** Colunas de fornecedores do comparativo: esconde quem ainda não mandou nenhum preço (dá para mostrar). */
@@ -4407,10 +4407,17 @@ function renderCotacao(id) {
         <p>📦 <b>Quantidades:</b> digite quantas unidades cada loja vai comprar nas colunas ${LJ.map(l => '<b>' + esc(l.nome) + '</b>').join(' e ')} (Enter ou ↓ vai para o item de baixo). Use <b>Mostrar itens de</b> para ver só os itens de um fornecedor. ${comp.porLoja ? '' : 'Enquanto nenhuma quantidade for digitada, os totais usam 1 unidade de cada item.'}</p>
       </details>
     </div>` : ''}
-    ${comp.linhas.some(l => l.aguardando) ? `<p class="aviso-recusa small">✗ <b>${comp.linhas.filter(l => l.aguardando).length} item(ns) com a marca recusada, aguardando outro preço</b> (linhas em vermelho). Quando chegar a resposta de outro fornecedor, confira a marca dele.</p>` : ''}
-    ${qtdMarcas.errada || qtdMarcas.duvida ? `<p class="aviso-marca small">🏷️ ${qtdMarcas.errada ? `<b>${qtdMarcas.errada} preço(s) com marca diferente da pedida</b>${db.config.marcaErradaNaoGanha !== false ? ' (não ganham automaticamente)' : ''}` : ''}${qtdMarcas.errada && qtdMarcas.duvida ? ' · ' : ''}${qtdMarcas.duvida ? `${qtdMarcas.duvida} marca(s) abreviada(s) para conferir` : ''}. Clique no aviso da marca para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.</p>` : ''}
-    ${comp.linhas.some(difSuspeita) ? `<p class="aviso-recusa small">⚠ <b>${comp.linhas.filter(difSuspeita).length} item(ns) com mais de 100% de diferença entre o 1º e o 2º preço</b>: pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso <b>⚠ confira o preço</b> na coluna Dif. 1º × 2º.</p>` : ''}
-    ${qtdAlertas ? `<p class="aviso-alertas small">⚠ ${qtdAlertas} preço(s) fora do normal: mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso para ver os detalhes.</p>` : ''}
+    ${(() => {
+      // avisos do comparativo em etiquetas curtas, lado a lado (o texto completo aparece ao passar o mouse)
+      const nAg = comp.linhas.filter(l => l.aguardando).length;
+      const nDif = comp.linhas.filter(difSuspeita).length;
+      const et = [];
+      if (nAg) et.push(`<span class="pill-aviso perigo aviso-recusa" title="Linhas em vermelho. Quando chegar a resposta de outro fornecedor, confira a marca dele.">✗ ${nAg} item(ns) com a marca recusada, aguardando outro preço</span>`);
+      if (nDif) et.push(`<span class="pill-aviso perigo aviso-dif" title="Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} item(ns) com mais de 100% de diferença — confira o preço</span>`);
+      if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<span class="pill-aviso perigo aviso-marca" title="Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} com marca diferente da pedida` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abreviação(ões) para conferir` : ''].filter(Boolean).join(' · ')}</span>`);
+      if (qtdAlertas) et.push(`<span class="pill-aviso atencao aviso-alertas" title="Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} preço(s) fora do normal</span>`);
+      return et.length ? `<div class="avisos-comp">${et.join('')}</div>` : '';
+    })()}
     ${tabelaComp}
   </section>
 
@@ -5339,6 +5346,7 @@ function render() {
     duvidas: renderDuvidas,
     config: renderConfig,
   };
+  app.dataset.tela = nome;
   try {
     app.innerHTML = avisoBackup() + (views[nome] || renderCotacoes)();
   } catch (e) {

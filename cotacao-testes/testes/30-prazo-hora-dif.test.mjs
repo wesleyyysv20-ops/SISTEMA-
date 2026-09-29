@@ -53,7 +53,7 @@ test('Dif. 1º × 2º: escolhido o mais barato mostra o 2º; escolhido outro mos
   await page.click('nav [data-route=cotacoes]');
   await page.click('[data-route=cotacao][data-id=c1]');
   const dif = () => page.locator('.tab-comp tbody tr').first().locator('.dif-seg').locator('xpath=..').innerText().then(n);
-  assert.match(await dif(), /\+21,5%\s+2º mais caro\s+2º KAIZEN R\$ 13,78/);
+  assert.match(await dif(), /\+21,5%\s+mais caro\s+2º KAIZEN R\$ 13,78/);
   // escolhe a Kaizen (2º lugar): mostra quem tem o menor preço
   await page.locator('.tab-comp tbody tr').first().locator('td.escolhivel', { hasText: '13,78' }).click();
   assert.match(await dif(), /\+21,5%\s+1º RMP R\$ 11,34/);
@@ -91,7 +91,7 @@ test('diferença acima de 100% entre o 1º e o 2º: alerta de possível preço e
   assert.equal(await linhas.nth(0).locator('.chip-alerta-dif').count(), 0, '36,7%: sem alerta');
   assert.equal(await linhas.nth(1).locator('.chip-alerta-dif').innerText(), '⚠ confira o preço');
   assert.equal(await linhas.nth(1).locator('.dif-seg.suspeita').count(), 1);
-  assert.match(n(await page.locator('.aviso-recusa').innerText()), /1 item\(ns\) com mais de 100% de diferença/);
+  assert.match(n(await page.locator('.aviso-dif').innerText()), /1 item\(ns\) com mais de 100% de diferença/);
   // escolhido o mais caro: continua avisando (o escolhido está mais de 100% acima do menor)
   await linhas.nth(1).locator('td.escolhivel', { hasText: '95,00' }).click();
   assert.equal(await page.locator('.tab-comp tbody tr[data-comp-linha]').nth(1).locator('.chip-alerta-dif').count(), 1);
