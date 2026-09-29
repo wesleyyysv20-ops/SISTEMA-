@@ -100,12 +100,18 @@ test('DataCar: código novo sem marca entra no banco e a marca é preenchida na 
   assert.deepEqual(await codigos(page), ['SM-1'], 'entrou no banco');
   assert.equal(await page.evaluate(() => db.produtos[0].marca), '');
   assert.match(await page.locator('#toast').innerText(), /1 sem marca: preencha a marca na lista/);
+  // na lista: etiqueta "novo no cadastro" e aviso no topo com quantos faltam marca
+  assert.match(await page.locator('[data-item-linha="0"]').innerText(), /novo no cadastro/);
+  assert.match(await page.locator('.aviso-novos-cad').innerText(), /1 produto\(s\) novo\(s\)[\s\S]*1 sem marca exigida/);
+  await page.click('[data-act=irNovoSemMarca]');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.marcaItem), '0', 'foi para o campo da marca');
   // na cotação o campo da marca fica amarelo; preenchido, vai para o cadastro
   const campo = page.locator('[data-marca-item="0"]');
   assert.match(await campo.getAttribute('class'), /falta/);
   await campo.fill('SÓ NGK');
   await campo.press('Tab');
   await page.waitForFunction(() => db.produtos[0].marca === 'SÓ NGK');
+  assert.match(await page.locator('.aviso-novos-cad').innerText(), /Todos já têm marca/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

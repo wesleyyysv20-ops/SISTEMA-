@@ -3796,6 +3796,22 @@ function painelRepetidos(ctx) {
   return painelRep;
 }
 
+/** Itens desta cotação cadastrados agora pelo DataCar que ainda estão sem marca exigida. */
+function novosSemMarcaNaLista() {
+  const r = rascunho();
+  const prod = byId(db.produtos);
+  return r.itens.map((x, i) => [x, i]).filter(([x]) => x.novoCadastro && !(x.marca || prod[x.produtoId]?.marca)).map(([, i]) => i);
+}
+
+function htmlAvisoNovosCad() {
+  const r = rascunho();
+  const novos = r.itens.filter(x => x.novoCadastro).length;
+  if (!novos) return '';
+  const falta = novosSemMarcaNaLista().length;
+  return `<div class="aviso-novos-cad${falta ? '' : ' ok'}">🆕 <b>${novos} produto(s) novo(s)</b> cadastrado(s) pelo arquivo do DataCar (etiqueta "novo no cadastro").
+    ${falta ? `<b>${falta} sem marca exigida</b>: preencha nos campos amarelos. <button type="button" class="sm primary" data-act="irNovoSemMarca">Ir para o próximo sem marca</button>` : '✓ Todos já têm marca.'}</div>`;
+}
+
 /** Uma linha da lista de itens da nova cotação. */
 function linhaItemNova(ctx, x, i) {
   const { r, prod, codDe, parceiros, repetido } = ctx;
@@ -3811,7 +3827,7 @@ function linhaItemNova(ctx, x, i) {
       <td class="c">${i + 1}</td>
       <td>${codigoSoNaCotacao(p)
         ? `<input class="cod-item ${x.codigoArquivo && x.codigoArquivo !== p.codigo ? 'so-cotacao' : ''}" data-codigo-item="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código só desta cotação: o cadastro continua ${esc(p.codigo)}." aria-label="Código de ${esc(p.descricao)} nesta cotação">`
-        : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
+        : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}">${origemObs}: <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
@@ -3880,6 +3896,7 @@ function renderNova() {
     </div>
     ${painelRep}
     <div class="busca-itens"><input id="filtroItens" value="${esc(ui.filtroItens)}" placeholder="🔎 Procurar na lista ou no cadastro: código, similar, marca ou descrição" autocomplete="off" aria-label="Procurar nos itens da cotação e no cadastro"><span id="contaFiltroItens" class="small muted">${contaFiltroItens()}</span></div>
+    <div id="avisoNovosCad">${htmlAvisoNovosCad()}</div>
     <div id="foraDaLista" class="fora-lista">${htmlForaDaLista()}</div>
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
       <thead><tr><th class="c">#</th><th>Código</th><th>Similar</th><th>Marca</th><th>Descrição A→Z</th><th></th></tr></thead>
@@ -6203,7 +6220,7 @@ const acoes = {
         if (l.marca !== undefined) ja.marca = marcaCotacao;
         somados++;
       } else {
-        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao, obsArquivo: [l.chave || ''] });
+        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao, obsArquivo: [l.chave || ''], ...(l.produtoId ? {} : { novoCadastro: true }) });
       }
     }
     ui.datacar = null;
@@ -6212,6 +6229,14 @@ const acoes = {
     toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação` : ''}.${novosSemMarca ? ` ${novosSemMarca} sem marca: preencha a marca na lista (campos amarelos).` : ''}`, 7000);
   },
 
+  irNovoSemMarca: () => {
+    const pend = novosSemMarcaNaLista();
+    if (!pend.length) return;
+    const i = pend.find(k => k > ui.cursorItem) ?? pend[0];
+    moverCursorItem(i);
+    const tr = document.querySelector(`[data-item-linha="${i}"]`);
+    if (tr) { tr.scrollIntoView({ block: 'center' }); tr.querySelector('[data-marca-item]')?.focus(); }
+  },
   irItem: el => {
     const i = +el.dataset.i;
     moverCursorItem(i);
@@ -7849,6 +7874,8 @@ async function aoMudarCampo(e) {
     }
     salvar();
     atualizarLinhaItem(+t.dataset.marcaItem); // a marca não muda a ordem da lista
+    const av = document.getElementById('avisoNovosCad');
+    if (av) av.innerHTML = htmlAvisoNovosCad();
   } else if (t.id === 'dcColCod' || t.id === 'dcCol') {
     if (t.id === 'dcColCod') ui.datacar.colCod = +t.value; else ui.datacar.col = +t.value;
     casarLinhasDataCar();

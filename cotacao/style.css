@@ -1252,3 +1252,8 @@ input.qtd-loja.no-limite, input.qtd-loja.no-limite.preenchida, input.qtd-loja.no
 .check-pedido li.nivel-aviso b { color: var(--warn); }
 .check-pedido li .small { color: var(--muted); }
 .dlg-formato { max-height: calc(100vh - 32px); overflow-y: auto; }
+
+/* produtos novos cadastrados pelo DataCar */
+.badge.novo-cad { background: var(--blue-bg); color: var(--primary-2); }
+.aviso-novos-cad { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 10px; padding: 9px 12px; border-radius: 10px; background: var(--warn-bg); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); font-size: 13px; }
+.aviso-novos-cad.ok { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
