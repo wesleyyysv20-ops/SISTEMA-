@@ -50,7 +50,7 @@ for (const modo of ['pip', 'popup']) {
     await page.click('[data-act=abrirPip]');
     const j = page.frameLocator('#janelaTeste');
     await j.locator('#pip .pip-cod').waitFor();
-    assert.match(n(await j.locator('#pip').innerText()), /Item #2 · 2 de 3[\s\S]*COD-B[\s\S]*PECA B[\s\S]*R\$ 20,00\s*NGK\s*🏆 KAIZEN/);
+    assert.match(n(await j.locator('#pip').innerText()), /#2 · 2 de 3[\s\S]*COD-B[\s\S]*PECA B[\s\S]*R\$ 20,00\s*NGK\s*❓\s*🏆 KAIZEN/);
     assert.equal(await j.locator('#pip .pip-ajuda b').count(), modo === 'pip' ? 0 : 1, 'no Firefox: dica do Win+Ctrl+T');
 
     // digita a quantidade: grava e aparece no comparativo
@@ -61,7 +61,7 @@ for (const modo of ['pip', 'popup']) {
     await page.keyboard.press('ArrowRight');
     await page.keyboard.type('2');
     await page.keyboard.press('Enter');
-    assert.match(n(await j.locator('.pip-topo').innerText()), /Item #3/);
+    assert.match(n(await j.locator('.pip-barra').innerText()), /#3/);
     assert.equal(await j.locator('input:focus').getAttribute('data-qtd-loja'), 'sao-sebastiao');
     assert.match(await page.locator('.tab-comp tr[data-comp-linha="2"]').getAttribute('class'), /linha-atual/);
     assert.deepEqual(await page.evaluate(() => db.cotacoes[0].qtds[1]), { paranoa: 4, 'sao-sebastiao': 2 });
@@ -69,7 +69,7 @@ for (const modo of ['pip', 'popup']) {
     // ↑ volta dois itens; o estoque do Kaizen (5) limita a soma das lojas
     await page.keyboard.press('ArrowUp');
     await page.keyboard.press('ArrowUp');
-    assert.match(n(await j.locator('.pip-topo').innerText()), /Item #1 · 1 de 3/);
+    assert.match(n(await j.locator('.pip-barra').innerText()), /#1 · 1 de 3/);
     await page.keyboard.press('ArrowLeft');
     await page.keyboard.type('9');
     assert.equal(await j.locator('input[data-qtd-loja=paranoa]').inputValue(), '5');
@@ -111,19 +111,19 @@ test('janela flutuante: escolher o fornecedor mostra só os itens que ele ganhou
   await j.locator('#pipForn').waitFor();
   assert.deepEqual((await j.locator('#pipForn option').allInnerTexts()).map(t => t.trim()), ['Todos os itens (4)', 'KAIZEN (2)', 'VIA PEÇAS (2)']);
   await j.locator('#pipForn').selectOption({ label: 'VIA PEÇAS (2)' });
-  assert.match(n(await j.locator('.pip-topo').innerText()), /Item #2 · 1 de 2/);
+  assert.match(n(await j.locator('.pip-barra').innerText()), /#2 · 1 de 2/);
   assert.match(n(await j.locator('.pip-forn').innerText()), /VIA PEÇAS/);
   assert.equal(await page.inputValue('#filtroVencedor'), 'f2', 'o comparativo mostra os mesmos itens');
   assert.equal(await page.locator('.tab-comp tbody tr[data-comp-linha]:not([hidden])').count(), 2);
   // o cursor fica na quantidade: Enter vai para o próximo item da Via Peças
   await page.keyboard.type('3');
   await page.keyboard.press('Enter');
-  assert.match(n(await j.locator('.pip-topo').innerText()), /Item #4 · 2 de 2/);
+  assert.match(n(await j.locator('.pip-barra').innerText()), /#4 · 2 de 2/);
   assert.equal(await page.evaluate(() => db.cotacoes[0].qtds[1].paranoa), 3);
   // escolher no comparativo também muda a janela
   await page.selectOption('#filtroVencedor', 'f1');
   assert.equal(await j.locator('#pipForn').inputValue(), 'f1');
-  assert.match(n(await j.locator('.pip-topo').innerText()), /Item #1 · 1 de 2/);
+  assert.match(n(await j.locator('.pip-barra').innerText()), /#1 · 1 de 2/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
@@ -150,6 +150,47 @@ test('janela flutuante: ❓ Dúvida abre a pergunta na própria janela e o item 
   await page.keyboard.press('Escape');
   assert.equal(await j.locator('.dlg-duvida').count(), 0);
   assert.equal(await page.evaluate(() => db.duvidas.length), 1);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
+
+test('janela flutuante: 2º lugar com marca e % mais caro; clicar escolhe ele (confirmação na janela) e depois mostra o mais barato', async () => {
+  const s = await abrir(base({
+    config: { loja: 'DISPPAR', lojas: [{ id: 'paranoa', nome: 'Paranoá', sigla: 'DPR' }, { id: 'sao-sebastiao', nome: 'São Sebastião', sigla: 'DSS' }] },
+    cotacoes: [cotacao('c1', '0036', '2026-09-29', 'aberta', [item('P1', 'BOBINA IGNICAO', 'DELPHI-MARELLI', { codigo: 'BI0023MM' })], [
+      forn('f1', 'ENVIA PEÇAS', { 0: { preco: 100, marca: 'DELPHI' } }),
+      forn('f2', 'KAIZEN', { 0: { preco: 117.5, marca: 'MAGNETI MARELLI' } }),
+    ])],
+  }));
+  const { page } = s;
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'documentPictureInPicture', { configurable: true, value: { requestWindow: async () => {
+      const f = document.createElement('iframe'); f.id = 'janelaTeste'; f.style.cssText = 'position:fixed;right:0;bottom:0;width:420px;height:620px;z-index:99999;background:#fff'; document.body.appendChild(f);
+      const w = f.contentWindow; w.document.open(); w.document.write('<!doctype html><html><head></head><body></body></html>'); w.document.close(); return w;
+    } } });
+  });
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  await page.click('[data-act=abrirPip]');
+  const j = page.frameLocator('#janelaTeste');
+  const seg = j.locator('.pip-segundo');
+  assert.match(n(await seg.innerText()), /2º\s*R\$ 117,50\s*MAGNETI MARELLI\s*KAIZEN\s*\+17,5% que o 1º/);
+  assert.match(await seg.getAttribute('title'), /\+17,5% mais caro que o 1º/);
+  // clicar: pergunta na própria janela; Cancelar não muda
+  await seg.click();
+  assert.match(await j.locator('.dlg').innerText(), /Comprar este item de KAIZEN por R\$\s117,50/);
+  assert.equal(await page.locator('.dlg').count(), 0, 'nada na tela principal');
+  await j.locator('.dlg button:text("Cancelar")').click();
+  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 0);
+  await seg.click();
+  await j.locator('.dlg button.primary').click();
+  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 1);
+  // agora o ganhador é a KAIZEN e a alternativa é o mais barato
+  assert.match(n(await j.locator('.pip-ganhador').innerText()), /R\$ 117,50\s*MAGNETI MARELLI\s*❓\s*🏆 KAIZEN[\s\S]*escolhido por você/);
+  assert.match(n(await seg.innerText()), /1º\s*R\$ 100,00\s*DELPHI\s*ENVIA PEÇAS\s*escolhido \+17,5%/);
+  assert.match(await seg.getAttribute('title'), /Menor preço[\s\S]*o escolhido está \+17,5% mais caro/);
+  // o comparativo também mudou
+  assert.match(await page.locator('.tab-comp tbody tr >> nth=0').innerText(), /escolhido/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

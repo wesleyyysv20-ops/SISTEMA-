@@ -252,12 +252,45 @@ function mesclarItens(base = [], local = [], remoto = []) {
   return saida;
 }
 
-/** Junta objetos campo a campo: campo que este navegador mudou vale; o resto vem do outro lado. */
+/**
+ * Junta objetos campo a campo, descendo nos campos que os dois lados mudaram (ex.: as quantidades de
+ * itens diferentes digitadas por duas pessoas ao mesmo tempo). Onde os dois mudaram a mesma coisa, vale este navegador.
+ */
 function mesclarObjeto(base = {}, local = {}, remoto = {}) {
   const saida = {};
   for (const k of new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remoto)])) {
-    const v = chaveEstavel(local[k]) !== chaveEstavel(base[k]) ? local[k] : remoto[k];
+    const v = mesclarValor(base[k], local[k], remoto[k]);
     if (v !== undefined) saida[k] = v;
+  }
+  return saida;
+}
+
+const ehObjeto = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/** Junta um valor qualquer (3 versões: base comum, este navegador e o outro lado). */
+function mesclarValor(base, local, remoto) {
+  const kb = chaveEstavel(base), kl = chaveEstavel(local), kr = chaveEstavel(remoto);
+  if (kl === kb) return remoto; // não mudou aqui: vale o outro lado
+  if (kr === kb || kr === kl) return local; // só mudou aqui (ou os dois igual)
+  if (ehObjeto(local) && ehObjeto(remoto)) return mesclarObjeto(ehObjeto(base) ? base : {}, local, remoto);
+  if (Array.isArray(local) && Array.isArray(remoto)) {
+    // listas de registros com identificação (dúvidas, fornecedores da cotação…): junta registro a registro
+    const todos = [...local, ...remoto];
+    const chave = ['id', 'fornecedorId'].find(k => todos.every(x => ehObjeto(x) && x[k] != null));
+    if (chave) return mesclarLista(Array.isArray(base) ? base : [], local, remoto, chave);
+  }
+  return local;
+}
+
+function mesclarLista(base, local, remoto, chave) {
+  const mapa = l => new Map(l.filter(ehObjeto).map(x => [x[chave], x]));
+  const B = mapa(base), L = mapa(local), R = mapa(remoto);
+  // ordem deste navegador; o que só existe do outro lado entra no fim
+  const ids = [...new Set([...local.map(x => x[chave]), ...remoto.map(x => x[chave]).filter(id => !L.has(id))])];
+  const saida = [];
+  for (const id of ids) {
+    const v = mesclarValor(B.get(id), L.get(id), R.get(id));
+    if (v !== undefined) saida.push(v);
   }
   return saida;
 }
@@ -352,6 +385,7 @@ async function sincronizar() {
   nuvem.gravando = true;
   mostrarStatus('salvando');
   let juntou = false;
+  const juntados = [];
   try {
     for (let rodada = 0; ; rodada++) {
       const atual = docsDoEstado();
@@ -370,13 +404,17 @@ async function sincronizar() {
       // alguém gravou antes (outro computador ou aba): junta as duas versões e grava de novo
       if (rodada >= 4) throw new Error('Os dados estão sendo alterados em outro lugar ao mesmo tempo. Tente de novo.');
       for (const caminho of conflitos) await juntarComRemoto(caminho);
+      juntados.push(...conflitos);
       juntou = true;
     }
     anotarPendentes();
     mostrarStatus('salvo');
+    if (nuvem.puxarDepois && !nuvem.timer) setTimeout(puxarNuvem, 0);
     if (juntou) {
-      renderSeguro();
-      toast('Havia alterações feitas em outro computador ou aba: juntei com as suas, nada foi perdido.', 6000);
+      renderSeguro(juntados);
+      // com várias pessoas ao mesmo tempo isso é normal: avisa só na primeira vez
+      if (!nuvem.avisouJuncao) toast('Outras pessoas estão mexendo ao mesmo tempo: as alterações de todos são juntadas, nada se perde.', 6000);
+      nuvem.avisouJuncao = true;
     }
   } catch (e) {
     console.error(e);
@@ -408,7 +446,10 @@ async function apagarDoc(caminho) {
  * Não mexe na tela enquanto a pessoa está digitando: tenta de novo depois.
  */
 async function puxarNuvem() {
-  if (!nuvem.db?.versoes || nuvem.gravando || nuvem.timer || document.hidden) return;
+  if (!nuvem.db?.versoes || document.hidden) return;
+  // salvando agora: puxa logo depois (o aviso em tempo real não se perde)
+  if (nuvem.gravando || nuvem.timer) { nuvem.puxarDepois = true; return; }
+  nuvem.puxarDepois = false;
   try {
     const remotas = await nuvem.db.versoes();
     const mudaram = Object.keys(remotas).filter(c => remotas[c] !== nuvem.versao[c]);
@@ -418,7 +459,7 @@ async function puxarNuvem() {
     const lidos = mudaram.length ? await nuvem.db.buscar(mudaram) : {};
     for (const c of mudaram) await juntarComRemoto(c, lidos[c] || { existe: false });
     for (const c of sumiram) await juntarComRemoto(c, { existe: false });
-    renderSeguro();
+    renderSeguro([...mudaram, ...sumiram]);
     if (docsMudaramAqui()) agendarSincronia();
   } catch (e) {
     console.error(e);
@@ -427,9 +468,65 @@ async function puxarNuvem() {
 
 const docsMudaramAqui = () => { const a = docsDoEstado(); return Object.keys(a).some(c => a[c] !== nuvem.enviado[c]) || Object.keys(nuvem.enviado).some(c => !(c in a)); };
 
-/** Redesenha sem atrapalhar quem está digitando num campo (redesenha quando sair do campo). */
-function renderSeguro() {
+/* Várias pessoas ao mesmo tempo: o que outro computador salva chega aqui sem atrapalhar quem está digitando. */
+let ultimaTecla = 0;
+function marcarTecla() { ultimaTecla = Date.now(); }
+document.addEventListener('keydown', marcarTecla, true);
+document.addEventListener('input', marcarTecla, true);
+const PAUSA_DIGITACAO = 2500; // ms sem digitar para redesenhar a tela inteira
+
+/** A alteração que chegou (caminhos dos documentos) muda o que está na tela? */
+function afetaTela(caminhos) {
+  const { nome, id } = rota();
+  if (nome !== 'cotacao') return true;
+  const abertas = new Set([id, pip.win && !pip.win.closed ? pip.cotId : null]);
+  // no comparativo: só a cotação aberta (e a da janela flutuante), as configurações e os fornecedores
+  return caminhos.some(k => (k.startsWith('cotacoes/') ? abertas.has(k.slice('cotacoes/'.length)) : !k.startsWith('produtos/')));
+}
+
+/** Enquanto a pessoa digita quantidades: só os números dos outros campos e os totais (sem redesenhar tudo). */
+function atualizarQtdsTela() {
+  const alvos = [[document, cotAtual()]];
+  if (pip.win && !pip.win.closed) alvos.push([pip.win.document, db.cotacoes.find(x => x.id === pip.cotId)]);
+  for (const [d, c] of alvos) {
+    if (!c) continue;
+    for (const el of d.querySelectorAll('input[data-qtd-loja]')) {
+      if (el === d.activeElement) continue; // o campo em que a pessoa está digitando fica como está
+      const v = c.qtds?.[+el.dataset.i]?.[el.dataset.qtdLoja];
+      const txt = v == null ? '' : String(v);
+      if (el.value === txt) continue;
+      el.value = txt;
+      el.classList.toggle('preenchida', v > 0);
+      el.classList.toggle('zerada', v === 0);
+    }
+  }
+  const c = cotAtual();
+  if (c && document.getElementById('totalComp')) atualizarTotaisComp(c);
+}
+
+/**
+ * Redesenha sem atrapalhar quem está digitando. `caminhos`: documentos que mudaram em outro computador
+ * (o que não aparece na tela aberta não redesenha nada).
+ */
+function renderSeguro(caminhos = null) {
+  if (caminhos && !afetaTela(caminhos)) return;
   const ativo = document.activeElement;
+  const noPip = pip.win && !pip.win.closed ? pip.win.document.activeElement : null;
+  const emQtd = ativo?.dataset?.qtdLoja != null || noPip?.dataset?.qtdLoja != null;
+  if (emQtd && Date.now() - ultimaTecla < PAUSA_DIGITACAO) {
+    // digitando quantidades: atualiza só os números agora; a tela inteira quando der uma pausa
+    atualizarQtdsTela();
+    clearTimeout(ui.timerRenderAdiado);
+    ui.timerRenderAdiado = setTimeout(() => renderSeguro(), PAUSA_DIGITACAO);
+    return;
+  }
+  clearTimeout(ui.timerRenderAdiado);
+  if (emQtd) {
+    // quantidades já estão gravadas: redesenhar mantém o cursor no mesmo campo
+    if (!document.querySelector('.dlg-fundo') && !pip.win?.document?.querySelector?.('.dlg-fundo')) render();
+    else ui.timerRenderAdiado = setTimeout(() => renderSeguro(), PAUSA_DIGITACAO);
+    return;
+  }
   if (ativo && ativo.matches?.('input, textarea, select') && !ativo.closest('#telaLogin') && $('#app')?.contains(ativo)) {
     ativo.addEventListener('blur', () => setTimeout(() => (document.hasFocus() ? render() : renderSeguro()), 0), { once: true });
   } else if (!document.querySelector('.dlg-fundo')) render();
@@ -960,15 +1057,15 @@ async function baixarBlob(blob, nome) {
 
 /* ---------------- diálogos na própria página ---------------- */
 
-function abrirDialogo(msg, botoes) {
+function abrirDialogo(msg, botoes, doc = document) {
   return new Promise(resolve => {
-    const fundo = document.createElement('div');
+    const fundo = doc.createElement('div');
     fundo.className = 'dlg-fundo';
     fundo.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
       <p>${esc(msg).replace(/\n/g, '<br>')}</p>
       <div class="actions">${botoes.map((b, i) => `<button type="button" class="${b.cls || ''}" data-i="${i}">${esc(b.txt)}</button>`).join('')}</div>
     </div>`;
-    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const fechar = v => { fundo.remove(); doc.removeEventListener('keydown', tecla, true); resolve(v); };
     const tecla = e => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(botoes[0].valor); }
       else if (e.key === 'Enter' || e.key === ' ') { e.stopImmediatePropagation(); }
@@ -978,8 +1075,8 @@ function abrirDialogo(msg, botoes) {
       const b = e.target.closest('button[data-i]');
       if (b) fechar(botoes[+b.dataset.i].valor);
     });
-    document.addEventListener('keydown', tecla, true);
-    document.body.appendChild(fundo);
+    doc.addEventListener('keydown', tecla, true);
+    doc.body.appendChild(fundo);
     fundo.querySelector('button:last-child').focus();
   });
 }
@@ -1016,8 +1113,8 @@ function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK' } 
   });
 }
 
-function confirmar(msg, ok = 'Confirmar') {
-  return abrirDialogo(msg, [{ txt: 'Cancelar', valor: false }, { txt: ok, valor: true, cls: 'primary' }]);
+function confirmar(msg, ok = 'Confirmar', doc = document) {
+  return abrirDialogo(msg, [{ txt: 'Cancelar', valor: false }, { txt: ok, valor: true, cls: 'primary' }], doc);
 }
 
 function avisar(msg) {
@@ -6184,36 +6281,7 @@ const acoes = {
 
   exportarComparativo: () => exportarComparativo(cotAtual()),
 
-  escolherVencedor: async el => {
-    const c = cotAtual();
-    const i = +el.dataset.i, fi = +el.dataset.f;
-    const f = c.fornecedores[fi];
-    if (!f) return;
-    const l = comparar(c).linhas[i];
-    if (l.recusas[fi]) return toast('Esta marca foi recusada. Para usar este preço, clique na marca e desfaça a recusa.');
-    const it = c.itens[i];
-    const nome = j => c.fornecedores[j].nome;
-    const titulo = `${it.codigo || '—'} · ${it.descricao}`;
-    if (l.vencedor === fi) {
-      // clicar no vencedor escolhido volta ao automático
-      if (!c.escolhas?.[i]) return toast(`${f.nome} já é o vencedor deste item.`);
-      const semEscolha = { ...c, escolhas: { ...c.escolhas } };
-      delete semEscolha.escolhas[i];
-      const auto = comparar(semEscolha).linhas[i];
-      const volta = auto.vencedor >= 0 ? `${nome(auto.vencedor)} por ${fmtMoeda(auto.preco)}` : 'o automático';
-      if (!(await confirmar(`${titulo}\n\nTirar a sua escolha (${f.nome}, ${fmtMoeda(l.precos[fi])}) e voltar para ${volta}?`, 'Voltar'))) return;
-      c.escolhas = { ...c.escolhas };
-      delete c.escolhas[i];
-    } else {
-      const p = l.precos[fi];
-      const atual = l.vencedor >= 0 ? `\nHoje: ${nome(l.vencedor)} por ${fmtMoeda(l.preco)}.` : '';
-      const menor = l.minIdx >= 0 && l.minIdx !== fi && l.min > 0 ? `\nMenor preço: ${nome(l.minIdx)} ${fmtMoeda(l.min)} (${f.nome} está +${fmtPct(p / l.min - 1)}).` : '';
-      if (!(await confirmar(`${titulo}\n\nComprar este item de ${f.nome} por ${fmtMoeda(p)}?${atual}${menor}`, `Escolher ${f.nome}`))) return;
-      c.escolhas = { ...(c.escolhas || {}), [i]: f.fornecedorId };
-    }
-    salvar();
-    render();
-  },
+  escolherVencedor: el => escolherVencedorItem(cotAtual(), +el.dataset.i, +el.dataset.f),
 
   marcaResposta: async el => {
     const c = cotAtual();
@@ -7006,6 +7074,41 @@ function aplicarQtdLoja(t, c) {
   espelharQtd(t, c, i);
 }
 
+/**
+ * Escolhe o fornecedor `fi` para o item `i` (com confirmação). Clicar no escolhido volta ao automático.
+ * `doc`: onde a confirmação aparece (a janela flutuante usa a dela). Devolve true se mudou.
+ */
+async function escolherVencedorItem(c, i, fi, doc = document) {
+  if (!c) return false;
+  const f = c.fornecedores[fi];
+  if (!f) return false;
+  const l = comparar(c).linhas[i];
+  if (l.recusas[fi]) return toast('Esta marca foi recusada. Para usar este preço, clique na marca e desfaça a recusa.');
+  const it = c.itens[i];
+  const nome = j => c.fornecedores[j].nome;
+  const titulo = `${it.codigo || '—'} · ${it.descricao}`;
+  if (l.vencedor === fi) {
+    // clicar no vencedor escolhido volta ao automático
+    if (!c.escolhas?.[i]) return toast(`${f.nome} já é o vencedor deste item.`);
+    const semEscolha = { ...c, escolhas: { ...c.escolhas } };
+    delete semEscolha.escolhas[i];
+    const auto = comparar(semEscolha).linhas[i];
+    const volta = auto.vencedor >= 0 ? `${nome(auto.vencedor)} por ${fmtMoeda(auto.preco)}` : 'o automático';
+    if (!(await confirmar(`${titulo}\n\nTirar a sua escolha (${f.nome}, ${fmtMoeda(l.precos[fi])}) e voltar para ${volta}?`, 'Voltar', doc))) return;
+    c.escolhas = { ...c.escolhas };
+    delete c.escolhas[i];
+  } else {
+    const p = l.precos[fi];
+    const atual = l.vencedor >= 0 ? `\nHoje: ${nome(l.vencedor)} por ${fmtMoeda(l.preco)}.` : '';
+    const menor = l.minIdx >= 0 && l.minIdx !== fi && l.min > 0 ? `\nMenor preço: ${nome(l.minIdx)} ${fmtMoeda(l.min)} (${f.nome} está +${fmtPct(p / l.min - 1)}).` : '';
+    if (!(await confirmar(`${titulo}\n\nComprar este item de ${f.nome} por ${fmtMoeda(p)}?${atual}${menor}`, `Escolher ${f.nome}`, doc))) return;
+    c.escolhas = { ...(c.escolhas || {}), [i]: f.fornecedorId };
+  }
+  salvar();
+  render();
+  return true;
+}
+
 /* ---------------- janela flutuante (Picture-in-Picture) ----------------
  * Para quem usa uma tela só, dividida com o DataCar: uma janelinha sempre por cima das outras
  * com o item atual e as quantidades das lojas. Chrome/Edge 116+ (documentPictureInPicture). */
@@ -7031,10 +7134,10 @@ async function abrirPip() {
   try {
     if (pip.flutuante) {
       // Chrome/Edge: janela que fica sempre por cima das outras
-      w = await window.documentPictureInPicture.requestWindow({ width: 400, height: 500 });
+      w = await window.documentPictureInPicture.requestWindow({ width: 330, height: 310 });
     } else {
       // Firefox e outros: janelinha separada (o Windows pode deixá-la por cima: veja a dica no rodapé dela)
-      w = window.open('', 'cotacaoJanelaQtd', 'popup=yes,width=420,height=560');
+      w = window.open('', 'cotacaoJanelaQtd', 'popup=yes,width=350,height=400');
       if (!w) return avisar('O navegador bloqueou a janela. Permita janelas pop-up para este site (ícone na barra de endereço) e clique de novo.');
       w.document.open();
       w.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Quantidades</title></head><body></body></html>');
@@ -7083,7 +7186,10 @@ async function abrirPip() {
     else if (acao === 'prox') irPip(1);
     else if (acao === 'copiar') copiarCodigoPip(b);
     else if (acao === 'duvida') duvidaPip();
+    else if (acao === 'escolher') escolherPip(+b.dataset.f);
   });
+  d.addEventListener('keydown', marcarTecla, true);
+  d.addEventListener('input', marcarTecla, true);
   d.addEventListener('keydown', e => teclaPip(e, d));
   d.addEventListener('change', e => {
     if (e.target.id !== 'pipForn') return;
@@ -7102,7 +7208,7 @@ async function abrirPip() {
 function teclaPip(e, d) {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   const t = e.target;
-  if (t.tagName === 'SELECT') return; // escolhendo o fornecedor: as setas são da lista
+  if (t.tagName === 'SELECT' || d.querySelector('.dlg-fundo')) return; // lista de fornecedores ou diálogo aberto
   const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
   const k = campos.indexOf(t);
   if (k < 0) {
@@ -7148,6 +7254,15 @@ function irPip(delta) {
     if (tr) { tr.classList.add('linha-atual'); tr.scrollIntoView({ block: 'center' }); }
   }
   desenharPip(true);
+}
+
+/** Clicar no 2º lugar (ou no mais barato) da janela flutuante: vira o escolhido, com confirmação ali mesmo. */
+async function escolherPip(fi) {
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  if (!c || !pip.win) return;
+  const mudou = await escolherVencedorItem(c, pip.i, fi, pip.win.document);
+  desenharPip(true);
+  if (mudou) toast(`Item ${c.itens[pip.i]?.codigo || ''}: comprando de ${c.fornecedores[comparar(c).linhas[pip.i].vencedor]?.nome || ''}.`);
 }
 
 /** ❓ na janela flutuante: a janela de perguntar à loja abre nela mesma (fica por cima do DataCar). */
@@ -7198,39 +7313,51 @@ function desenharPip(focar) {
   const marcaVenc = f?.respostas?.[l.i]?.marca;
   const LJ = lojas();
   raiz.innerHTML = `
-    <label class="pip-filtro"><span>Itens de</span><select id="pipForn" title="Mostrar só os itens que este fornecedor ganhou">${opcoesVencedor(c, comp)}</select></label>
-    <div class="pip-topo">
+    <div class="pip-barra">
+      <select id="pipForn" title="Mostrar só os itens que este fornecedor ganhou">${opcoesVencedor(c, comp)}</select>
       <button type="button" data-pip="ant" title="Item anterior (↑)" ${pos <= 0 ? 'disabled' : ''}>◀</button>
-      <span>Item <b>#${l.i + 1}</b> <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
+      <span class="pip-pos" title="Item da cotação · posição na lista">#${l.i + 1} <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
       <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>
     </div>
-    <button type="button" class="pip-cod" data-pip="copiar" title="Clique para copiar o código (e colar no DataCar)"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉ copiar</span></button>
-    <div class="pip-desc">${esc(l.it.descricao || '')}${l.it.marca ? ` <span class="pip-pedida" title="Marca pedida">pedida: <b>${esc(l.it.marca)}</b></span>` : ''}</div>
-    ${l.duvida ? '<div><span class="chip-duvida">❓ em dúvida · fora do pedido</span></div>' : ''}
+    <button type="button" class="pip-cod" data-pip="copiar" title="Clique para copiar o código (e colar no DataCar)"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉</span></button>
+    <div class="pip-desc" title="${esc([l.it.descricao, l.it.marca && 'marca pedida: ' + l.it.marca].filter(Boolean).join(' · '))}">${esc(l.it.descricao || '')}${l.it.marca ? ` · <span class="pip-pedida">pedida <b>${esc(l.it.marca)}</b></span>` : ''}</div>
+    ${l.duvida ? '<div class="pip-linha-duv"><span class="chip-duvida">❓ em dúvida · fora do pedido</span></div>' : ''}
     ${f ? (() => {
-      // ganhador em destaque: preço grande, a marca dele ao lado e o fornecedor embaixo
+      // ganhador em destaque: preço grande com a marca dele ao lado; o fornecedor embaixo
       const st = l.marcas[l.vencedor];
       const clsMarca = st === 'errada' ? ' errada' : st === 'duvida' ? ' conferir' : '';
       const tags = [
         l.manual ? '<span class="pip-tag">escolhido por você</span>' : '',
-        l.preferencia ? `<span class="pip-tag regra">⭐ regra dos 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',
-        entregaDemorada(f, f.respostas?.[l.i]) ? chipDemora : '',
+        l.preferencia ? `<span class="pip-tag regra">⭐ regra 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',
+        entregaDemorada(f, f.respostas?.[l.i]) ? '<span class="pip-tag">🐢 GO demora</span>' : '',
         l.estoque != null ? `<span class="pip-tag estoque">📦 estoque ${fmtNum(l.estoque)}</span>` : '',
-      ].filter(Boolean).join(' ');
-      const seg = l.segundoIdx >= 0 && l.segundoIdx !== l.vencedor ? `2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}${l.difSegundo != null ? ` (+${fmtPct(l.difSegundo)})` : ''}` : '';
+      ].filter(Boolean).join('');
+      // alternativa: o 2º lugar; se você escolheu outro (ou vale a regra dos 5%), o mais barato
+      const trocou = (l.manual || l.preferencia) && l.minIdx >= 0 && l.minIdx !== l.vencedor;
+      const alvo = trocou ? l.minIdx : l.segundoIdx;
+      let seg = '';
+      if (alvo >= 0 && alvo !== l.vencedor) {
+        const fa = c.fornecedores[alvo];
+        const pa = l.precos[alvo];
+        const ma = fa.respostas?.[l.i]?.marca;
+        const sta = l.marcas[alvo];
+        const dif = trocou ? l.preco / l.min - 1 : l.difSegundo;
+        const txtDif = dif == null ? '' : trocou ? `escolhido +${fmtPct(dif)}` : `+${fmtPct(dif)} que o 1º`;
+        seg = `<button type="button" class="pip-segundo${dif > LIMITE_DIF_SUSPEITA ? ' suspeita' : ''}" data-pip="escolher" data-f="${alvo}" title="${trocou ? 'Menor preço' : '2º lugar'}: clique para comprar de ${esc(fa.nome)} por ${fmtMoeda(pa)}${trocou ? ` (o escolhido está +${fmtPct(dif)} mais caro)` : dif != null ? ` (+${fmtPct(dif)} mais caro que o 1º)` : ''}">
+          <span class="pip-seg-rot">${trocou ? '1º' : '2º'}</span><span class="pip-seg-preco">${fmtMoeda(pa)}</span>${ma ? `<span class="pip-seg-marca${sta === 'errada' ? ' errada' : sta === 'duvida' ? ' conferir' : ''}">${esc(ma)}</span>` : ''}<span class="pip-seg-forn">${esc(fa.nome)}</span>${txtDif ? `<span class="pip-seg-dif">${txtDif}</span>` : ''}
+        </button>`;
+      }
       return `<div class="pip-ganhador">
-        <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span>${marcaVenc ? `<span class="pip-marca${clsMarca}" title="Marca de ${esc(f.nome)}">${esc(marcaVenc)}</span>` : ''}</div>
-        <div class="pip-forn"><span>🏆 ${esc(f.nome)}</span><button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja)">❓ Dúvida</button></div>
-        ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
-        ${seg ? `<div class="pip-seg">${seg}</div>` : ''}
-      </div>`;
+        <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span>${marcaVenc ? `<span class="pip-marca${clsMarca}" title="Marca de ${esc(f.nome)}">${esc(marcaVenc)}</span>` : ''}<button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja)">❓</button></div>
+        <div class="pip-forn">🏆 ${esc(f.nome)}${tags}</div>
+      </div>${seg}`;
     })() : `<div class="pip-ganhador vazio">${l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>`}
     <div class="pip-qtds">${LJ.map(lj => {
       const v = c.qtds?.[l.i]?.[lj.id];
-      return `<label><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
+      return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
     }).join('')}</div>
     <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
-    <p class="pip-ajuda">Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja${pip.flutuante ? '' : '<br>Para deixar esta janela sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)'}</p>`;
+    ${pip.flutuante ? '' : '<p class="pip-ajuda">Sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)</p>'}`;
   const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
   if (sel) {
     const el = campos.find(x => x.dataset.qtdLoja === sel[0]);

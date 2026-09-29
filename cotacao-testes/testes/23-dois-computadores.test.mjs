@@ -64,7 +64,7 @@ test('dois computadores gravando ao mesmo tempo: nada se perde', async () => {
   assert.deepEqual(nuvem, { X1: 'SÓ MONROE', X2: 'SÓ BOSCH' }, 'as duas alterações de produto ficaram');
   assert.equal(sb.docs.get('sistema/config').loja, 'LOJA A');
   assert.equal(sb.docs.get('sistema/config').backupDias, 3);
-  assert.match(await B.page.locator('#toast').innerText(), /juntei com as suas/);
+  assert.match(await B.page.locator('#toast').innerText(), /as alterações de todos são juntadas, nada se perde/);
   // B já tem a alteração de A; A recebe a de B ao voltar para a aba
   assert.equal(await B.page.evaluate(i => db.produtos.find(p => p.id === i).marca, id1), 'SÓ MONROE');
   await A.page.evaluate(() => puxarNuvem());
