@@ -127,3 +127,29 @@ test('janela flutuante: escolher o fornecedor mostra só os itens que ele ganhou
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('janela flutuante: ❓ Dúvida abre a pergunta na própria janela e o item vai para a fila', async () => {
+  const s = await abrirComJanela('pip');
+  const { page } = s;
+  await page.click('[data-act=abrirPip]');
+  const j = page.frameLocator('#janelaTeste');
+  await j.locator('.pip-btn-duv').click();
+  // a pergunta aparece dentro da janela flutuante (não na tela principal, que pode estar atrás do DataCar)
+  await j.locator('.dlg-duvida').waitFor();
+  assert.equal(await page.locator('.dlg-duvida').count(), 0);
+  await j.locator('.dlg-duvida [data-duv-qtd="0"]').fill('2');
+  await j.locator('#duvObs').fill('marca diferente');
+  await j.locator('.dlg-duvida button.primary').click();
+  assert.equal(await j.locator('.dlg-duvida').count(), 0);
+  assert.deepEqual(await page.evaluate(() => db.duvidas.map(d => [d.codigo, d.empresa, d.qtd, d.obs])), [['COD-A', 'DPR', 2, 'marca diferente']]);
+  assert.match(n(await j.locator('#pip').innerText()), /em dúvida · fora do pedido/);
+  assert.match(await page.locator('.tab-comp tr[data-comp-linha="0"]').getAttribute('class'), /sit-duvida/);
+  // Esc na pergunta: fecha sem mexer na fila
+  await j.locator('.pip-btn-duv').click();
+  await j.locator('.dlg-duvida').waitFor();
+  await page.keyboard.press('Escape');
+  assert.equal(await j.locator('.dlg-duvida').count(), 0);
+  assert.equal(await page.evaluate(() => db.duvidas.length), 1);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

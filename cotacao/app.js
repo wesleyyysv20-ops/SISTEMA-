@@ -5369,9 +5369,9 @@ function textoDuvidas() {
  * Janela do ❓: para qual loja perguntar (pode marcar as duas), a quantidade de cada uma e a observação.
  * Devolve { lojas: [{ sigla, qtd }], obs } ou null se cancelar.
  */
-function dialogoDuvida({ titulo, detalhe, opcoes, obs = '' }) {
+function dialogoDuvida({ titulo, detalhe, opcoes, obs = '', doc = document }) {
   return new Promise(resolve => {
-    const fundo = document.createElement('div');
+    const fundo = doc.createElement('div');
     fundo.className = 'dlg-fundo';
     fundo.innerHTML = `<div class="dlg dlg-duvida" role="dialog" aria-modal="true" aria-label="Pôr em Dúvidas">
       <h3 style="margin:0 0 4px">❓ Pôr em Dúvidas</h3>
@@ -5387,7 +5387,7 @@ function dialogoDuvida({ titulo, detalhe, opcoes, obs = '' }) {
       <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" class="primary" data-r="1">Pôr em Dúvidas</button></div>
     </div>`;
     const q = s => fundo.querySelector(s);
-    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const fechar = v => { fundo.remove(); doc.removeEventListener('keydown', tecla, true); resolve(v); };
     const confirmar = () => {
       const lojasEscolhidas = opcoes.map((o, k) => ({ sigla: o.sigla, qtd: Math.max(0, parseNum(q(`[data-duv-qtd="${k}"]`).value) || 0), ok: q(`[data-duv-loja="${k}"]`).checked }))
         .filter(x => x.ok && x.qtd > 0).map(({ sigla, qtd }) => ({ sigla, qtd }));
@@ -5410,8 +5410,8 @@ function dialogoDuvida({ titulo, detalhe, opcoes, obs = '' }) {
       const b = e.target.closest('button[data-r]');
       if (b) { if (b.dataset.r === '1') confirmar(); else fechar(null); }
     });
-    document.addEventListener('keydown', tecla, true);
-    document.body.appendChild(fundo);
+    doc.addEventListener('keydown', tecla, true);
+    doc.body.appendChild(fundo);
     const primeira = opcoes.findIndex(o => o.marcada);
     const campo = q(`[data-duv-qtd="${Math.max(0, primeira)}"]`);
     campo.focus();
@@ -5423,7 +5423,7 @@ function dialogoDuvida({ titulo, detalhe, opcoes, obs = '' }) {
  * Leva um item do comparativo para as dúvidas: preço e marca do fornecedor `fi` (ou do vencedor).
  * Pergunta a loja (uma ou as duas), a quantidade e a observação. Devolve quantas dúvidas entraram.
  */
-async function duvidasDoItem(c, i, fi, obsSugerida = '') {
+async function duvidasDoItem(c, i, fi, obsSugerida = '', doc = document) {
   const comp = comparar(c);
   const l = comp.linhas[i];
   const j = fi ?? l?.vencedor;
@@ -5440,6 +5440,7 @@ async function duvidasDoItem(c, i, fi, obsSugerida = '') {
     detalhe: `${f.nome} · ${fmtMoeda(l.precos[j])} · marca ${o.marca || '—'}${l.it.marca ? ` (exigida ${l.it.marca})` : ''}`,
     opcoes,
     obs: obsSugerida,
+    doc,
   });
   if (!escolha) return -1;
   const base = { codigo: l.it.codigo || '', valor: l.precos[j], marca: o.marca || '', obs: escolha.obs, origem: { cotId: c.id, numero: c.numero, i, fornecedor: f.nome, marcaExigida: l.it.marca || '' } };
@@ -7081,6 +7082,7 @@ async function abrirPip() {
     if (acao === 'ant') irPip(-1);
     else if (acao === 'prox') irPip(1);
     else if (acao === 'copiar') copiarCodigoPip(b);
+    else if (acao === 'duvida') duvidaPip();
   });
   d.addEventListener('keydown', e => teclaPip(e, d));
   d.addEventListener('change', e => {
@@ -7148,6 +7150,17 @@ function irPip(delta) {
   desenharPip(true);
 }
 
+/** ❓ na janela flutuante: a janela de perguntar à loja abre nela mesma (fica por cima do DataCar). */
+async function duvidaPip() {
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  if (!c || !pip.win) return;
+  const n = await duvidasDoItem(c, pip.i, null, '', pip.win.document);
+  if (n <= 0) { desenharPip(true); return; }
+  render();
+  desenharPip(true);
+  toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila).`);
+}
+
 function copiarCodigoPip(b) {
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   const cod = c?.itens[pip.i]?.codigo || '';
@@ -7207,7 +7220,7 @@ function desenharPip(focar) {
       const seg = l.segundoIdx >= 0 && l.segundoIdx !== l.vencedor ? `2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}${l.difSegundo != null ? ` (+${fmtPct(l.difSegundo)})` : ''}` : '';
       return `<div class="pip-ganhador">
         <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span>${marcaVenc ? `<span class="pip-marca${clsMarca}" title="Marca de ${esc(f.nome)}">${esc(marcaVenc)}</span>` : ''}</div>
-        <div class="pip-forn">🏆 ${esc(f.nome)}</div>
+        <div class="pip-forn"><span>🏆 ${esc(f.nome)}</span><button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja)">❓ Dúvida</button></div>
         ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
         ${seg ? `<div class="pip-seg">${seg}</div>` : ''}
       </div>`;

@@ -40,7 +40,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `33-setas-quantidade` | quantidades: ↑ ↓ ← → andam pela grade (loja e item); número digitado fora do campo vai para a quantidade da linha marcada |
 | `34-duvidas-agrupadas` | fila de dúvidas: itens iguais numa linha só ("2 DPR e 5 DSS", também no texto do WhatsApp); filtro por fornecedor; editar a quantidade de cada loja |
 | `35-usuarios` | usuários: administrador cadastra (e-mail + senha inicial), troca a senha e tira o acesso; a pessoa entra e troca a própria senha; outro computador recebe as alterações |
-| `36-janela-flutuante` | janela flutuante (Chrome/Edge: sempre por cima; Firefox: janelinha separada): item atual, quantidades, Enter/setas/Tab, estoque do Kaizen e sincronia com o comparativo |
+| `36-janela-flutuante` | janela flutuante (Chrome/Edge: sempre por cima; Firefox: janelinha separada): item atual, quantidades, Enter/setas/Tab, estoque do Kaizen e sincronia com o comparativo; filtro por fornecedor; ❓ Dúvida na própria janela |
 | `37-versao-nova` | versão nova publicada: a aba aberta mostra "Atualizar agora", salva o pendente e recarrega |
 
 ## Rodar
