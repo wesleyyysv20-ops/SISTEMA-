@@ -31,7 +31,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `24-ordem-fornecedores` | comparativo com os fornecedores em ordem alfabética (tela, totais e Excel), cada preço no fornecedor certo |
 | `25-kaizen-estoque` | Kaizen: "MARCA/estoque" separa marca e estoque; quando ganha, a quantidade das lojas não passa do estoque |
 | `26-recolher-fornecedores` | quadro Fornecedores da cotação recolhível: começa fechado com resumo, abre/fecha no clique ou Enter, lembra a escolha |
-| `27-coluna-fixa` | comparativo: colunas # e Produto fixas ao rolar para o lado |
+| `27-coluna-fixa` | comparativo: colunas # e Produto fixas ao rolar para o lado; escolher outro preço mantém a rolagem |
 | `28-filtro-vencedor` | comparativo: "Mostrar itens de" um fornecedor (ou sem preço) para digitar só as quantidades dele |
 | `29-exportar-pedido` | exportar o pedido do fornecedor: planilhas individuais por loja (zip) ou somada entregue numa loja; marca a cotação dele como concluída e lembra a forma |
 | `30-prazo-hora-dif` | prazo de resposta com hora (vence no mesmo dia, conta na nota do fornecedor); Dif. 1º × 2º mostra o mais barato quando você escolheu outro ; alerta quando a diferença passa de 100% (possível preço errado) |

@@ -5303,9 +5303,27 @@ function ir(nome, id = null) {
   window.scrollTo(0, 0);
 }
 
+let telaDesenhada = null; // tela do último render (para manter a rolagem ao redesenhar a mesma tela)
+
+/** Posição de rolagem da página e das tabelas com rolagem própria (comparativo, listas). */
+function guardarRolagem() {
+  return { y: window.scrollY, x: window.scrollX, tabelas: [...document.querySelectorAll('#app .table-wrap')].map(el => [el.scrollTop, el.scrollLeft]) };
+}
+function voltarRolagem(r) {
+  document.querySelectorAll('#app .table-wrap').forEach((el, k) => {
+    const [t, l] = r.tabelas[k] || [0, 0];
+    if (t || l) { el.scrollTop = t; el.scrollLeft = l; }
+  });
+  window.scrollTo(r.x, r.y);
+}
+
 function render() {
   const { nome, id } = rota();
   const app = $('#app');
+  // redesenhar a mesma tela (ex.: escolher o preço de outra empresa) não pode jogar a rolagem para o começo
+  const tela = `${nome}|${id ?? ''}`;
+  const rolagem = telaDesenhada === tela ? guardarRolagem() : null;
+  telaDesenhada = tela;
   const views = {
     inicio: renderInicio,
     nova: renderNova,
@@ -5325,6 +5343,7 @@ function render() {
       <p class="muted">Ocorreu um erro: ${esc(e.message)}</p>
       <p class="muted small">Tente recarregar a página. Se continuar, avise com a mensagem acima.</p></section>`;
   }
+  if (rolagem) voltarRolagem(rolagem);
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';

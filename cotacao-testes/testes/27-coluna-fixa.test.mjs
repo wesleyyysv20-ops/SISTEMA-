@@ -31,3 +31,29 @@ test('comparativo: colunas # e Produto ficam fixas ao rolar para o lado', async 
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('comparativo: escolher o preço de outra empresa mantém a rolagem (não volta para o começo)', async () => {
+  const itens = Array.from({ length: 40 }, (_, k) => item('P' + k, 'PECA ' + String(k).padStart(2, '0'), 'QUALQUER', { codigo: 'C' + k }));
+  const resp = base => Object.fromEntries(itens.map((_, k) => [k, { preco: base + k }]));
+  const s = await abrir(base({ cotacoes: [cotacao('c1', '0035', '2026-09-28', 'aberta', itens, [forn('f1', 'KAIZEN', resp(10)), forn('f2', 'RMP', resp(12))])] }), { largura: 1100, altura: 800 });
+  const { page } = s;
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  const painel = page.locator('.painel-comp');
+  await painel.scrollIntoViewIfNeeded();
+  await painel.evaluate(el => { el.scrollTop = 1500; });
+  const antes = await page.evaluate(() => [document.querySelector('.painel-comp').scrollTop, window.scrollY]);
+  assert.ok(antes[0] > 1000);
+  // clica no preço da RMP de um item que está na tela
+  const alvo = await page.evaluate(() => {
+    const p = document.querySelector('.painel-comp').getBoundingClientRect();
+    const tds = [...document.querySelectorAll('.tab-comp td.escolhivel:not(.best)')];
+    return tds.findIndex(td => { const r = td.getBoundingClientRect(); return r.top > p.top + 80 && r.bottom < p.bottom; });
+  });
+  await page.locator('.tab-comp td.escolhivel:not(.best)').nth(alvo).click();
+  assert.equal(await page.evaluate(() => Object.keys(db.cotacoes[0].escolhas || {}).length), 1, 'escolheu');
+  const depois = await page.evaluate(() => [document.querySelector('.painel-comp').scrollTop, window.scrollY]);
+  assert.deepEqual(depois, antes, 'a tabela e a página ficam onde estavam');
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
