@@ -678,6 +678,27 @@ async function iniciarNuvem() {
 
 const TABELA_SUPABASE = 'cotacao_documentos';
 
+/*
+ * Biblioteca do Excel (quase 1 MB): não trava a abertura do sistema. Carrega em segundo plano logo
+ * depois que a tela aparece; se alguém exportar antes disso, espera ela chegar.
+ */
+let promessaExcel = null;
+function carregarExcel() {
+  if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+  promessaExcel = promessaExcel || carregarScript('vendor/exceljs.min.js')
+    .then(() => window.ExcelJS)
+    .catch(e => { promessaExcel = null; throw e; });
+  return promessaExcel;
+}
+async function novoLivroExcel() {
+  const X = await carregarExcel();
+  return new X.Workbook();
+}
+window.addEventListener('load', () => {
+  const ocioso = window.requestIdleCallback || (fn => setTimeout(fn, 800));
+  ocioso(() => carregarExcel().catch(e => console.error(e)));
+});
+
 function carregarScript(src) {
   return new Promise((ok, falha) => {
     const el = document.createElement('script');
@@ -1688,7 +1709,7 @@ async function gerarPlanilha(c, f) {
   const T = PLANILHA_V4;
   const solido = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
   const fina = { style: 'thin', color: { argb: T.azul } };
-  const wb = new ExcelJS.Workbook();
+  const wb = await novoLivroExcel();
   wb.creator = cfg.loja || 'Sistema de Cotação';
   wb.created = new Date();
   const ws = wb.addWorksheet('Cotação', {
@@ -1803,7 +1824,7 @@ async function lerPlanilha(file) {
   if (!(cab[0] === 0x50 && cab[1] === 0x4b)) {
     throw new Error(`O arquivo "${file.name}" não está no formato Excel .xlsx${cab[0] === 0xd0 ? ' (é o formato antigo .xls)' : ''}.\nAbra no Excel e use "Salvar como" → "Pasta de Trabalho do Excel (.xlsx)", depois importe de novo.`);
   }
-  const wb = new ExcelJS.Workbook();
+  const wb = await novoLivroExcel();
   try {
     await wb.xlsx.load(await file.arrayBuffer());
   } catch (e) {
@@ -1984,7 +2005,7 @@ async function importarRespostas(files, cotId = null) {
 
 async function exportarComparativo(c) {
   const { linhas, totais, melhor } = comparar(c);
-  const wb = new ExcelJS.Workbook();
+  const wb = await novoLivroExcel();
   const ws = wb.addWorksheet('Comparativo', { pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   const nf = c.fornecedores.length;
   const LJ = lojas();
@@ -2181,7 +2202,7 @@ async function baixarPedidos(c, fi = null, lojaId = null) {
     avisar(loja ? `Não há itens com quantidade para ${loja.nome}${fi != null ? ' neste fornecedor' : ''}.` : 'Nenhum item com quantidade foi ganho por este fornecedor.');
     return;
   }
-  const wb = new ExcelJS.Workbook();
+  const wb = await novoLivroExcel();
   wb.creator = db.config.loja || 'Sistema de Cotação';
   wb.created = new Date();
   const usados = new Set();
@@ -2564,7 +2585,7 @@ function vincularItemNFe(c, rec, k, idx) {
 async function exportarDivergencias(c, rec) {
   const { linhas, naoPedidos, resumo } = conferirNFe(c, rec);
   const f = c.fornecedores.find(x => x.fornecedorId === rec.fornecedorId);
-  const wb = new ExcelJS.Workbook();
+  const wb = await novoLivroExcel();
   const ws = wb.addWorksheet('Divergências', { pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   ws.mergeCells('A1:H1');
   ws.getCell('A1').value = `Divergências da NF-e nº ${rec.nf.numero} — ${f?.nome || rec.nf.emitente.nome}`;
@@ -2595,7 +2616,7 @@ async function exportarDivergencias(c, rec) {
 }
 
 async function exportarProdutos() {
-  const wb = new ExcelJS.Workbook();
+  const wb = await novoLivroExcel();
   const ws = wb.addWorksheet('Produtos');
   ws.columns = [
     { header: 'Código', key: 'codigo', width: 16 },
@@ -2659,7 +2680,7 @@ async function lerLinhasArquivo(file) {
   const xlsAntigo = cab[0] === 0xd0 && cab[1] === 0xcf;
   if (xlsAntigo) throw new Error('Este arquivo está no formato antigo do Excel (.xls). Abra no Excel e salve como "Pasta de Trabalho do Excel (.xlsx)" ou como CSV, e selecione de novo.');
   if (zip) {
-    const wb = new ExcelJS.Workbook();
+    const wb = await novoLivroExcel();
     await wb.xlsx.load(await file.arrayBuffer());
     const ws = wb.worksheets.find(w => w.rowCount > 0) || wb.worksheets[0];
     const linhas = [];
@@ -3248,7 +3269,7 @@ async function importarProdutos(file) {
     if (/\.csv$|\.txt$/i.test(file.name)) {
       linhas = lerCSV(await file.text());
     } else {
-      const wb = new ExcelJS.Workbook();
+      const wb = await novoLivroExcel();
       await wb.xlsx.load(await file.arrayBuffer());
       // a planilha COTAÇÃO COMPLETA tem o banco na aba "BANCO DE DADOS"
       const ws = wb.worksheets.find(w => /^banco/i.test(w.name.trim())) || wb.worksheets[0];
@@ -3921,7 +3942,7 @@ function nomeAbaSeguro(nome, usados) {
 async function gerarPedidoFornecedor(c, fornecedorId, formato = 'lojas') {
   const f = c.fornecedores.find(x => x.fornecedorId === fornecedorId);
   if (!f) return null;
-  const wb = new ExcelJS.Workbook();
+  const wb = await novoLivroExcel();
   wb.creator = db.config.loja || 'Sistema de Cotação';
   wb.created = new Date();
   const usados = new Set();
@@ -4267,6 +4288,7 @@ async function exportarPedidoForn(c, fi) {
   if (!resp) return;
   const escolha = resp.formato;
   const nomeDe = (id, padrao) => nomeArquivoSeguro(resp.nomes?.[id], padrao.slice(padrao.lastIndexOf('.')), padrao);
+  await carregarExcel();
   const novoWb = () => { const wb = new ExcelJS.Workbook(); wb.creator = db.config.loja || 'Sistema de Cotação'; wb.created = new Date(); return wb; };
   let ok;
   if (escolha.tipo === 'individual') {
