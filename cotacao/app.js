@@ -6804,6 +6804,8 @@ const acoes = {
     toast(`Dados restaurados para ${quando}. O estado anterior ficou guardado nas cópias ("antes de restaurar").`, 7000);
   },
   sairSupabase: () => sairSupabase(),
+  abrirBusca: () => abrirBusca(),
+  abrirAtalhos: () => abrirAtalhos(),
   editarTituloCot: async el => {
     const c = db.cotacoes.find(x => x.id === el.dataset.id);
     if (!c) return;
@@ -7045,6 +7047,149 @@ const formularios = {
     toast('Configurações salvas.');
   },
 };
+
+/* ---------------- busca rápida (Ctrl+K) e atalhos (?) ---------------- */
+
+const TELAS_BUSCA = [['inicio', 'Início'], ['nova', 'Nova cotação'], ['cotacoes', 'Cotações'], ['produtos', 'Produtos'], ['fornecedores', 'Fornecedores'], ['duvidas', 'Dúvidas'], ['relatorios', 'Relatórios'], ['config', 'Configurações']];
+
+/** Resultados da busca rápida, em grupos. Cada um: { grupo, titulo, detalhe, ir() }. */
+function resultadosBusca(texto) {
+  const q = semAcento(texto);
+  const tem = v => semAcento(v).includes(q);
+  const out = [];
+  const add = (grupo, titulo, detalhe, ir) => out.push({ grupo, titulo, detalhe, ir });
+  // itens da cotação aberta (ou da nova cotação em montagem)
+  const { nome, id } = rota();
+  const c = nome === 'cotacao' ? db.cotacoes.find(x => x.id === id) : null;
+  if (q && c) {
+    const achados = c.itens.map((it, i) => [it, i]).filter(([it]) => tem(`${it.codigo} ${it.descricao} ${it.marca}`));
+    achados.sort((a, b) => (semAcento(a[0].codigo).startsWith(q) ? 0 : 1) - (semAcento(b[0].codigo).startsWith(q) ? 0 : 1));
+    for (const [it, i] of achados.slice(0, 8)) add(`Itens desta cotação (nº ${c.numero})`, `#${i + 1} ${it.codigo || '—'}`, `${it.descricao || ''}${it.marca ? ' · ' + it.marca : ''}`, () => irParaItemCot(c, i));
+  }
+  if (q && nome === 'nova') {
+    const r = rascunho();
+    const prod = byId(db.produtos);
+    const achados = r.itens.map((x, i) => [x, i, prod[x.produtoId]]).filter(([x, , p]) => p && tem(`${x.codigoArquivo || p.codigo} ${p.descricao} ${x.marca || p.marca}`));
+    for (const [x, i, p] of achados.slice(0, 8)) add('Itens da nova cotação', `#${i + 1} ${x.codigoArquivo || p.codigo || '—'}`, `${p.descricao || ''}${x.marca || p.marca ? ' · ' + (x.marca || p.marca) : ''}`, () => irParaItemNova(i));
+  }
+  // cotações
+  const cots = [...db.cotacoes].sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+  for (const x of cots.filter(x => !q || tem(`${x.numero} ${x.titulo} ${fmtData(x.data)}`)).slice(0, q ? 6 : 4)) {
+    add('Cotações', `Cotação nº ${x.numero}`, `${x.titulo || 'sem título'} · ${fmtData(x.data)} · ${x.itens.length} itens`, () => ir('cotacao', x.id));
+  }
+  if (q) {
+    // fornecedores
+    for (const f of db.fornecedores.filter(f => tem(`${f.nome} ${f.contato || ''} ${f.email || ''}`)).slice(0, 5)) {
+      add('Fornecedores', f.nome, [f.contato, f.email].filter(Boolean).join(' · '), () => { ui.filtroForn = f.nome; ir('fornecedores'); });
+    }
+    // produtos do cadastro (código primeiro)
+    const prods = [];
+    for (const p of db.produtos) {
+      if (prods.length >= 60) break;
+      if (tem(`${p.codigo} ${p.similar || ''} ${p.descricao} ${p.marca}`)) prods.push(p);
+    }
+    prods.sort((a, b) => (semAcento(a.codigo).startsWith(q) ? 0 : 1) - (semAcento(b.codigo).startsWith(q) ? 0 : 1));
+    for (const p of prods.slice(0, 8)) add('Produtos do cadastro', p.codigo || '—', `${p.descricao || ''}${p.marca ? ' · ' + p.marca : ''}`, () => { ui.filtroProd = p.codigo || p.descricao; ir('produtos'); });
+  }
+  // telas
+  for (const [r, t] of TELAS_BUSCA.filter(([, t]) => !q || tem(t))) add('Telas', t, '', () => ir(r));
+  return out;
+}
+
+/** Leva até o item i do comparativo (tira os filtros que o escondem) e marca a linha. */
+function irParaItemCot(c, i) {
+  if (rota().nome !== 'cotacao' || rota().id !== c.id) ir('cotacao', c.id);
+  let tr = document.querySelector(`[data-comp-linha="${i}"]`);
+  if (tr?.hidden) { ui.filtroVenc = null; ui.filtroAviso = null; render(); tr = document.querySelector(`[data-comp-linha="${i}"]`); }
+  if (!tr) return;
+  marcarLinhaComp(tr);
+  tr.scrollIntoView({ block: 'center' });
+  const campo = tr.querySelector('input[data-qtd-loja]');
+  if (campo) campo.focus({ preventScroll: true });
+}
+
+function irParaItemNova(i) {
+  if (rota().nome !== 'nova') ir('nova');
+  if (ui.filtroItens) { ui.filtroItens = ''; render(); }
+  moverCursorItem(i);
+  document.querySelector(`[data-item-linha="${i}"]`)?.scrollIntoView({ block: 'center' });
+}
+
+function abrirBusca() {
+  if (document.getElementById('buscaRapida')) return;
+  const fundo = document.createElement('div');
+  fundo.className = 'dlg-fundo busca-fundo';
+  fundo.id = 'buscaRapida';
+  fundo.innerHTML = `<div class="dlg busca-rapida" role="dialog" aria-modal="true" aria-label="Busca rápida">
+    <input id="buscaCampo" autocomplete="off" spellcheck="false" placeholder="🔎 Buscar código, descrição, cotação, fornecedor ou tela…">
+    <div class="busca-lista" id="buscaLista" role="listbox"></div>
+    <div class="busca-rodape small muted"><kbd>↑</kbd><kbd>↓</kbd> escolher · <kbd>Enter</kbd> abrir · <kbd>Esc</kbd> fechar</div>
+  </div>`;
+  let lista = [];
+  let sel = 0;
+  const campo = fundo.querySelector('#buscaCampo');
+  const caixa = fundo.querySelector('#buscaLista');
+  const desenhar = () => {
+    lista = resultadosBusca(campo.value);
+    sel = Math.min(sel, Math.max(0, lista.length - 1));
+    let grupo = '';
+    caixa.innerHTML = lista.length ? lista.map((x, k) => {
+      const cab = x.grupo !== grupo ? `<div class="busca-grupo">${esc(x.grupo)}</div>` : '';
+      grupo = x.grupo;
+      return `${cab}<button type="button" class="busca-item${k === sel ? ' ativo' : ''}" data-k="${k}" role="option" aria-selected="${k === sel}"><b>${esc(x.titulo)}</b>${x.detalhe ? `<span>${esc(x.detalhe)}</span>` : ''}</button>`;
+    }).join('') : '<p class="muted small" style="padding:10px">Nada encontrado.</p>';
+    caixa.querySelector('.busca-item.ativo')?.scrollIntoView({ block: 'nearest' });
+  };
+  const fechar = () => { fundo.remove(); document.removeEventListener('keydown', tecla, true); };
+  const abrir = k => { const x = lista[k]; if (!x) return; fechar(); x.ir(); };
+  const tecla = e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopImmediatePropagation(); sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + lista.length) % Math.max(1, lista.length); desenhar(); }
+    else if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); abrir(sel); }
+    else e.stopImmediatePropagation(); // as letras vão só para a busca
+  };
+  campo.addEventListener('input', () => { sel = 0; desenhar(); });
+  fundo.addEventListener('click', e => {
+    e.stopPropagation();
+    const b = e.target.closest('.busca-item');
+    if (b) abrir(+b.dataset.k);
+    else if (e.target === fundo) fechar();
+  });
+  document.addEventListener('keydown', tecla, true);
+  document.body.appendChild(fundo);
+  desenhar();
+  campo.focus();
+}
+
+function abrirAtalhos() {
+  if (document.querySelector('.dlg-atalhos')) return;
+  const k = t => t.split('+').map(x => `<kbd>${esc(x)}</kbd>`).join('+');
+  const grupo = (titulo, linhas) => `<section><h4>${titulo}</h4><dl>${linhas.map(([t, d]) => `<dt>${t.split(' / ').map(k).join(' <span class="muted">ou</span> ')}</dt><dd>${esc(d)}</dd>`).join('')}</dl></section>`;
+  abrirDialogo('', [{ txt: 'Fechar', valor: null, cls: 'primary' }]);
+  const dlg = [...document.querySelectorAll('.dlg')].at(-1);
+  dlg.classList.add('dlg-atalhos');
+  dlg.querySelector('p').outerHTML = `<h3 style="margin:0 0 10px">⌨ Atalhos do teclado</h3><div class="atalhos-grade">
+    ${grupo('Em qualquer tela', [['Ctrl+K', 'Busca rápida: código, descrição, cotação, fornecedor ou tela'], ['?', 'Esta lista de atalhos'], ['Alt+Tab', 'Sair e voltar para o sistema: o cursor continua no mesmo campo']])}
+    ${grupo('Nova cotação (lista de itens)', [['↑ / ↓', 'Anda pelos itens (mesmo com o cursor fora da lista)'], ['Home / End', 'Primeiro / último item'], ['qualquer letra', 'Começa a preencher a marca do item'], ['Enter', 'Salva a marca só nesta cotação e desce'], ['Enter+Enter', 'Enter duas vezes: grava a marca como padrão no cadastro'], ['F2', 'Editar a marca do item'], ['Backspace', 'Limpar a marca'], ['Esc', 'Desfaz a edição do campo'], ['Ctrl+Delete', 'Tirar o item da cotação']])}
+    ${grupo('Comparativo (quantidades)', [['Enter / ↓', 'Mesma loja, próximo item'], ['↑', 'Item anterior'], ['← / →', 'Troca de loja na mesma linha'], ['Tab', 'Próxima loja; na última, o próximo item'], ['número', 'Fora dos campos: vai direto para a quantidade da linha marcada'], ['0', 'Não comprar nesta loja']])}
+    ${grupo('Janela flutuante', [['Enter / ↓', 'Próximo item'], ['↑', 'Item anterior'], ['← / → / Tab', 'Troca de loja'], ['clique no código', 'Copia o código (para colar no DataCar)']])}
+    ${grupo('Janelas de confirmação', [['Enter', 'Confirma'], ['Esc', 'Cancela']])}
+  </div>`;
+}
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (!document.querySelector('.dlg-fundo:not(#buscaRapida)')) abrirBusca();
+    return;
+  }
+  if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const t = e.target;
+    if (t.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('.dlg-fundo')) return;
+    e.preventDefault();
+    abrirAtalhos();
+  }
+}, true);
 
 /* ---------------- eventos (delegação) ---------------- */
 
