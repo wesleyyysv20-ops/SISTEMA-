@@ -3954,8 +3954,13 @@ function celTotal(l) {
   if (l.preco == null) return '—';
   const acima = l.estoque != null && l.q > l.estoque
     ? `<br><span class="acima-estoque" title="O fornecedor tem só ${fmtNum(l.estoque)} em estoque">⚠ acima do estoque (${fmtNum(l.estoque)})</span>` : '';
-  if (!l.q) return l.naoComprar ? '<span class="nao-comprar" title="0 nas duas lojas: não vai em nenhum pedido">não comprar</span>' : '<span class="muted small">sem qtd.</span>';
-  return `${fmtMoeda(l.preco * l.q)}${l.q !== 1 ? `<br><span class="small muted">${fmtNum(l.q)} un.</span>` : ''}${acima}`;
+  // estoque informado pelo vencedor (Kaizen) e quanto ainda dá para pedir
+  const est = l.estoque != null ? `<br><span class="estoque-info" title="Estoque informado pelo fornecedor na resposta">📦 estoque ${fmtNum(l.estoque)} · resta${Math.max(0, l.estoque - (l.q || 0)) === 1 ? '' : 'm'} ${fmtNum(Math.max(0, l.estoque - (l.q || 0)))}</span>` : '';
+  const a = ui.alertaEstoque;
+  const alerta = a && a.it === l.it && l.estoque != null
+    ? `<div class="alerta-estoque" role="alert">⚠ <b>Estoque insuficiente</b>: você digitou <b>${fmtNum(a.digitado)}</b>${a.nomeLoja ? ` para ${esc(a.nomeLoja)}` : ''}, mas ${esc(a.forn)} informou só <b>${fmtNum(a.estoque)}</b> em estoque${a.outras ? ` (${fmtNum(a.outras)} já na outra loja)` : ''}. Ficou <b>${fmtNum(a.max)}</b>.</div>` : '';
+  if (!l.q) return (l.naoComprar ? '<span class="nao-comprar" title="0 nas duas lojas: não vai em nenhum pedido">não comprar</span>' : '<span class="muted small">sem qtd.</span>') + est + alerta;
+  return `${fmtMoeda(l.preco * l.q)}${l.q !== 1 ? `<br><span class="small muted">${fmtNum(l.q)} un.</span>` : ''}${acima}${est}${alerta}`;
 }
 
 /** Posições dos fornecedores da cotação em ordem alfabética (só a exibição muda; os dados continuam no lugar). */
@@ -4563,7 +4568,7 @@ function renderCotacao(id) {
               return `<td${acao}>${celulaDifSegundo(c, l)}</td>`;
             })() : ''}
             <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.estoque != null ? `<br><span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : '') + (entregaDemorada(c.fornecedores[l.vencedor], c.fornecedores[l.vencedor].respostas?.[l.i]) ? '<br>' + chipDemora : '') + (l.preferencia ? `<br><span class="chip-regra" title="O menor preço é ${fmtMoeda(l.min)} (${esc(c.fornecedores[l.minIdx].nome)})">pela regra dos 5% (+${fmtPct(l.preco / l.min - 1)} do 1º)</span>` : '') + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</td>
-            ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}" title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
+            ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}" title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
         }).join('')}
@@ -6911,16 +6916,25 @@ function aplicarQtdLoja(t, c) {
   t.classList.toggle('preenchida', v > 0);
   t.classList.toggle('zerada', t.value.trim() !== '' && v === 0);
   const l = comparar(c).linhas[i];
+  // um novo número neste campo apaga o aviso de estoque dele
+  if (ui.alertaEstoque?.it === c.itens[i] && ui.alertaEstoque.loja === t.dataset.qtdLoja) ui.alertaEstoque = null;
+  t.classList.remove('no-limite');
   if (l?.estoque != null) {
     // o vencedor informou o estoque (Kaizen): a soma das lojas não passa dele
-    const outras = lojas().filter(lj => lj.id !== t.dataset.qtdLoja).reduce((soma, lj) => soma + qtdLoja(c, i, lj.id), 0);
+    const LJ = lojas();
+    const outras = LJ.filter(lj => lj.id !== t.dataset.qtdLoja).reduce((soma, lj) => soma + qtdLoja(c, i, lj.id), 0);
     const max = Math.max(0, l.estoque - outras);
     if (v > max) {
+      // fica marcado no item (campo vermelho + aviso ao lado) até digitar de novo
+      ui.alertaEstoque = {
+        it: c.itens[i], loja: t.dataset.qtdLoja, nomeLoja: LJ.find(lj => lj.id === t.dataset.qtdLoja)?.nome || '',
+        digitado: v, max, estoque: l.estoque, outras, forn: c.fornecedores[l.vencedor].nome,
+      };
       v = max;
-      t.value = max ? String(max) : '';
+      t.value = String(max);
       t.classList.add('no-limite');
-      setTimeout(() => t.classList.remove('no-limite'), 1500);
-      toast(`${c.fornecedores[l.vencedor].nome} tem só ${fmtNum(l.estoque)} em estoque deste item${outras ? ` (${fmtNum(outras)} já na outra loja)` : ''}. Quantidade ajustada para ${fmtNum(max)}.`, 5000);
+      t.classList.toggle('preenchida', v > 0);
+      t.classList.toggle('zerada', v === 0);
     }
   }
   c.qtds = { ...(c.qtds || {}) };
@@ -7112,7 +7126,7 @@ function desenharPip(focar) {
     <div class="pip-venc">${f ? `<b>${fmtMoeda(l.preco)}</b> · ${esc(f.nome)}${marcaVenc ? ` · <span class="marca-venc">${esc(marcaVenc)}</span>` : ''}${l.estoque != null ? ` · <span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : ''}` : l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>
     <div class="pip-qtds">${LJ.map(lj => {
       const v = c.qtds?.[l.i]?.[lj.id];
-      return `<label><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
+      return `<label><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
     }).join('')}</div>
     <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
     <p class="pip-ajuda">Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja${pip.flutuante ? '' : '<br>Para deixar esta janela sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)'}</p>`;
@@ -7137,6 +7151,7 @@ function espelharQtd(t, c, i) {
       el.value = t.value;
       el.classList.toggle('preenchida', t.classList.contains('preenchida'));
       el.classList.toggle('zerada', t.classList.contains('zerada'));
+      el.classList.toggle('no-limite', t.classList.contains('no-limite'));
     }
   }
   if (pip.win && pip.cotId === c.id && pip.i === i) {

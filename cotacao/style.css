@@ -1107,3 +1107,8 @@ input.qtd-loja.zerada { color: var(--muted); background: var(--card-2); text-dec
 .pip-total { margin-top: 8px; font-size: 14px; }
 .pip-ajuda { margin: 8px 0 0; font-size: 11px; color: var(--muted); }
 .btn-pip { margin-left: 8px; }
+
+/* Kaizen: estoque informado e aviso de estoque insuficiente */
+.estoque-info { font-size: 12px; font-weight: 600; color: var(--primary-2); white-space: nowrap; }
+.alerta-estoque { margin-top: 4px; padding: 5px 8px; border-radius: 6px; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); font-size: 12px; line-height: 1.35; min-width: 190px; white-space: normal; text-align: left; }
+input.qtd-loja.no-limite, input.qtd-loja.no-limite.preenchida, input.qtd-loja.no-limite.zerada { border: 2px solid var(--danger); background: var(--danger-bg); color: var(--danger); text-decoration: none; }

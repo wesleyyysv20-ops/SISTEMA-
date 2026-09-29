@@ -38,8 +38,22 @@ test('Kaizen ganhou: a soma das lojas não passa do estoque', async () => {
   assert.equal(await page.inputValue(qtd(0, 'paranoa')), '6');
   await page.fill(qtd(0, 'sao-sebastiao'), '9');
   assert.equal(await page.inputValue(qtd(0, 'sao-sebastiao')), '4', 'ajustado para o que sobra do estoque');
-  assert.match(await page.locator('#toast').innerText(), /tem só 10 em estoque deste item \(6 já na outra loja\)\. Quantidade ajustada para 4/);
+  // aviso claro no item: campo vermelho + "estoque insuficiente" com o que foi digitado
+  assert.match(await page.locator(qtd(0, 'sao-sebastiao')).getAttribute('class'), /no-limite/);
+  assert.match(n(await page.locator('#tot-0 .alerta-estoque').innerText()),
+    /Estoque insuficiente: você digitou 9 para São Sebastião, mas Kaizen Autopeças informou só 10 em estoque \(6 já na outra loja\)\. Ficou 4\./);
+  assert.match(n(await page.locator('#tot-0').innerText()), /estoque 10 · restam 0/);
   assert.deepEqual(await page.evaluate(() => db.cotacoes[0].qtds[0]), { paranoa: 6, 'sao-sebastiao': 4 });
+  // continua marcado depois de redesenhar; some ao digitar uma quantidade que cabe
+  await page.evaluate(() => render());
+  assert.equal(await page.locator('#tot-0 .alerta-estoque').count(), 1);
+  assert.match(await page.locator(qtd(0, 'sao-sebastiao')).getAttribute('class'), /no-limite/);
+  await page.fill(qtd(0, 'sao-sebastiao'), '3');
+  assert.equal(await page.locator('#tot-0 .alerta-estoque').count(), 0);
+  assert.doesNotMatch(await page.locator(qtd(0, 'sao-sebastiao')).getAttribute('class'), /no-limite/);
+  assert.match(n(await page.locator('#tot-0').innerText()), /estoque 10 · resta 1/);
+  await page.fill(qtd(0, 'sao-sebastiao'), '9');
+  assert.equal(await page.inputValue(qtd(0, 'sao-sebastiao')), '4');
 
   // passa a comprar da Via Peças (sem limite): pode mais
   await page.click('.tab-comp tbody tr >> nth=0 >> td.escolhivel >> nth=1');

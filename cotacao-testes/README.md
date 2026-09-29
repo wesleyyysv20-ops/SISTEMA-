@@ -29,7 +29,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `22-marca-obrigatoria` | produto sem marca exigida: aviso e exclusão com confirmação, trocar marca (FREEMAX → FREMAX), bloqueio no formulário, na planilha e no DataCar |
 | `23-dois-computadores` | gravação segura: juntar versões, dois computadores ao mesmo tempo, aba fechada antes de enviar, lotes antigos viram baldes |
 | `24-ordem-fornecedores` | comparativo com os fornecedores em ordem alfabética (tela, totais e Excel), cada preço no fornecedor certo |
-| `25-kaizen-estoque` | Kaizen: "MARCA/estoque" separa marca e estoque; quando ganha, a quantidade das lojas não passa do estoque; Rio Juntas: marca GO destacada (demora para chegar); Comando ganha até 5% acima do 1º (com o detalhe) |
+| `25-kaizen-estoque` | Kaizen: "MARCA/estoque" separa marca e estoque; quando ganha, a quantidade das lojas não passa do estoque; Rio Juntas: marca GO destacada (demora para chegar); Comando ganha até 5% acima do 1º (com o detalhe); estoque insuficiente: campo vermelho e aviso no item com o que foi digitado |
 | `26-recolher-fornecedores` | quadro Fornecedores da cotação recolhível: começa fechado com resumo, abre/fecha no clique ou Enter, lembra a escolha |
 | `27-coluna-fixa` | comparativo: colunas # e Produto fixas ao rolar para o lado; escolher outro preço mantém a rolagem |
 | `28-filtro-vencedor` | comparativo: "Mostrar itens de" um fornecedor (ou sem preço) para digitar só as quantidades dele; etiquetas de aviso filtram os itens delas |
