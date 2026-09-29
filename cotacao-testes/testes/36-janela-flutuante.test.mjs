@@ -120,10 +120,22 @@ test('janela flutuante: escolher o fornecedor mostra só os itens que ele ganhou
   await page.keyboard.press('Enter');
   assert.match(n(await j.locator('.pip-barra').innerText()), /#4 · 2 de 2/);
   assert.equal(await page.evaluate(() => db.cotacoes[0].qtds[1].paranoa), 3);
+  assert.match(n(await j.locator('#pipAviso').innerText()), /faltam 1 de 2/);
+  // último item da Via Peças: aparece o aviso de que todos já têm quantidade
+  await page.keyboard.type('0');
+  assert.match(n(await j.locator('.pip-concluido').innerText()), /Todos os itens de VIA PEÇAS já têm a quantidade informada/);
   // escolher no comparativo também muda a janela
   await page.selectOption('#filtroVencedor', 'f1');
   assert.equal(await j.locator('#pipForn').inputValue(), 'f1');
   assert.match(n(await j.locator('.pip-barra').innerText()), /#1 · 1 de 2/);
+  assert.equal(await j.locator('.pip-concluido').count(), 0);
+  // Enter no último item sem terminar: volta para o que ainda falta
+  await j.locator('input[data-qtd-loja=paranoa]').focus();
+  await page.keyboard.press('Enter');
+  assert.match(n(await j.locator('.pip-barra').innerText()), /#3 · 2 de 2/);
+  await page.keyboard.type('2');
+  await page.keyboard.press('Enter');
+  assert.match(n(await j.locator('.pip-barra').innerText()), /#1 · 1 de 2/, 'o item 1 ainda estava sem quantidade');
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

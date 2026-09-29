@@ -7238,12 +7238,30 @@ function teclaPip(e, d) {
 }
 
 /** Vai para outro item (delta: +1 próximo, -1 anterior) e marca a mesma linha no comparativo. */
+/** Itens da lista ainda sem quantidade em nenhuma loja (0 conta como informado: "não comprar"). */
+function pendentesPip(c, lista) {
+  const LJ = lojas();
+  return lista.filter(i => !LJ.some(lj => c.qtds?.[i]?.[lj.id] != null));
+}
+
+/** "Todos os itens de X já têm quantidade informada" (ou quantos faltam). */
+function avisoConcluidoPip(c, lista) {
+  if (!lista.length) return '';
+  const falta = pendentesPip(c, lista).length;
+  const valor = filtroVencedor(c);
+  const de = valor === '__sem' ? 'sem preço' : valor ? c.fornecedores.find(f => f.fornecedorId === valor)?.nome || '' : 'da cotação';
+  if (!falta) return `<div class="pip-concluido" role="status">✓ Todos os itens ${valor && valor !== '__sem' ? `de <b>${esc(de)}</b>` : esc(de)} já têm a quantidade informada.</div>`;
+  return `<div class="pip-faltam">faltam <b>${falta}</b> de ${lista.length}</div>`;
+}
+
 function irPip(delta) {
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   if (!c) return;
   const lista = itensPip(c);
   const pos = lista.indexOf(pip.i);
-  const novo = lista[pos < 0 ? 0 : pos + delta];
+  let novo = lista[pos < 0 ? 0 : pos + delta];
+  // Enter no último item: volta para o primeiro que ainda está sem quantidade
+  if (novo == null && delta > 0) novo = pendentesPip(c, lista).find(i => i !== pip.i);
   if (novo == null) { desenharPip(true); return; } // já é o primeiro/último
   pip.i = novo;
   // o comparativo acompanha (sem tirar o cursor de lá)
@@ -7319,6 +7337,7 @@ function desenharPip(focar) {
       <span class="pip-pos" title="Item da cotação · posição na lista">#${l.i + 1} <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
       <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>
     </div>
+    <div id="pipAviso">${avisoConcluidoPip(c, lista)}</div>
     <button type="button" class="pip-cod" data-pip="copiar" title="Clique para copiar o código (e colar no DataCar)"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉</span></button>
     <div class="pip-desc" title="${esc([l.it.descricao, l.it.marca && 'marca pedida: ' + l.it.marca].filter(Boolean).join(' · '))}">${esc(l.it.descricao || '')}${l.it.marca ? ` · <span class="pip-pedida">pedida <b>${esc(l.it.marca)}</b></span>` : ''}</div>
     ${l.duvida ? '<div class="pip-linha-duv"><span class="chip-duvida">❓ em dúvida · fora do pedido</span></div>' : ''}
@@ -7382,9 +7401,13 @@ function espelharQtd(t, c, i) {
       el.classList.toggle('no-limite', t.classList.contains('no-limite'));
     }
   }
-  if (pip.win && pip.cotId === c.id && pip.i === i) {
-    const tot = pip.win.document.getElementById('pipTotal');
-    if (tot) tot.innerHTML = celTotal(comparar(c).linhas[i]);
+  if (pip.win && pip.cotId === c.id) {
+    if (pip.i === i) {
+      const tot = pip.win.document.getElementById('pipTotal');
+      if (tot) tot.innerHTML = celTotal(comparar(c).linhas[i]);
+    }
+    const av = pip.win.document.getElementById('pipAviso');
+    if (av) av.innerHTML = avisoConcluidoPip(c, itensPip(c));
   }
 }
 
