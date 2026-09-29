@@ -118,3 +118,26 @@ test('resposta no modelo anterior (Item … VALOR, MARCA na linha 11) continua s
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('preço 0,00 ou sem valor é desconsiderado, mesmo com a marca preenchida', async () => {
+  const s = await abrir(dados());
+  const arq = await planilhaDoFornecedor(s, 0);
+  const wb = await lerXlsx(arq.buffer);
+  const ws = wb.getWorksheet('Cotação');
+  ws.getCell('G3').value = 0; ws.getCell('H3').value = 'SKF'; // marca com preço 0,00
+  ws.getCell('G4').value = 45.5; ws.getCell('H4').value = 'COBREQ';
+  ws.getCell('H5').value = 'TECFIL'; // marca sem valor
+  const f = path.join(tmp, 'resposta-zero.xlsx');
+  await wb.xlsx.writeFile(f);
+  await s.page.setInputFiles('[data-import="0"]', f);
+  await s.page.waitForFunction(() => /importado/.test(document.querySelector('#toast')?.innerText || ''));
+  assert.match(await s.page.locator('#toast').innerText().then(n), /1 preço\(s\) importado\(s\) de Auto Mix\. 2 item\(ns\) com preço 0,00 ou sem valor foram desconsiderados/);
+  assert.deepEqual(await s.page.evaluate(() => Object.keys(cotAtual().fornecedores[0].respostas)), ['1'], 'só o item com preço fica como resposta');
+  // resposta antiga já gravada com 0,00: a célula mostra só "—" (sem a marca)
+  await s.page.evaluate(() => { const c = cotAtual(); c.fornecedores[0].respostas[0] = { preco: 0, marca: 'SKF' }; salvar(); render(); });
+  const primeira = s.page.locator('.tab-comp tbody tr').first();
+  assert.equal(await primeira.locator('.chip-marca').count(), 0);
+  assert.doesNotMatch(n(await primeira.innerText()), /SKF/);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

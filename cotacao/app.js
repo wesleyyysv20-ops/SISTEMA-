@@ -1556,6 +1556,8 @@ async function lerPlanilha(file) {
 }
 
 /** Aplica os preços lidos da planilha no fornecedor `fi` da cotação `c`. Retorna qtd de preços. */
+let ignoradosNaImportacao = 0; // itens com preço 0,00 ou sem valor na última planilha importada
+
 function aplicarResposta(c, fi, ws, meta) {
   let first = meta?.first;
   let cond = meta?.cond;
@@ -1575,7 +1577,7 @@ function aplicarResposta(c, fi, ws, meta) {
   const colPreco = versao >= 3 ? 'G' : versao === 2 ? 'F' : 'G';
   const colMarca = versao >= 3 ? 'H' : versao === 2 ? 'G' : null;
   const respostas = {};
-  let qtd = 0;
+  let qtd = 0, ignorados = 0;
   const limite = meta?.n || c.itens.length;
   for (let k = 0; k < limite; k++) {
     const r = first + k;
@@ -1587,9 +1589,11 @@ function aplicarResposta(c, fi, ws, meta) {
     if (/^informar marca$/i.test(marca)) marca = ''; // o fornecedor não preencheu
     const prazo = versao >= 2 ? '' : cellTexto(ws.getCell(`I${r}`));
     const obs = versao >= 2 ? '' : cellTexto(ws.getCell(`J${r}`));
-    if (preco != null || marca || prazo || obs) respostas[i] = { preco, marca, prazo, obs };
-    if (preco != null && preco > 0) qtd++;
+    // preço 0,00 ou sem valor não é resposta (o fornecedor às vezes preenche só a marca): desconsidera
+    if (preco != null && preco > 0) { respostas[i] = { preco, marca, prazo, obs }; qtd++; }
+    else if (marca || preco === 0) ignorados++;
   }
+  ignoradosNaImportacao = ignorados;
   if (!cond) {
     for (let r = first + limite; r <= first + limite + 20; r++) {
       if (/pagamento/i.test(cellTexto(ws.getCell(`A${r}`)))) { cond = r; break; }
@@ -1663,7 +1667,7 @@ async function importarRespostaArquivo(file, cotId, fiSugerido) {
     const f = c.fornecedores[fi];
     if (Object.keys(f.respostas || {}).length && !(await confirmar(`${f.nome} já tem preços lançados. Substituir pelos da planilha?`))) return;
     const qtd = aplicarResposta(c, fi, ws, meta);
-    return { cotacao: c, fornecedor: f.nome, qtd };
+    return { cotacao: c, fornecedor: f.nome, qtd, ignorados: ignoradosNaImportacao };
   }
 }
 
@@ -1671,7 +1675,7 @@ async function importarResposta(file, cotId, fiSugerido) {
   try {
     const r = await importarRespostaArquivo(file, cotId, fiSugerido);
     if (!r) return;
-    toast(`${r.qtd} preço(s) importado(s) de ${r.fornecedor}.`);
+    toast(`${r.qtd} preço(s) importado(s) de ${r.fornecedor}.${r.ignorados ? ` ${r.ignorados} item(ns) com preço 0,00 ou sem valor foram desconsiderados.` : ''}`, r.ignorados ? 6000 : 3500);
     ir('cotacao', r.cotacao.id);
     render();
   } catch (e) {
@@ -1697,7 +1701,7 @@ async function importarRespostas(files, cotId = null) {
   if (cots.length === 1) ir('cotacao', cots[0].id);
   render();
   const linhas = [`${ok.length} de ${files.length} planilha(s) importada(s):`];
-  for (const r of ok) linhas.push(`✓ ${r.fornecedor}: ${r.qtd} preço(s)${cots.length > 1 ? ` (cotação nº ${r.cotacao.numero})` : ''}`);
+  for (const r of ok) linhas.push(`✓ ${r.fornecedor}: ${r.qtd} preço(s)${r.ignorados ? ` (${r.ignorados} com preço 0,00 ou sem valor desconsiderados)` : ''}${cots.length > 1 ? ` (cotação nº ${r.cotacao.numero})` : ''}`);
   for (const f of falhas) linhas.push(`✗ ${f.arquivo}: ${f.erro}`);
   for (const n of canceladas) linhas.push(`– ${n}: não importada (cancelada)`);
   await avisar(linhas.join('\n'));
@@ -4313,14 +4317,14 @@ function renderCotacao(id) {
             const o = c.fornecedores[j].respostas?.[l.i];
             const st = l.marcas[j];
             if (p != null && (st === 'errada' || st === 'duvida') && !l.recusas[j]) qtdMarcas[st]++;
-            const extra = [o?.prazo, o?.obs].filter(Boolean).join(' · ');
+            const extra = p == null ? '' : [o?.prazo, o?.obs].filter(Boolean).join(' · '); // sem preço: desconsidera a resposta
             const avs = alertasPreco(p, ult, l.precos);
             if (avs.length) qtdAlertas++;
             const venc = j === l.vencedor && (nf > 1 || l.manual);
             const cls = ['r', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : '', l.recusas[j] && p != null ? 'recusada' : ''].filter(Boolean).join(' ');
             const dica = p == null ? '' : l.recusas[j] ? 'Marca recusada: este preço não entra. Clique na marca para desfazer.' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${o?.marca || (p != null && st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
+            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs) : ''}</td>`;
           }).join('');
           return `<tr class="${l.aguardando ? 'linha-aguardando' : ''}" data-comp-linha="${l.i}" ${linhaNoFiltroVenc(c, l) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
@@ -6065,7 +6069,7 @@ const formularios = {
       const preco = parseNum(d[`p_${i}`]);
       const prazo = d[`z_${i}`] || '';
       const obs = d[`o_${i}`] || '';
-      if (preco != null || prazo || obs) respostas[i] = { preco, prazo, obs };
+      if (preco != null && preco > 0) respostas[i] = { preco, prazo, obs }; // 0,00 ou vazio: sem resposta
     });
     f.respostas = respostas;
     f.cond = Object.fromEntries(COND_CAMPOS.map(([k]) => [k, d[`c_${k}`] || '']));
