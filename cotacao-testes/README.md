@@ -46,6 +46,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `39-digitar-precos` | digitar preços do fornecedor: a tabela mostra o código de cada item |
 | `40-backup-nuvem` | backup no Supabase: administrador faz cópia, baixa e restaura (guardando o estado atual antes); quem não é administrador só vê o aviso |
 | `41-presenca` | quem está nesta cotação agora: cabeçalho da cotação, lista de cotações e aviso quando duas pessoas estão no mesmo fornecedor |
+| `42-checklist-pedido` | checklist antes de exportar o pedido: sem quantidade, marca, preço fora do normal, estoque, dúvidas; "Revisar no comparativo" ou "Exportar mesmo assim" |
 
 ## Rodar
 

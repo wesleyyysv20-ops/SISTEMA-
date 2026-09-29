@@ -4314,7 +4314,47 @@ function nomeArquivoSeguro(nome, ext, padrao) {
   return n.toLowerCase().endsWith(ext) ? n : n + ext;
 }
 
-function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos = () => [] }) {
+/**
+ * Checklist antes de exportar o pedido do fornecedor `fi`: o que ainda merece atenção nos itens que ele ganhou.
+ * [{ nivel: 'erro'|'aviso'|'info', icone, texto, itens: [i] }]
+ */
+function checklistPedido(c, fi) {
+  const comp = comparar(c);
+  const f = c.fornecedores[fi];
+  const LJ = lojas();
+  const ganhos = comp.linhas.filter(l => l.vencedor === fi);
+  const ultimos = ultimosPrecos(c.id);
+  const itens = fn => ganhos.filter(fn).map(l => l.i);
+  const lista = [];
+  const add = (nivel, icone, texto, is) => { if (is.length) lista.push({ nivel, icone, texto, itens: is }); };
+  if (comp.porLoja) {
+    add('erro', '📦', 'sem quantidade (nenhuma loja digitada)', itens(l => !l.duvida && !LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null)));
+  }
+  add('erro', '📦', 'acima do estoque informado', itens(l => l.estoque != null && l.q > l.estoque));
+  add('aviso', '🏷️', 'marca diferente da pedida ou para conferir', itens(l => (l.marcas[fi] === 'errada' || l.marcas[fi] === 'duvida') && !l.recusas[fi]));
+  add('aviso', '⚠', 'preço fora do normal (último preço pago ou os outros fornecedores)', itens(l => {
+    const o = f.respostas?.[l.i];
+    const p = l.precos[fi];
+    const ult = l.it.produtoId ? ultimos[l.it.produtoId] : null;
+    return alertasPreco(p, ult, l.precos).length && !(o?.precoConferido != null && o.precoConferido === p);
+  }));
+  add('aviso', '⚠', 'mais de 100% de diferença para o 2º lugar (preço pode estar errado)', itens(l => difSuspeita(l)));
+  add('info', '❓', 'em Dúvidas: ficam fora deste pedido até sair da fila', itens(l => l.duvida));
+  add('info', '🐢', 'com entrega demorada (GO)', itens(l => entregaDemorada(f, f.respostas?.[l.i])));
+  return lista;
+}
+
+function htmlChecklistPedido(c, lista, total) {
+  if (!lista.length) return `<div class="check-pedido ok">✓ <b>Tudo conferido</b>: ${total} item(ns), nenhuma pendência.</div>`;
+  const cod = i => esc(c.itens[i]?.codigo || `#${i + 1}`);
+  const pend = lista.filter(x => x.nivel !== 'info').reduce((s, x) => s + x.itens.length, 0);
+  return `<div class="check-pedido${pend ? ' pendente' : ' so-info'}">
+    <b>${pend ? '⚠ Antes de exportar, confira:' : 'Para saber:'}</b>
+    <ul>${lista.map(x => `<li class="nivel-${x.nivel}"><span>${x.icone}</span><span><b>${x.itens.length}</b> ${esc(x.texto)}<br><span class="small">${x.itens.slice(0, 6).map(cod).join(', ')}${x.itens.length > 6 ? ` e mais ${x.itens.length - 6}` : ''}</span></span></li>`).join('')}</ul>
+  </div>`;
+}
+
+function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos = () => [], checklist = '', pendente = false }) {
   const LJ = lojas();
   const opcoes = [
     { valor: 'individual', titulo: 'Planilhas individuais por loja', texto: `Um arquivo para cada loja, com a quantidade e o endereço de entrega dela${lojasComItens.length > 1 ? ` (${lojasComItens.map(x => x.nome).join(' e ')}, cada uma com o seu "Salvar como")` : ''}.`, desligada: !porLoja || !lojasComItens.length },
@@ -4327,6 +4367,7 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos
     fundo.className = 'dlg-fundo';
     fundo.innerHTML = `<div class="dlg dlg-formato" role="dialog" aria-modal="true" aria-label="Exportar pedido">
       <h3 style="margin:0 0 4px">⬇ Exportar pedido — ${esc(f.nome)}</h3>
+      ${checklist}
       <p class="small muted" style="margin:0 0 10px">Como ${esc(f.nome)} recebe o pedido?${padrao ? ' (marcado: a forma usada da última vez)' : ''}</p>
       ${opcoes.map(o => `<label class="formato-opcao${o.desligada ? ' desligada' : ''}">
         <input type="radio" name="formatoExport" value="${esc(o.valor)}" ${o === marcada ? 'checked' : ''} ${o.desligada ? 'disabled' : ''}>
@@ -4334,7 +4375,7 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos
       </label>`).join('')}
       <div class="nomes-export"></div>
       <p class="small muted" style="margin:10px 0 0">Depois de salvar, a cotação de ${esc(f.nome)} fica marcada como <b>concluída</b>.</p>
-      <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" class="primary" data-r="1">Exportar</button></div>
+      <div class="actions"><button type="button" data-r="0">Cancelar</button>${pendente ? '<button type="button" data-r="revisar">🔎 Revisar no comparativo</button>' : ''}<button type="button" class="primary" data-r="1">${pendente ? 'Exportar mesmo assim' : 'Exportar'}</button></div>
     </div>`;
     // nomes sugeridos para a forma marcada (trocar a forma sugere os nomes dela)
     const mostrarNomes = () => {
@@ -4359,7 +4400,7 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos
     fundo.addEventListener('click', e => {
       e.stopPropagation();
       const b = e.target.closest('button[data-r]');
-      if (b) { if (b.dataset.r === '1') confirmar(); else fechar(null); }
+      if (b) { if (b.dataset.r === '1') confirmar(); else if (b.dataset.r === 'revisar') fechar({ revisar: true }); else fechar(null); }
     });
     document.addEventListener('keydown', tecla, true);
     document.body.appendChild(fundo);
@@ -4385,8 +4426,21 @@ async function exportarPedidoForn(c, fi) {
     }
     return porLoja.map(({ lj }) => ({ id: lj.id, rotulo: `Planilha de ${lj.nome}`, nome: nomePedido(c, f, lj) }));
   };
-  const resp = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja, nomesArquivos });
+  const lista = checklistPedido(c, fi);
+  const ganhos = comp.linhas.filter(l => l.vencedor === fi).length;
+  const pendente = lista.some(x => x.nivel !== 'info');
+  const resp = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja, nomesArquivos, checklist: htmlChecklistPedido(c, lista, ganhos), pendente });
   if (!resp) return;
+  if (resp.revisar) {
+    // mostra só os itens deste fornecedor e leva até o primeiro com pendência
+    const primeiro = lista.find(x => x.nivel !== 'info')?.itens[0];
+    definirFiltroVencedor(c, f.fornecedorId);
+    render();
+    const tr = primeiro != null ? document.querySelector(`.tab-comp tr[data-comp-linha="${primeiro}"]`) : null;
+    if (tr) { marcarLinhaComp(tr); tr.scrollIntoView({ block: 'center' }); }
+    toast(`Mostrando os itens de ${f.nome}. Resolva as pendências e clique em Exportar de novo.`, 5000);
+    return;
+  }
   const escolha = resp.formato;
   const nomeDe = (id, padrao) => nomeArquivoSeguro(resp.nomes?.[id], padrao.slice(padrao.lastIndexOf('.')), padrao);
   await carregarExcel();

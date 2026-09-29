@@ -1240,3 +1240,15 @@ input.qtd-loja.no-limite, input.qtd-loja.no-limite.preenchida, input.qtd-loja.no
 .pip-corpo .presenca-rot { display: none; }
 .pip-corpo .presenca-chip, .pip-corpo .presenca-aviso { padding: 0 6px; }
 .presenca-lista:not(:empty) { margin-left: 6px; }
+
+/* checklist antes de exportar o pedido */
+.check-pedido { margin: 8px 0 12px; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.35; }
+.check-pedido.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
+.check-pedido.pendente { background: var(--warn-bg); color: var(--text); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
+.check-pedido.so-info { background: var(--card-2); border: 1px solid var(--line); }
+.check-pedido ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.check-pedido li { display: grid; grid-template-columns: 20px 1fr; gap: 4px; }
+.check-pedido li.nivel-erro b { color: var(--danger); }
+.check-pedido li.nivel-aviso b { color: var(--warn); }
+.check-pedido li .small { color: var(--muted); }
+.dlg-formato { max-height: calc(100vh - 32px); overflow-y: auto; }
