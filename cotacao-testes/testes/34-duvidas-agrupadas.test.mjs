@@ -32,9 +32,14 @@ test('dúvidas: itens iguais numa linha só ("2 DPR e 5 DSS") e filtro por forne
   assert.match(await texto(), /\*PEDE 2 DPR E 5 DSS \?\*/);
   assert.doesNotMatch(await texto(), /SP11064|X-9/);
   assert.match(await page.locator('[data-act=copiarDuvidas]').innerText(), /\(ENVIA PEÇAS\)/);
+  // o topo do texto passa a ser "*FORNECEDOR - DÚVIDA*"
+  assert.match(await texto(), /^\*ENVIA PEÇAS - DÚVIDA\*\n\n- \*BI0023MM/);
   await page.click('.filtro-duv button[data-forn=KAIZEN]');
   assert.equal(await linhas().count(), 1);
-  assert.match(await texto(), /SP11064-4/);
+  assert.match(await texto(), /^\*KAIZEN - DÚVIDA\*\n\n- \*SP11064-4/);
+  // as digitadas à mão (sem fornecedor) usam o texto fixo
+  await page.click('.filtro-duv button[data-forn="Digitadas à mão"]');
+  assert.match(await texto(), /^Segue a relação/);
   await page.click('.filtro-duv button[data-forn=""]');
   assert.equal(await linhas().count(), 4);
 

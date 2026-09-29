@@ -5304,8 +5304,11 @@ function textoItemDuvida(g) {
   ].join('\n');
 }
 
+/** Com um fornecedor escolhido no filtro, o topo do texto vira "*FORNECEDOR - DÚVIDA*". */
+const cabDuvidasForn = () => (ui.duvForn && ui.duvForn !== SEM_FORN_DUV ? `*${ui.duvForn.toUpperCase()} - DÚVIDA*` : null);
+
 function textoDuvidas() {
-  const cab = (db.config.duvidasCabecalho ?? DEFAULT_DB.config.duvidasCabecalho).trim();
+  const cab = cabDuvidasForn() || (db.config.duvidasCabecalho ?? DEFAULT_DB.config.duvidasCabecalho).trim();
   return [cab, ...gruposDuvidas(duvidasFiltradas()).map(textoItemDuvida)].filter(Boolean).join('\n\n');
 }
 
@@ -5446,6 +5449,7 @@ function renderDuvidas() {
     <section class="card">
       <div class="row-between"><h3>Texto para WhatsApp</h3><button class="sm primary" data-act="copiarDuvidas" ${lista.length ? '' : 'disabled'}>⧉ Copiar para o WhatsApp${ui.duvForn ? ' (' + esc(ui.duvForn) + ')' : ''}</button></div>
       <label>Texto fixo no topo<input id="duvidasCabecalho" value="${esc(db.config.duvidasCabecalho ?? DEFAULT_DB.config.duvidasCabecalho)}"></label>
+      ${cabDuvidasForn() ? `<p class="small muted" style="margin:4px 0 0">Com <b>${esc(ui.duvForn)}</b> escolhido, o texto começa com <b>${esc(cabDuvidasForn())}</b>. Clique em <b>Todos</b> para voltar ao texto fixo.</p>` : ''}
       <pre class="texto-whats" id="textoDuvidas">${esc(textoDuvidas())}</pre>
     </section>
   </div>`;
