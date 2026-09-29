@@ -4628,11 +4628,12 @@ function renderCotacao(id) {
       <h3>Digitar preços — ${esc(f.nome)}</h3>
       <form data-form="precosManuais" data-f="${fi}">
         <div class="table-wrap"><table>
-          <thead><tr><th class="c">#</th><th>Descrição</th><th class="r">Qtd.</th><th class="r">Preço unit. (R$)</th><th>Prazo</th><th>Observação</th></tr></thead>
+          <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th class="r">Qtd.</th><th class="r">Preço unit. (R$)</th><th>Prazo</th><th>Observação</th></tr></thead>
           <tbody>${c.itens.map((it, i) => {
             const rr = f.respostas?.[i] || {};
             return `<tr>
               <td class="c">${i + 1}</td>
+              <td class="cod-digitar">${esc(it.codigo || '—')}</td>
               <td>${esc(it.descricao)} <span class="muted small">${esc(it.unidade)}</span></td>
               <td class="r">${fmtNum(it.quantidade)}</td>
               <td style="width:140px"><input class="price" inputmode="decimal" name="p_${i}" value="${rr.preco != null ? esc(rr.preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : ''}"></td>

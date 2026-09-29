@@ -43,6 +43,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `36-janela-flutuante` | janela flutuante (Chrome/Edge: sempre por cima; Firefox: janelinha separada): item atual, quantidades, Enter/setas/Tab, estoque do Kaizen e sincronia com o comparativo; filtro por fornecedor; ❓ Dúvida na própria janela |
 | `37-versao-nova` | versão nova publicada: a aba aberta mostra "Atualizar agora", salva o pendente e recarrega |
 | `38-tres-pessoas` | 3 pessoas ao mesmo tempo: quem digita não é interrompido e recebe os números dos outros; junção campo a campo (quantidades, respostas de fornecedores, dúvidas) |
+| `39-digitar-precos` | digitar preços do fornecedor: a tabela mostra o código de cada item |
 
 ## Rodar
 

@@ -1154,3 +1154,4 @@ input.qtd-loja.no-limite, input.qtd-loja.no-limite.preenchida, input.qtd-loja.no
 :root[data-theme="dark"] .pip-preco { color: #5fd49a; }
 .pip-concluido { margin: 0 0 5px; padding: 5px 8px; border-radius: 7px; background: var(--ok-bg); border: 2px solid #3fb57a; color: #17804d; font-size: 13px; font-weight: 700; }
 .pip-faltam { margin: -2px 0 3px; font-size: 11px; color: var(--muted); text-align: right; }
+.cod-digitar { font-weight: 700; white-space: nowrap; }
