@@ -4990,7 +4990,7 @@ function renderCotacao(id) {
       <h3>${temResposta ? 'Comparativo de preços' : 'Itens da cotação'}</h3>
       ${temResposta ? `<div class="row">${seletorVencedor(c, comp)}<button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button></div>` : ''}
     </div>
-    ${!temResposta ? '<p class="muted small">Assim que os fornecedores responderem, os preços aparecem aqui lado a lado, com o menor preço de cada item em verde.</p>' : ''}
+    ${!temResposta ? '<div class="tip">⏳ <b>Aguardando as respostas dos fornecedores.</b> Assim que o primeiro responder (Importar ou Digitar, no quadro Fornecedores), aparecem aqui o <b>comparativo de preços</b>, as <b>quantidades das lojas</b>, o filtro <b>Mostrar itens de</b> e o botão <b>🗗 Janela flutuante</b>.</div>' : ''}
     ${temResposta ? `<div class="barra-comp small">
       ${escondidos ? `<span class="muted">${escondidos} fornecedor(es) ainda sem resposta não aparecem na tabela.</span> <button type="button" class="link" data-act="mostrarSemResposta">mostrar</button>` : ui.mostrarSemResposta && c.fornecedores.some(f => !Object.values(f.respostas || {}).some(o => o?.preco > 0)) ? '<button type="button" class="link" data-act="mostrarSemResposta">esconder quem não respondeu</button>' : ''}
       ${comp.escolhasManuais ? `<button class="sm" data-act="limparEscolhas">Desfazer as ${comp.escolhasManuais} escolha(s)</button>` : ''}
@@ -7047,6 +7047,29 @@ const formularios = {
 };
 
 /* ---------------- eventos (delegação) ---------------- */
+
+/*
+ * Clique que não se perde: ao sair de um campo (ex.: a marca), o sistema salva e redesenha a linha — se isso
+ * acontece entre apertar e soltar o mouse num botão, o botão é trocado por um igual e o clique sumia
+ * (era preciso clicar duas vezes). Aqui, se o botão apertado saiu da tela, o clique vai para o novo.
+ */
+let botaoApertado = null;
+function seletorDoBotao(b) {
+  return 'button' + Object.entries(b.dataset).filter(([k]) => k !== 'vigiado')
+    .map(([k, v]) => `[data-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}="${CSS.escape(v)}"]`).join('');
+}
+document.addEventListener('pointerdown', e => {
+  const b = e.button === 0 ? e.target.closest?.('button[data-act]') : null;
+  botaoApertado = b ? { b, sel: seletorDoBotao(b) } : null;
+}, true);
+document.addEventListener('pointerup', e => {
+  const a = botaoApertado;
+  botaoApertado = null;
+  if (!a || a.b.isConnected) return; // o clique normal acontece
+  const novo = document.querySelector(a.sel);
+  const sob = document.elementFromPoint(e.clientX, e.clientY);
+  if (novo && sob && novo.contains(sob)) setTimeout(() => novo.click(), 0);
+}, true);
 
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');

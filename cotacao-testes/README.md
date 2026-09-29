@@ -51,6 +51,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `44-tirar-repetido` | repetidos: "Tirar" no painel tira só aquele item e a tela não pula para a lista |
 | `45-teclado-nova` | nova cotação: setas e letras funcionam com o cursor fora da lista; atualizar a tela não tira o cursor da lista; Enter duas vezes grava no cadastro |
 | `46-titulo-cotacao` | título da cotação: editar pela lista e pelo topo da cotação |
+| `47-clique-unico` | um clique no ✕ basta mesmo editando a marca (botão redesenhado no meio do clique); cotação sem respostas explica onde aparecem comparativo e janela flutuante |
 
 ## Rodar
 
