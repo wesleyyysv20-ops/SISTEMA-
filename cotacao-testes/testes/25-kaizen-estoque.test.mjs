@@ -51,3 +51,21 @@ test('Kaizen ganhou: a soma das lojas não passa do estoque', async () => {
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('Rio Juntas: itens com marca GO ficam destacados (demoram mais para chegar); só para a Rio Juntas', async () => {
+  const s = await abrirCot([
+    forn('f1', 'RIO JUNTAS', { 0: { preco: 10, marca: 'GO' }, 1: { preco: 50, marca: 'sabo go' } }),
+    forn('f2', 'VIA PEÇAS', { 0: { preco: 12, marca: 'GO' }, 1: { preco: 30, marca: 'GOLD' } }),
+  ]);
+  const { page } = s;
+  const linhas = page.locator('.tab-comp tbody tr[data-comp-linha]');
+  // item 1: Rio Juntas GO ganha → destaque no preço e na coluna Fornecedor; o GO da Via Peças não conta
+  assert.equal(await linhas.nth(0).locator('td.demora').count(), 1);
+  assert.equal(await linhas.nth(0).locator('.chip-demora').count(), 2, 'no preço e na coluna Fornecedor');
+  // item 2: "SABO GO" da Rio Juntas também conta; "GOLD" não; quem ganha é a Via Peças (sem destaque na coluna Fornecedor)
+  assert.equal(await linhas.nth(1).locator('td.demora').count(), 1);
+  assert.equal(await linhas.nth(1).locator('.chip-demora').count(), 1);
+  assert.match(await page.locator('.pill-aviso.demora').innerText(), /2 item\(ns\) GO da Rio Juntas/);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
