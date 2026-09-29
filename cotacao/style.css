@@ -1116,3 +1116,33 @@ input.qtd-loja.no-limite, input.qtd-loja.no-limite.preenchida, input.qtd-loja.no
 /* aviso de versão nova */
 #faixaVersao { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 9000; display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-radius: 10px; background: var(--primary); color: #fff; font-weight: 600; box-shadow: 0 6px 24px rgba(0, 0, 0, .25); }
 #faixaVersao button { background: #fff; color: var(--primary); border-color: #fff; }
+
+/* janela flutuante: código e ganhador em destaque */
+.pip-corpo { padding: 10px 12px; }
+.pip-topo { margin-bottom: 6px; font-size: 14px; }
+.pip-topo button { padding: 3px 10px; min-width: 40px; }
+.pip-cod { padding: 6px 12px; }
+.pip-cod-txt { font-size: 26px; font-weight: 800; letter-spacing: .5px; overflow-wrap: anywhere; text-align: left; }
+.pip-desc { margin: 6px 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.pip-pedida { display: inline-block; margin-left: 4px; font-weight: 500; }
+.pip-pedida b { color: var(--primary-2); }
+.pip-ganhador { margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--ok-bg); border: 2px solid #3fb57a; }
+.pip-ganhador.vazio { background: var(--card-2); border-color: var(--line); text-align: center; }
+.pip-preco-linha { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.pip-preco { font-size: 34px; font-weight: 800; line-height: 1.05; color: #17804d; letter-spacing: -.5px; }
+.pip-marca { padding: 3px 10px; border-radius: 999px; background: #17804d; color: #fff; font-size: 15px; font-weight: 800; }
+.pip-marca.errada { background: var(--danger); }
+.pip-marca.conferir { background: #d98a1c; }
+.pip-forn { margin-top: 4px; font-size: 17px; font-weight: 800; color: var(--text); }
+.pip-tags { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; }
+.pip-tag { padding: 1px 7px; border-radius: 6px; background: var(--card); border: 1px solid var(--line); font-size: 11.5px; font-weight: 700; }
+.pip-tag.regra { color: #a15c00; }
+.pip-tag.estoque { color: var(--primary-2); }
+.pip-seg { margin-top: 4px; font-size: 12px; color: var(--muted); }
+.pip-qtds input.qtd-loja { font-size: 20px; padding: 6px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pip-preco { color: #5fd49a; } }
+:root[data-theme="dark"] .pip-preco { color: #5fd49a; }
+.pip-total { font-weight: 700; }
+.pip-total::before { content: "Total do item: "; font-weight: 500; color: var(--muted); }
+.pip-filtro { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; font-weight: 700; }
+.pip-filtro select { flex: 1; min-width: 0; font-size: 14px; padding: 4px 6px; }

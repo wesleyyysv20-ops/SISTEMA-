@@ -50,7 +50,7 @@ for (const modo of ['pip', 'popup']) {
     await page.click('[data-act=abrirPip]');
     const j = page.frameLocator('#janelaTeste');
     await j.locator('#pip .pip-cod').waitFor();
-    assert.match(n(await j.locator('#pip').innerText()), /Item #2 · 2 de 3[\s\S]*COD-B[\s\S]*PECA B[\s\S]*R\$ 20,00 · KAIZEN/);
+    assert.match(n(await j.locator('#pip').innerText()), /Item #2 · 2 de 3[\s\S]*COD-B[\s\S]*PECA B[\s\S]*R\$ 20,00\s*NGK\s*🏆 KAIZEN/);
     assert.equal(await j.locator('#pip .pip-ajuda b').count(), modo === 'pip' ? 0 : 1, 'no Firefox: dica do Win+Ctrl+T');
 
     // digita a quantidade: grava e aparece no comparativo
@@ -88,3 +88,42 @@ for (const modo of ['pip', 'popup']) {
     await s.fechar();
   });
 }
+
+test('janela flutuante: escolher o fornecedor mostra só os itens que ele ganhou (e o comparativo acompanha)', async () => {
+  const s = await abrir(base({
+    config: { loja: 'DISPPAR', lojas: [{ id: 'paranoa', nome: 'Paranoá', sigla: 'DPR' }, { id: 'sao-sebastiao', nome: 'São Sebastião', sigla: 'DSS' }] },
+    cotacoes: [cotacao('c1', '0036', '2026-09-29', 'aberta', ['A', 'B', 'C', 'D'].map(x => item('P' + x, 'PECA ' + x, 'SÓ NGK', { codigo: 'COD-' + x })), [
+      forn('f1', 'KAIZEN', { 0: { preco: 10, marca: 'NGK' }, 1: { preco: 30, marca: 'NGK' }, 2: { preco: 5, marca: 'NGK' }, 3: { preco: 9, marca: 'NGK' } }),
+      forn('f2', 'VIA PEÇAS', { 0: { preco: 12, marca: 'NGK' }, 1: { preco: 20, marca: 'NGK' }, 2: { preco: 6, marca: 'NGK' }, 3: { preco: 8, marca: 'NGK' } }),
+    ])],
+  }));
+  const { page } = s;
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'documentPictureInPicture', { configurable: true, value: { requestWindow: async () => {
+      const f = document.createElement('iframe'); f.id = 'janelaTeste'; f.style.cssText = 'position:fixed;right:0;bottom:0;width:420px;height:520px;z-index:99999;background:#fff'; document.body.appendChild(f);
+      const w = f.contentWindow; w.document.open(); w.document.write('<!doctype html><html><head></head><body></body></html>'); w.document.close(); return w;
+    } } });
+  });
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  await page.click('[data-act=abrirPip]');
+  const j = page.frameLocator('#janelaTeste');
+  await j.locator('#pipForn').waitFor();
+  assert.deepEqual((await j.locator('#pipForn option').allInnerTexts()).map(t => t.trim()), ['Todos os itens (4)', 'KAIZEN (2)', 'VIA PEÇAS (2)']);
+  await j.locator('#pipForn').selectOption({ label: 'VIA PEÇAS (2)' });
+  assert.match(n(await j.locator('.pip-topo').innerText()), /Item #2 · 1 de 2/);
+  assert.match(n(await j.locator('.pip-forn').innerText()), /VIA PEÇAS/);
+  assert.equal(await page.inputValue('#filtroVencedor'), 'f2', 'o comparativo mostra os mesmos itens');
+  assert.equal(await page.locator('.tab-comp tbody tr[data-comp-linha]:not([hidden])').count(), 2);
+  // o cursor fica na quantidade: Enter vai para o próximo item da Via Peças
+  await page.keyboard.type('3');
+  await page.keyboard.press('Enter');
+  assert.match(n(await j.locator('.pip-topo').innerText()), /Item #4 · 2 de 2/);
+  assert.equal(await page.evaluate(() => db.cotacoes[0].qtds[1].paranoa), 3);
+  // escolher no comparativo também muda a janela
+  await page.selectOption('#filtroVencedor', 'f1');
+  assert.equal(await j.locator('#pipForn').inputValue(), 'f1');
+  assert.match(n(await j.locator('.pip-topo').innerText()), /Item #1 · 1 de 2/);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

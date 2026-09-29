@@ -4053,17 +4053,32 @@ function aplicarFiltrosComp(c) {
   }
 }
 
-function seletorVencedor(c, comp) {
-  const atual = filtroVencedor(c);
+function opcoesVencedor(c, comp, atual = filtroVencedor(c)) {
   const cont = {};
   for (const l of comp.linhas) if (l.vencedor >= 0) cont[c.fornecedores[l.vencedor].fornecedorId] = (cont[c.fornecedores[l.vencedor].fornecedorId] || 0) + 1;
   const sem = comp.linhas.filter(l => l.vencedor < 0).length;
   const opcoes = ordemFornecedores(c).map(j => c.fornecedores[j]).filter(f => cont[f.fornecedorId])
     .map(f => `<option value="${esc(f.fornecedorId)}" ${atual === f.fornecedorId ? 'selected' : ''}>${esc(f.nome)} (${cont[f.fornecedorId]})</option>`).join('');
+  return `<option value="">Todos os itens (${comp.linhas.length})</option>${opcoes}
+      ${sem ? `<option value="__sem" ${atual === '__sem' ? 'selected' : ''}>Sem preço / aguardando (${sem})</option>` : ''}`;
+}
+
+/** Escolhe o fornecedor em "Mostrar itens de" (do comparativo ou da janela flutuante). */
+function definirFiltroVencedor(c, valor) {
+  ui.filtroVenc = { cotId: c.id, valor };
+  if (cotAtual() !== c) return;
+  const sel = $('#filtroVencedor');
+  if (sel && sel.value !== valor) sel.value = valor;
+  const bt = $('#pedidoFiltro');
+  if (bt) bt.outerHTML = botaoPedidoFiltro(c, valor);
+  aplicarFiltrosComp(c);
+}
+
+function seletorVencedor(c, comp) {
+  const atual = filtroVencedor(c);
   return `<label class="filtro-venc">Mostrar itens de:
     <select id="filtroVencedor" data-cot="${esc(c.id)}">
-      <option value="">Todos os itens (${comp.linhas.length})</option>${opcoes}
-      ${sem ? `<option value="__sem" ${atual === '__sem' ? 'selected' : ''}>Sem preço / aguardando (${sem})</option>` : ''}
+      ${opcoesVencedor(c, comp, atual)}
     </select></label>${botaoPedidoFiltro(c, atual)}<button type="button" class="sm btn-pip" data-act="abrirPip" title="Abre uma janela pequena com o item e as quantidades das lojas, para usar ao lado do DataCar (no Chrome/Edge ela fica sempre por cima). Enter vai para o próximo item.">🗗 Janela flutuante</button>`;
 }
 
@@ -7002,7 +7017,8 @@ const pipSuportado = () => typeof window.documentPictureInPicture?.requestWindow
 function itensPip(c) {
   const linhas = [...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]')];
   if (linhas.length && cotAtual() === c) return linhas.filter(tr => !tr.hidden).map(tr => +tr.dataset.compLinha);
-  return c.itens.map((it, i) => i);
+  const valor = filtroVencedor(c);
+  return comparar(c).linhas.filter(l => linhaNoFiltroVenc(c, l, valor)).map(l => l.i);
 }
 
 async function abrirPip() {
@@ -7014,10 +7030,10 @@ async function abrirPip() {
   try {
     if (pip.flutuante) {
       // Chrome/Edge: janela que fica sempre por cima das outras
-      w = await window.documentPictureInPicture.requestWindow({ width: 400, height: 400 });
+      w = await window.documentPictureInPicture.requestWindow({ width: 400, height: 500 });
     } else {
       // Firefox e outros: janelinha separada (o Windows pode deixá-la por cima: veja a dica no rodapé dela)
-      w = window.open('', 'cotacaoJanelaQtd', 'popup=yes,width=420,height=470');
+      w = window.open('', 'cotacaoJanelaQtd', 'popup=yes,width=420,height=560');
       if (!w) return avisar('O navegador bloqueou a janela. Permita janelas pop-up para este site (ícone na barra de endereço) e clique de novo.');
       w.document.open();
       w.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Quantidades</title></head><body></body></html>');
@@ -7067,6 +7083,15 @@ async function abrirPip() {
     else if (acao === 'copiar') copiarCodigoPip(b);
   });
   d.addEventListener('keydown', e => teclaPip(e, d));
+  d.addEventListener('change', e => {
+    if (e.target.id !== 'pipForn') return;
+    const cot = db.cotacoes.find(x => x.id === pip.cotId);
+    if (!cot) return;
+    definirFiltroVencedor(cot, e.target.value);
+    pip.i = itensPip(cot)[0] ?? pip.i;
+    pip.loja = 0;
+    desenharPip(true);
+  });
   w.addEventListener('pagehide', () => { if (pip.win === w) pip.win = null; });
   desenharPip(true);
   w.focus();
@@ -7075,6 +7100,7 @@ async function abrirPip() {
 function teclaPip(e, d) {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   const t = e.target;
+  if (t.tagName === 'SELECT') return; // escolhendo o fornecedor: as setas são da lista
   const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
   const k = campos.indexOf(t);
   if (k < 0) {
@@ -7151,6 +7177,7 @@ function desenharPip(focar) {
   const comp = comparar(c);
   const lista = itensPip(c);
   if (!c.itens[pip.i]) pip.i = lista[0] ?? 0;
+  if (lista.length && !lista.includes(pip.i)) pip.i = lista[0];
   const l = comp.linhas[pip.i];
   if (!l) { raiz.innerHTML = '<p class="muted">Nenhum item.</p>'; return; }
   const pos = lista.indexOf(pip.i);
@@ -7158,15 +7185,33 @@ function desenharPip(focar) {
   const marcaVenc = f?.respostas?.[l.i]?.marca;
   const LJ = lojas();
   raiz.innerHTML = `
+    <label class="pip-filtro"><span>Itens de</span><select id="pipForn" title="Mostrar só os itens que este fornecedor ganhou">${opcoesVencedor(c, comp)}</select></label>
     <div class="pip-topo">
       <button type="button" data-pip="ant" title="Item anterior (↑)" ${pos <= 0 ? 'disabled' : ''}>◀</button>
       <span>Item <b>#${l.i + 1}</b> <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
       <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>
     </div>
-    <button type="button" class="pip-cod" data-pip="copiar" title="Clique para copiar o código (e colar no DataCar)">${esc(l.it.codigo || '—')} <span class="pip-copiar">⧉ copiar</span></button>
-    <div class="pip-desc">${esc(l.it.descricao || '')}${l.it.marca ? ` <span class="marca-pedida">${esc(l.it.marca)}</span>` : ''}</div>
+    <button type="button" class="pip-cod" data-pip="copiar" title="Clique para copiar o código (e colar no DataCar)"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉ copiar</span></button>
+    <div class="pip-desc">${esc(l.it.descricao || '')}${l.it.marca ? ` <span class="pip-pedida" title="Marca pedida">pedida: <b>${esc(l.it.marca)}</b></span>` : ''}</div>
     ${l.duvida ? '<div><span class="chip-duvida">❓ em dúvida · fora do pedido</span></div>' : ''}
-    <div class="pip-venc">${f ? `<b>${fmtMoeda(l.preco)}</b> · ${esc(f.nome)}${marcaVenc ? ` · <span class="marca-venc">${esc(marcaVenc)}</span>` : ''}${l.estoque != null ? ` · <span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : ''}` : l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>
+    ${f ? (() => {
+      // ganhador em destaque: preço grande, a marca dele ao lado e o fornecedor embaixo
+      const st = l.marcas[l.vencedor];
+      const clsMarca = st === 'errada' ? ' errada' : st === 'duvida' ? ' conferir' : '';
+      const tags = [
+        l.manual ? '<span class="pip-tag">escolhido por você</span>' : '',
+        l.preferencia ? `<span class="pip-tag regra">⭐ regra dos 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',
+        entregaDemorada(f, f.respostas?.[l.i]) ? chipDemora : '',
+        l.estoque != null ? `<span class="pip-tag estoque">📦 estoque ${fmtNum(l.estoque)}</span>` : '',
+      ].filter(Boolean).join(' ');
+      const seg = l.segundoIdx >= 0 && l.segundoIdx !== l.vencedor ? `2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}${l.difSegundo != null ? ` (+${fmtPct(l.difSegundo)})` : ''}` : '';
+      return `<div class="pip-ganhador">
+        <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span>${marcaVenc ? `<span class="pip-marca${clsMarca}" title="Marca de ${esc(f.nome)}">${esc(marcaVenc)}</span>` : ''}</div>
+        <div class="pip-forn">🏆 ${esc(f.nome)}</div>
+        ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
+        ${seg ? `<div class="pip-seg">${seg}</div>` : ''}
+      </div>`;
+    })() : `<div class="pip-ganhador vazio">${l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>`}
     <div class="pip-qtds">${LJ.map(lj => {
       const v = c.qtds?.[l.i]?.[lj.id];
       return `<label><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
@@ -7362,10 +7407,9 @@ document.addEventListener('change', async e => {
   } else if (t.id === 'filtroVencedor') {
     const c = cotAtual();
     if (!c) return;
-    ui.filtroVenc = { cotId: c.id, valor: t.value };
-    const bt = $('#pedidoFiltro');
-    if (bt) bt.outerHTML = botaoPedidoFiltro(c, t.value);
-    aplicarFiltrosComp(c);
+    definirFiltroVencedor(c, t.value);
+    // a janela flutuante passa a mostrar os mesmos itens
+    if (pip.win && pip.cotId === c.id) { pip.i = itensPip(c)[0] ?? pip.i; desenharPip(false); }
     // já deixa o cursor na 1ª quantidade da 1ª loja dos itens mostrados
     const primeiro = [...document.querySelectorAll('[data-qtd-loja]')].find(x => !x.closest('tr').hidden);
     primeiro?.focus();
