@@ -1215,3 +1215,11 @@ input.qtd-loja.no-limite, input.qtd-loja.no-limite.preenchida, input.qtd-loja.no
 ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--muted) 65%, transparent); }
 .table-wrap { border-radius: var(--radius-sm); }
+/* janela flutuante: 2º lugar com cara de botão */
+.pip-segundo { flex-wrap: nowrap; justify-content: space-between; gap: 8px; border: 1.5px solid var(--input-line); background: var(--card); box-shadow: var(--shadow-btn); }
+.pip-segundo:hover { border-color: var(--primary-2); }
+.pip-seg-info { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
+.pip-seg-rot { flex-basis: 100%; font-size: 10.5px; text-transform: none; }
+.pip-seg-dif { margin-left: 0; }
+.pip-seg-acao { flex: none; padding: 3px 9px; border-radius: 999px; background: var(--primary); color: var(--on-primary); font-size: 12px; font-weight: 700; }
+.pip-segundo:hover .pip-seg-acao { background: var(--primary-2); }

@@ -186,7 +186,7 @@ test('janela flutuante: 2º lugar com marca e % mais caro; clicar escolhe ele (c
   await page.click('[data-act=abrirPip]');
   const j = page.frameLocator('#janelaTeste');
   const seg = j.locator('.pip-segundo');
-  assert.match(n(await seg.innerText()), /2º\s*R\$ 117,50\s*MAGNETI MARELLI\s*KAIZEN\s*\+17,5% que o 1º/);
+  assert.match(n(await seg.innerText()), /2º lugar\s*R\$ 117,50\s*MAGNETI MARELLI\s*KAIZEN\s*\+17,5% que o 1º\s*Escolher ›/);
   assert.match(await seg.getAttribute('title'), /\+17,5% mais caro que o 1º/);
   // clicar: pergunta na própria janela; Cancelar não muda
   await seg.click();
@@ -199,7 +199,7 @@ test('janela flutuante: 2º lugar com marca e % mais caro; clicar escolhe ele (c
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 1);
   // agora o ganhador é a KAIZEN e a alternativa é o mais barato
   assert.match(n(await j.locator('.pip-ganhador').innerText()), /R\$ 117,50\s*MAGNETI MARELLI\s*❓\s*🏆 KAIZEN[\s\S]*escolhido por você/);
-  assert.match(n(await seg.innerText()), /1º\s*R\$ 100,00\s*DELPHI\s*ENVIA PEÇAS\s*escolhido \+17,5%/);
+  assert.match(n(await seg.innerText()), /1º · menor preço\s*R\$ 100,00\s*DELPHI\s*ENVIA PEÇAS\s*escolhido \+17,5%/);
   assert.match(await seg.getAttribute('title'), /Menor preço[\s\S]*o escolhido está \+17,5% mais caro/);
   // o comparativo também mudou
   assert.match(await page.locator('.tab-comp tbody tr >> nth=0').innerText(), /escolhido/);
