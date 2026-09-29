@@ -50,8 +50,9 @@ test('3 pessoas ao mesmo tempo: quem digita não é interrompido, recebe os núm
   assert.equal(await A.page.evaluate(() => document.activeElement.dataset.i + '/' + document.activeElement.value), '0/50', 'o cursor e o número de A continuam lá');
   assert.match(await A.page.locator('#tot-2').innerText(), /R\$\s35,00/, 'total do item de B já atualizado');
 
-  // depois de uma pausa, a tela inteira se atualiza sem tirar o cursor
-  await A.page.waitForFunction(() => !document.querySelector('.tab-comp').dataset.marca, null, { timeout: 8000 });
+  // só mudaram quantidades: nem depois da pausa precisa redesenhar a tabela; o cursor continua
+  await A.page.waitForTimeout(3000);
+  assert.equal(await A.page.evaluate(() => document.querySelector('.tab-comp').dataset.marca), 'antes');
   assert.equal(await A.page.evaluate(() => document.activeElement.dataset.i + '/' + document.activeElement.value), '0/50');
   await esperarSalvo(A.page);
 
@@ -90,4 +91,31 @@ test('juntar: quantidades, respostas de fornecedores e dúvidas de duas pessoas 
   assert.deepEqual(r.extra.duvidas.map(d => d.id), ['d2', 'd3'], 'a resolvida por B sai; as novas dos dois ficam');
   assert.deepEqual(s.erros, []);
   await s.fechar();
+});
+
+test('outro computador só digitou quantidades: a tabela não é redesenhada (só os números e totais); outras mudanças redesenham', async () => {
+  const sb = supabaseFalso({
+    docs: new Map([
+      ['sistema/config', { loja: 'DISPPAR', lojas: [{ id: 'paranoa', nome: 'Paranoá', sigla: 'DPR' }, { id: 'sao-sebastiao', nome: 'São Sebastião', sigla: 'DSS' }] }],
+      ['cotacoes/c1', cotacao('c1', '0001', '2026-09-29', 'aberta', itens, [forn('f1', 'KAIZEN', { 0: { preco: 10, marca: 'NGK' }, 1: { preco: 20, marca: 'NGK' }, 2: { preco: 5, marca: 'NGK' } }), forn('f2', 'VIA PEÇAS', { 0: { preco: 12, marca: 'NGK' } })])],
+    ]),
+  });
+  const A = await computador(sb, 'wes@loja.com');
+  const B = await computador(sb, 'wes@loja.com');
+  for (const s of [A, B]) await s.page.evaluate(() => ir('cotacao', 'c1'));
+  await A.page.evaluate(() => { document.querySelector('.tab-comp').dataset.marca = 'antes'; });
+  // B digita uma quantidade
+  await B.page.fill('.tab-comp [data-qtd-loja=paranoa][data-i="1"]', '6');
+  await esperarSalvo(B.page);
+  await A.page.evaluate(() => puxarNuvem());
+  await A.page.waitForFunction(() => document.querySelector('.tab-comp [data-qtd-loja=paranoa][data-i="1"]').value === '6');
+  assert.equal(await A.page.evaluate(() => document.querySelector('.tab-comp').dataset.marca), 'antes', 'só quantidades: a tabela ficou');
+  assert.match(await A.page.locator('#tot-1').innerText(), /R\$\s120,00/);
+  // B escolhe outro fornecedor para o item 1: aí a tabela é redesenhada
+  await B.page.evaluate(() => { db.cotacoes[0].escolhas = { 0: 'f2' }; salvar(); render(); });
+  await esperarSalvo(B.page);
+  await A.page.evaluate(() => puxarNuvem());
+  await A.page.waitForFunction(() => !document.querySelector('.tab-comp').dataset.marca);
+  assert.equal(await A.page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 1);
+  for (const s of [A, B]) { assert.deepEqual(s.erros, []); await s.context.close(); }
 });

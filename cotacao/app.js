@@ -508,8 +508,25 @@ function atualizarQtdsTela() {
  * Redesenha sem atrapalhar quem está digitando. `caminhos`: documentos que mudaram em outro computador
  * (o que não aparece na tela aberta não redesenha nada).
  */
+/** A cotação sem as quantidades das lojas: se só as quantidades mudaram, não precisa redesenhar a tabela. */
+function assinaturaSemQtd(c) {
+  // tudo o que aparece na tela da cotação, menos as quantidades
+  const duvidas = db.duvidas.filter(d => d.origem?.cotId === c.id);
+  return JSON.stringify([c, db.config, db.fornecedores, duvidas], (k, v) => (k === 'qtds' ? undefined : v));
+}
+
 function renderSeguro(caminhos = null) {
   if (caminhos && !afetaTela(caminhos)) return;
+  // um colega digitou quantidades na cotação aberta: atualiza só os números e os totais (a tabela fica)
+  const t = ui.telaCot;
+  if (caminhos && t && rota().nome === 'cotacao' && rota().id === t.cotId) {
+    const c = db.cotacoes.find(x => x.id === t.cotId);
+    if (c && assinaturaSemQtd(c) === t.sig && document.getElementById('totalComp')) {
+      atualizarQtdsTela();
+      if (pip.win && !pip.win.closed && pip.cotId === c.id) desenharPip(false);
+      return;
+    }
+  }
   // janela de escolher arquivo aberta: redesenha depois (senão a escolha do arquivo se perde)
   if (ui.escolhendoArquivo && Date.now() - ui.escolhendoArquivo < 120000) {
     clearTimeout(ui.timerRenderAdiado);
@@ -1127,16 +1144,25 @@ function fmtData(iso) {
   return isNaN(d) ? '—' : d.toLocaleDateString('pt-BR');
 }
 
+const FMT_MOEDA = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtsPct = new Map();
+const fmtsNum = new Map();
 function fmtMoeda(v) {
-  return v == null || isNaN(v) ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  return v == null || isNaN(v) ? '—' : FMT_MOEDA.format(v);
 }
 
 function fmtPct(v, dec = 1) {
-  return v == null || isNaN(v) ? '—' : (v * 100).toLocaleString('pt-BR', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + '%';
+  if (v == null || isNaN(v)) return '—';
+  let f = fmtsPct.get(dec);
+  if (!f) fmtsPct.set(dec, (f = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: dec, maximumFractionDigits: dec })));
+  return f.format(v * 100) + '%';
 }
 
 function fmtNum(v, dec = 3) {
-  return v == null || isNaN(v) ? '' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: dec });
+  if (v == null || isNaN(v)) return '';
+  let f = fmtsNum.get(dec);
+  if (!f) fmtsNum.set(dec, (f = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: dec })));
+  return f.format(Number(v));
 }
 
 /** Aceita "1.234,56", "R$ 10,5", "10.5" ou número. */
@@ -4905,9 +4931,8 @@ function renderCotacao(id) {
             const pelaRegra = j === l.vencedor && l.preferencia;
             if (demora) { qtdDemora++; avisosLinha.add('demora'); }
             const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : '', l.recusas[j] && p != null ? 'recusada' : ''].filter(Boolean).join(' ');
-            const dica = p == null ? '' : pelaRegra ? `Regra da Comando: ganha estando ${fmtPct(l.preco / l.min - 1)} acima do menor preço (${fmtMoeda(l.min)}). Clique no preço do mais barato para escolher ele.` : l.recusas[j] ? 'Marca recusada: este preço não entra. Clique na marca para desfazer.' : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).') : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs} title="${esc([dica, extra].filter(Boolean).join('\n'))}">${p != null ? `<button type="button" class="rm-preco" data-act="removerPreco" data-i="${l.i}" data-f="${j}" title="Preço errado? Remover ou corrigir" aria-label="Remover ou corrigir este preço"></button>` : ''}${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
+            return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
           }).join('');
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
@@ -6067,6 +6092,8 @@ function render() {
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
   anunciarPresenca();
+  const cotTela = nome === 'cotacao' ? db.cotacoes.find(x => x.id === id) : null;
+  ui.telaCot = cotTela ? { cotId: cotTela.id, sig: assinaturaSemQtd(cotTela) } : null;
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
@@ -7047,6 +7074,37 @@ const formularios = {
     toast('Configurações salvas.');
   },
 };
+
+/** Dica de uma célula de preço do comparativo (montada quando o mouse para em cima). */
+function dicaPrecoComp(c, l, j) {
+  const p = l.precos[j];
+  if (p == null) return '';
+  const o = c.fornecedores[j].respostas?.[l.i];
+  const venc = j === l.vencedor && (c.fornecedores.length > 1 || l.manual);
+  const pelaRegra = j === l.vencedor && l.preferencia;
+  const dica = pelaRegra ? `Regra da Comando: ganha estando ${fmtPct(l.preco / l.min - 1)} acima do menor preço (${fmtMoeda(l.min)}). Clique no preço do mais barato para escolher ele.`
+    : l.recusas[j] ? 'Marca recusada: este preço não entra. Clique na marca para desfazer.'
+    : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).')
+    : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
+  const extra = [o?.prazo, o?.obs].filter(Boolean).join(' · ');
+  return [dica, extra].filter(Boolean).join('\n');
+}
+/** Botão ✕ (remover ou corrigir o preço): criado quando o mouse chega na célula (3 mil botões a menos por tela). */
+function botaoRmPreco(td) {
+  if (td.querySelector('.rm-preco')) return;
+  const [i, j] = td.dataset.dica.split(':');
+  td.insertAdjacentHTML('afterbegin', `<button type="button" class="rm-preco" data-act="removerPreco" data-i="${i}" data-f="${j}" title="Preço errado? Remover ou corrigir" aria-label="Remover ou corrigir este preço"></button>`);
+}
+document.addEventListener('mouseover', e => {
+  const alvo = e.target.closest?.('[data-dica]');
+  if (!alvo) return;
+  botaoRmPreco(alvo);
+  if (alvo.title) return;
+  const c = cotAtual();
+  const [i, j] = alvo.dataset.dica.split(':').map(Number);
+  const l = c && comparar(c).linhas[i];
+  if (l) alvo.title = dicaPrecoComp(c, l, j);
+});
 
 /* ---------------- busca rápida (Ctrl+K) e atalhos (?) ---------------- */
 

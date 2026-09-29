@@ -87,21 +87,23 @@ test('preço errado do fornecedor: remover ou corrigir pelo ✕ do preço', asyn
   const s = await abrirCot([forn('f1', 'KAIZEN', { 0: { preco: 2.5, marca: 'CAR80' } }), forn('f2', 'RMP', { 0: { preco: 30, marca: 'CAR80' } })]);
   const { page } = s;
   const venc = () => page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor);
+  // o ✕ aparece (e é criado) quando o mouse passa na célula do preço
+  const rmPreco = async k => { const td = page.locator('.tab-comp tbody tr').first().locator('td[data-dica]').nth(k); await td.hover(); await td.locator('.rm-preco').click(); };
   assert.equal(await venc(), 0, 'o preço errado (2,50) estava ganhando');
   // Cancelar não muda nada
-  await page.locator('.tab-comp tbody tr').first().locator('.rm-preco').first().click();
+  await rmPreco(0);
   assert.match(await page.locator('.dlg').innerText(), /KAIZEN: R\$\s2,50[\s\S]*Este preço está errado\?/);
   await page.click('.dlg button:text("Cancelar")');
   assert.equal(await venc(), 0);
   // corrigir o valor: guarda o original
-  await page.locator('.tab-comp tbody tr').first().locator('.rm-preco').first().click();
+  await rmPreco(0);
   await page.click('.dlg button:text("Corrigir o valor…")');
   await page.fill('#dlgCampo', '35,00');
   await page.keyboard.press('Enter');
   assert.deepEqual(await page.evaluate(() => { const o = db.cotacoes[0].fornecedores[0].respostas[0]; return [o.preco, o.precoOriginal]; }), [35, 2.5]);
   assert.equal(await venc(), 1, 'corrigido, a RMP passa a ganhar');
   // remover: fica como se não tivesse respondido
-  await page.locator('.tab-comp tbody tr').first().locator('.rm-preco').nth(1).click();
+  await rmPreco(1);
   await page.click('.dlg button.danger');
   assert.equal(await page.evaluate(() => db.cotacoes[0].fornecedores[1].respostas[0] ?? null), null);
   assert.equal(await venc(), 0);
