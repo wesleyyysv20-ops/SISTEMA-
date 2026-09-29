@@ -50,6 +50,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `43-escolher-arquivo` | escolher arquivo (DataCar): uma vez basta, mesmo se a tela for redesenhada com a janela do Windows aberta |
 | `44-tirar-repetido` | repetidos: "Tirar" no painel tira só aquele item e a tela não pula para a lista |
 | `45-teclado-nova` | nova cotação: setas e letras funcionam com o cursor fora da lista; atualizar a tela não tira o cursor da lista; Enter duas vezes grava no cadastro |
+| `46-titulo-cotacao` | título da cotação: editar pela lista e pelo topo da cotação |
 
 ## Rodar
 

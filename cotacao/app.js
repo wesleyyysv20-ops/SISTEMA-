@@ -3959,7 +3959,7 @@ function linhasCotacoes() {
     return `<tr>
       <td><a href="#" data-route="cotacao" data-id="${c.id}"><b>${esc(c.numero)}</b></a><span class="presenca-lista" data-cot="${esc(c.id)}">${htmlPresencaLista(c.id)}</span></td>
       <td>${fmtData(c.data)}</td>
-      <td>${esc(c.titulo || '—')}</td>
+      <td class="titulo-cot">${esc(c.titulo || '—')} <button type="button" class="link editar-titulo" data-act="editarTituloCot" data-id="${esc(c.id)}" title="Editar o título da cotação" aria-label="Editar o título da cotação nº ${esc(c.numero)}">✎</button></td>
       <td class="c">${c.itens.length}</td>
       <td class="c"><span class="badge ${resp === c.fornecedores.length && resp ? 'ok' : resp ? 'warn' : ''}">${resp}/${c.fornecedores.length}</span></td>
       <td class="r">${itensCotados ? fmtMoeda(melhor) : '—'}</td>
@@ -4952,7 +4952,7 @@ function renderCotacao(id) {
     <p class="muted" style="margin:0">Criada em ${fmtData(c.data)} · <label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"><input type="time" data-change="prazoHoraCot" value="${esc(c.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></label> · ${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
     ${prazo ? `<p class="aviso-prazo ${prazo.dias < 0 ? 'vencido' : ''}">⏰ O prazo de resposta ${textoPrazo(prazo.dias, c.prazoHora)} (${textoDataPrazo(c)}) e ${prazo.pendentes.length === 1 ? 'falta 1 fornecedor responder' : `faltam ${prazo.pendentes.length} fornecedores responderem`}: <b>${prazo.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</b>.
       <button class="sm" data-act="cobrarPendentes">📣 Cobrar quem falta</button></p>` : ''}
-    ${c.titulo ? `<p style="margin:6px 0 0"><b>${esc(c.titulo)}</b></p>` : ''}
+    <p class="titulo-cot" style="margin:6px 0 0">${c.titulo ? `<b>${esc(c.titulo)}</b>` : '<span class="muted">Sem título</span>'} <button type="button" class="link editar-titulo" data-act="editarTituloCot" data-id="${esc(c.id)}" title="Editar o título da cotação">✎ ${c.titulo ? 'Editar título' : 'Dar um título'}</button></p>
     ${c.obs ? `<p class="small" style="margin:6px 0 0;white-space:pre-wrap">${esc(c.obs)}</p>` : ''}
   </section>
 
@@ -6804,6 +6804,18 @@ const acoes = {
     toast(`Dados restaurados para ${quando}. O estado anterior ficou guardado nas cópias ("antes de restaurar").`, 7000);
   },
   sairSupabase: () => sairSupabase(),
+  editarTituloCot: async el => {
+    const c = db.cotacoes.find(x => x.id === el.dataset.id);
+    if (!c) return;
+    const novo = await pedirValor(`Título da cotação nº ${c.numero}:`, { valor: c.titulo || '', ok: 'Salvar título' });
+    if (novo == null) return;
+    const titulo = novo.trim();
+    if (titulo === (c.titulo || '')) return;
+    c.titulo = titulo;
+    salvar();
+    render();
+    toast(titulo ? `Título da cotação nº ${c.numero}: ${titulo}` : `Cotação nº ${c.numero} ficou sem título.`);
+  },
   atualizarSistema: () => atualizarSistema(),
   abrirPip: () => abrirPip(),
   senhaUsuario: async el => {
