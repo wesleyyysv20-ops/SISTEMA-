@@ -21,6 +21,8 @@ Sistema web de cotação de autopeças para duas lojas (Paranoá = DPR, São Seb
 - **Banco:** Supabase, projeto `cotacoes-disppar` (São Paulo). Login por e-mail e senha; só entram os e-mails da
   tabela `cotacao_usuarios`. Cadastro aberto desligado: administradores cadastram usuários em Configurações → Conta
   (funções do `cotacao-supabase/usuarios.sql`, já aplicado em 29/09/2026, junto com o tempo real).
+- **Backup automático:** `cotacao-supabase/backup.sql` (aplicado em 29/09/2026): pg_cron às 12h e 23h (Brasília) copia
+  todos os documentos para `cotacao_backups` se algo mudou; guarda 30 dias. Configurações → Backup lista, baixa e restaura.
 - **Publicar de novo** depois de mudar o sistema (na pasta do repositório, com `npx wrangler login` feito uma vez):
 
       npx wrangler pages deploy cotacao --project-name cotacoes-disppar --branch main

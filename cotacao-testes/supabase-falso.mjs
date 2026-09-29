@@ -11,6 +11,7 @@ export const URL_SB = 'https://teste-cotacao.supabase.co';
  */
 export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', docs = new Map(), admins = [] } = {}) {
   const senhas = new Map(); // senhas dos usuários cadastrados pelo administrador
+  const backups = []; // cópias do backup.sql (mais nova primeiro)
   const log = [];
   // versão (atualizado_em) de cada documento, como o gatilho do banco faz a cada gravação
   const vers = new Map();
@@ -65,6 +66,15 @@ export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', 
         if (b.p_admin && !admins.includes(b.p_email)) admins.push(b.p_email);
         return route.fulfill({ status: 204, headers: cors });
       }
+      if (fn === 'cotacao_backup_agora') {
+        backups.unshift({ id: backups.length + 1, criado_em: new Date(Date.UTC(2026, 8, 29, 12, backups.length)).toISOString(), motivo: `${b.p_motivo} (${email})`, dados: structuredClone(Object.fromEntries(docs)) });
+        return json(route, 200, backups[0].id);
+      }
+      if (fn === 'cotacao_listar_backups') return json(route, 200, backups.map(x => ({ id: x.id, criado_em: x.criado_em, motivo: x.motivo, documentos: Object.keys(x.dados).length, tamanho: JSON.stringify(x.dados).length })));
+      if (fn === 'cotacao_ler_backup') {
+        const x = backups.find(y => y.id === b.p_id);
+        return x ? json(route, 200, x.dados) : json(route, 400, { code: 'P0001', message: 'Backup não encontrado.' });
+      }
       if (fn === 'cotacao_definir_senha') { senhas.set(b.p_email, b.p_senha); return route.fulfill({ status: 204, headers: cors }); }
       if (fn === 'cotacao_remover_usuario') {
         if (b.p_email === email) return json(route, 400, { code: 'P0001', message: 'Você não pode tirar o seu próprio acesso.' });
@@ -107,7 +117,7 @@ export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', 
     }
     return json(route, 404, { message: 'não simulado: ' + url.pathname });
   };
-  return { handler, docs, vers, log, liberados, admins, senhas };
+  return { handler, docs, vers, log, liberados, admins, senhas, backups };
 }
 
 export async function abrirSite(sb, sufixo = '') {

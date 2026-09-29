@@ -44,6 +44,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `37-versao-nova` | versão nova publicada: a aba aberta mostra "Atualizar agora", salva o pendente e recarrega |
 | `38-tres-pessoas` | 3 pessoas ao mesmo tempo: quem digita não é interrompido e recebe os números dos outros; junção campo a campo (quantidades, respostas de fornecedores, dúvidas) |
 | `39-digitar-precos` | digitar preços do fornecedor: a tabela mostra o código de cada item |
+| `40-backup-nuvem` | backup no Supabase: administrador faz cópia, baixa e restaura (guardando o estado atual antes); quem não é administrador só vê o aviso |
 
 ## Rodar
 

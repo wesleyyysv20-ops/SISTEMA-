@@ -596,6 +596,11 @@ async function carregarNuvem() {
     nuvem.enviado[path] = JSON.stringify(data);
     if (versao) nuvem.versao[path] = versao;
   }
+  return estadoDeDocs(sis, prods, forns, cots);
+}
+
+/** Monta o estado do sistema a partir dos documentos ([caminho, dados] de cada coleção). */
+function estadoDeDocs(sis, prods, forns, cots) {
   // mesmo item em dois documentos (lotes antigos + baldes novos): fica um só (os baldes vêm primeiro)
   const semRepetir = lista => { const vistos = new Set(); return lista.filter(x => x && !vistos.has(x.id) && vistos.add(x.id)); };
   const emOrdem = docs => [...docs].sort((a, b) => (a[0].includes('/b-') ? 0 : 1) - (b[0].includes('/b-') ? 0 : 1));
@@ -620,6 +625,13 @@ function mostrarStatus(s) {
   const txt = { local: 'Salvo neste navegador', salvando: 'Salvando…', salvo: 'Salvo na nuvem', erro: 'Erro ao salvar', carregando: 'Carregando…' }[s];
   el.textContent = txt;
   el.dataset.s = s;
+}
+
+/** Estado a partir de um backup do Supabase ({ caminho: dados }). */
+function estadoDeBackup(mapa) {
+  const e = Object.entries(mapa || {});
+  const de = col => e.filter(([k]) => k.startsWith(col + '/'));
+  return estadoDeDocs(de('sistema'), de('produtos'), de('fornecedores'), de('cotacoes'));
 }
 
 /** Carrega os dados de um armazenamento na nuvem (página do Claude ou Supabase) e passa a sincronizar. */
@@ -5070,6 +5082,7 @@ function precisaBackup() {
 }
 
 function avisoBackup() {
+  if (nuvem.supabase) return ''; // no Supabase o backup é automático (duas vezes por dia)
   if (!precisaBackup()) return '';
   const d = diasSemBackup();
   return `<div class="aviso-backup" role="status">
@@ -5754,7 +5767,43 @@ function renderConfig() {
       <button class="danger" data-act="apagarTudo">Apagar todos os dados</button>
     </div>
     <p class="small muted" style="margin-top:10px">${db.produtos.length} produtos · ${db.fornecedores.length} fornecedores · ${db.cotacoes.length} cotações${db.ultimoBackup ? ` · último backup em ${fmtData(db.ultimoBackup)}` : ''}</p>
+    ${renderBackupsNuvem()}
   </section>`;
+}
+
+/** Cópias automáticas no Supabase (backup.sql): lista, fazer agora, baixar e restaurar (administradores). */
+function renderBackupsNuvem() {
+  if (!nuvem.supabase) return '';
+  const intro = `<h3 style="margin:18px 0 4px">☁️ Cópias automáticas</h3>
+    <p class="muted small" style="margin-top:0">O Supabase guarda sozinho uma cópia de todos os dados <b>duas vezes por dia</b> (12h e 23h), sempre que algo mudou. As cópias ficam <b>30 dias</b>.${nuvem.admin ? '' : ' Um administrador pode baixar ou restaurar uma cópia.'}</p>`;
+  if (!nuvem.admin) return intro;
+  const B = ui.backupsNuvem;
+  if (!B) { ui.backupsNuvem = { carregando: true }; carregarBackupsNuvem().then(() => { if (rota().nome === 'config') render(); }); }
+  const fmtQuando = d => new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const fmtTam = b => (b >= 1048576 ? `${(b / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+  return `${intro}
+    <div class="row" style="margin-bottom:8px"><button class="sm primary" data-act="backupNuvemAgora">☁️ Fazer uma cópia agora</button></div>
+    ${!B || B.carregando ? '<p class="muted small">Carregando as cópias…</p>' : B.erro ? `<p class="aviso-erro small">Não consegui ler as cópias: ${esc(B.erro)}</p>` : !B.lista.length ? '<p class="muted small">Nenhuma cópia ainda.</p>' : `<div class="table-wrap"><table>
+      <thead><tr><th>Quando</th><th>Motivo</th><th class="r">Documentos</th><th class="r">Tamanho</th><th></th></tr></thead>
+      <tbody>${B.lista.map((b, k) => `<tr>
+        <td><b>${esc(fmtQuando(b.criado_em))}</b>${k === 0 ? ' <span class="badge ok">mais nova</span>' : ''}</td>
+        <td class="small">${esc(b.motivo)}</td>
+        <td class="r">${fmtNum(b.documentos)}</td>
+        <td class="r small">${esc(fmtTam(b.tamanho))}</td>
+        <td class="actions-cell"><button class="sm" data-act="baixarBackupNuvem" data-id="${b.id}">⬇ Baixar</button> <button class="sm danger" data-act="restaurarBackupNuvem" data-id="${b.id}">↺ Restaurar</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
+}
+
+async function carregarBackupsNuvem() {
+  const { data, error } = await nuvem.supabase.rpc('cotacao_listar_backups');
+  ui.backupsNuvem = error ? { erro: error.message } : { lista: data || [] };
+}
+
+async function lerBackupNuvem(id) {
+  const { data, error } = await nuvem.supabase.rpc('cotacao_ler_backup', { p_id: Number(id) });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 /* ---------------- roteamento ---------------- */
@@ -6528,6 +6577,50 @@ const acoes = {
   },
 
   backup: () => fazerBackup(),
+  backupNuvemAgora: async el => {
+    el.disabled = true;
+    const { error } = await nuvem.supabase.rpc('cotacao_backup_agora', { p_motivo: 'manual' });
+    el.disabled = false;
+    if (error) return avisar('Não consegui fazer a cópia: ' + error.message);
+    await carregarBackupsNuvem();
+    render();
+    toast('Cópia feita no Supabase.');
+  },
+  baixarBackupNuvem: async el => {
+    try {
+      const b = ui.backupsNuvem?.lista?.find(x => String(x.id) === el.dataset.id);
+      const estado = estadoDeBackup(await lerBackupNuvem(el.dataset.id));
+      const quando = b ? new Date(b.criado_em) : new Date();
+      const nome = `backup_cotacoes_${quando.getFullYear()}-${pad(quando.getMonth() + 1)}-${pad(quando.getDate())}_${pad(quando.getHours())}h${pad(quando.getMinutes())}.json`;
+      await salvarComo(nome, async () => new Blob([JSON.stringify(estado, null, 2)], { type: 'application/json' }),
+        { description: 'Backup do sistema', accept: { 'application/json': ['.json'] } });
+    } catch (e) {
+      avisar('Não consegui baixar a cópia: ' + e.message);
+    }
+  },
+  restaurarBackupNuvem: async el => {
+    const b = ui.backupsNuvem?.lista?.find(x => String(x.id) === el.dataset.id);
+    const quando = b ? new Date(b.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    let estado;
+    try {
+      estado = estadoDeBackup(await lerBackupNuvem(el.dataset.id));
+    } catch (e) {
+      return avisar('Não consegui ler a cópia: ' + e.message);
+    }
+    if (!(await confirmar(`Voltar os dados para a cópia de ${quando}?\n\n${estado.produtos.length.toLocaleString('pt-BR')} produtos, ${estado.fornecedores.length} fornecedores, ${estado.cotacoes.length} cotações.\n\nTudo o que foi feito depois disso será substituído, em todos os computadores. Antes, o sistema guarda uma cópia do estado atual (dá para desfazer).`, 'Restaurar esta cópia'))) return;
+    // cópia de segurança do estado atual antes de voltar
+    if (nuvem.timer || nuvem.gravando) await sincronizar();
+    const { error } = await nuvem.supabase.rpc('cotacao_backup_agora', { p_motivo: 'antes de restaurar' });
+    if (error) return avisar('Não consegui guardar o estado atual antes de restaurar, então não restaurei nada: ' + error.message);
+    db = estado;
+    cacheBusca = null;
+    versaoDados++;
+    salvar();
+    await sincronizar();
+    await carregarBackupsNuvem();
+    render();
+    toast(`Dados restaurados para ${quando}. O estado anterior ficou guardado nas cópias ("antes de restaurar").`, 7000);
+  },
   sairSupabase: () => sairSupabase(),
   atualizarSistema: () => atualizarSistema(),
   abrirPip: () => abrirPip(),

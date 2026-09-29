@@ -38,6 +38,9 @@ Você só precisa, uma vez:
    ele cria o cadastro de usuários pelo próprio sistema, marca você como administrador e liga o
    tempo real (o que um computador salva aparece na hora nos outros).
 
+7. Rode [`backup.sql`](backup.sql): cópia automática de todos os dados duas vezes por dia (12h e 23h),
+   guardada por 30 dias. Administradores baixam ou restauram as cópias em Configurações → Backup.
+
 Para liberar outra pessoa depois: no sistema, **Configurações → Conta → Usuários → + Adicionar usuário**
 (e-mail e senha inicial; a conta já nasce confirmada). Lá também dá para trocar a senha e tirar o acesso.
 
