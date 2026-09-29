@@ -1090,3 +1090,20 @@ input.qtd-loja.zerada { color: var(--muted); background: var(--card-2); text-dec
 .minha-senha form { margin-top: 8px; }
 .form-usuario { margin-top: 12px; }
 .aviso-erro { color: var(--danger); }
+
+/* janela flutuante (Picture-in-Picture) */
+.pip-corpo { margin: 0; padding: 12px 14px; background: var(--card); color: var(--text); font-size: 15px; }
+.pip-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.pip-topo button { min-width: 44px; justify-content: center; }
+.pip-cod { display: flex; width: 100%; justify-content: space-between; align-items: center; font-size: 22px; font-weight: 800; letter-spacing: .3px; padding: 6px 10px; background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; cursor: copy; color: var(--text); }
+.pip-cod .pip-copiar { font-size: 12px; font-weight: 600; color: var(--primary-2); }
+.pip-cod.copiado .pip-copiar::after { content: ' ✓'; }
+.pip-cod.copiado { border-color: #3fb57a; }
+.pip-desc { margin: 8px 0 4px; font-weight: 600; line-height: 1.3; }
+.pip-venc { margin: 4px 0 10px; font-size: 14px; }
+.pip-qtds { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.pip-qtds label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 700; }
+.pip-qtds input.qtd-loja { width: 100%; font-size: 22px; padding: 8px; text-align: center; }
+.pip-total { margin-top: 8px; font-size: 14px; }
+.pip-ajuda { margin: 8px 0 0; font-size: 11px; color: var(--muted); }
+.btn-pip { margin-left: 8px; }

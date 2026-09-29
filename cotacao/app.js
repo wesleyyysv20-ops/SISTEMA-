@@ -4021,7 +4021,7 @@ function seletorVencedor(c, comp) {
     <select id="filtroVencedor" data-cot="${esc(c.id)}">
       <option value="">Todos os itens (${comp.linhas.length})</option>${opcoes}
       ${sem ? `<option value="__sem" ${atual === '__sem' ? 'selected' : ''}>Sem preço / aguardando (${sem})</option>` : ''}
-    </select></label>${botaoPedidoFiltro(c, atual)}`;
+    </select></label>${botaoPedidoFiltro(c, atual)}<button type="button" class="sm btn-pip" data-act="abrirPip" title="Abre uma janela pequena com o item e as quantidades das lojas, para usar ao lado do DataCar (no Chrome/Edge ela fica sempre por cima). Enter vai para o próximo item.">🗗 Janela flutuante</button>`;
 }
 
 /**
@@ -5658,6 +5658,7 @@ function render() {
   }
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
+  if (pip.win) desenharPip(false);
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
@@ -6374,6 +6375,7 @@ const acoes = {
 
   backup: () => fazerBackup(),
   sairSupabase: () => sairSupabase(),
+  abrirPip: () => abrirPip(),
   senhaUsuario: async el => {
     const email = el.dataset.email;
     const senha = await pedirValor(`Nova senha para ${email} (mínimo 6 caracteres). Passe a senha para a pessoa; ela pode trocar depois.`, { ok: 'Trocar a senha' });
@@ -6640,33 +6642,7 @@ document.addEventListener('input', e => {
     return;
   }
   if (t.dataset.qtdLoja != null) {
-    // quantidade por loja no comparativo
-    const c = cotAtual();
-    if (!c) return;
-    const i = +t.dataset.i;
-    let v = Math.max(0, parseNum(t.value) || 0);
-    t.classList.toggle('preenchida', v > 0);
-    t.classList.toggle('zerada', t.value.trim() !== '' && v === 0);
-    const l = comparar(c).linhas[i];
-    if (l?.estoque != null) {
-      // o vencedor informou o estoque (Kaizen): a soma das lojas não passa dele
-      const outras = lojas().filter(lj => lj.id !== t.dataset.qtdLoja).reduce((soma, lj) => soma + qtdLoja(c, i, lj.id), 0);
-      const max = Math.max(0, l.estoque - outras);
-      if (v > max) {
-        v = max;
-        t.value = max ? String(max) : '';
-        t.classList.add('no-limite');
-        setTimeout(() => t.classList.remove('no-limite'), 1500);
-        toast(`${c.fornecedores[l.vencedor].nome} tem só ${fmtNum(l.estoque)} em estoque deste item${outras ? ` (${fmtNum(outras)} já na outra loja)` : ''}. Quantidade ajustada para ${fmtNum(max)}.`, 5000);
-      }
-    }
-    c.qtds = { ...(c.qtds || {}) };
-    const o = { ...(c.qtds[i] || {}) };
-    // 0 digitado = não comprar nesta loja (fica gravado); campo vazio = ainda não informado
-    if (t.value.trim() === '') delete o[t.dataset.qtdLoja]; else o[t.dataset.qtdLoja] = v;
-    if (Object.keys(o).length) c.qtds[i] = o; else delete c.qtds[i];
-    salvar();
-    atualizarTotaisComp(c, i);
+    aplicarQtdLoja(t, cotAtual());
     return;
   }
   if (t.dataset.draft) {
@@ -6924,6 +6900,251 @@ document.addEventListener('mouseout', e => {
   }
 });
 
+/**
+ * Quantidade digitada numa loja (campo do comparativo ou da janela flutuante): respeita o estoque
+ * do vencedor (Kaizen), grava (0 = não comprar; vazio = não informado) e atualiza os totais.
+ */
+function aplicarQtdLoja(t, c) {
+  if (!c) return;
+  const i = +t.dataset.i;
+  let v = Math.max(0, parseNum(t.value) || 0);
+  t.classList.toggle('preenchida', v > 0);
+  t.classList.toggle('zerada', t.value.trim() !== '' && v === 0);
+  const l = comparar(c).linhas[i];
+  if (l?.estoque != null) {
+    // o vencedor informou o estoque (Kaizen): a soma das lojas não passa dele
+    const outras = lojas().filter(lj => lj.id !== t.dataset.qtdLoja).reduce((soma, lj) => soma + qtdLoja(c, i, lj.id), 0);
+    const max = Math.max(0, l.estoque - outras);
+    if (v > max) {
+      v = max;
+      t.value = max ? String(max) : '';
+      t.classList.add('no-limite');
+      setTimeout(() => t.classList.remove('no-limite'), 1500);
+      toast(`${c.fornecedores[l.vencedor].nome} tem só ${fmtNum(l.estoque)} em estoque deste item${outras ? ` (${fmtNum(outras)} já na outra loja)` : ''}. Quantidade ajustada para ${fmtNum(max)}.`, 5000);
+    }
+  }
+  c.qtds = { ...(c.qtds || {}) };
+  const o = { ...(c.qtds[i] || {}) };
+  // 0 digitado = não comprar nesta loja (fica gravado); campo vazio = ainda não informado
+  if (t.value.trim() === '') delete o[t.dataset.qtdLoja]; else o[t.dataset.qtdLoja] = v;
+  if (Object.keys(o).length) c.qtds[i] = o; else delete c.qtds[i];
+  salvar();
+  atualizarTotaisComp(c, i);
+  espelharQtd(t, c, i);
+}
+
+/* ---------------- janela flutuante (Picture-in-Picture) ----------------
+ * Para quem usa uma tela só, dividida com o DataCar: uma janelinha sempre por cima das outras
+ * com o item atual e as quantidades das lojas. Chrome/Edge 116+ (documentPictureInPicture). */
+
+const pip = { win: null, cotId: null, i: null, loja: 0, flutuante: false };
+window.addEventListener('pagehide', () => { try { pip.win?.close(); } catch (e) { /* já fechada */ } });
+const pipSuportado = () => typeof window.documentPictureInPicture?.requestWindow === 'function';
+
+/** Itens na ordem do comparativo, respeitando os filtros ("Mostrar itens de", etiquetas de aviso). */
+function itensPip(c) {
+  const linhas = [...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]')];
+  if (linhas.length && cotAtual() === c) return linhas.filter(tr => !tr.hidden).map(tr => +tr.dataset.compLinha);
+  return c.itens.map((it, i) => i);
+}
+
+async function abrirPip() {
+  const c = cotAtual();
+  if (!c) return;
+  if (pip.win && !pip.win.closed) { pip.cotId = c.id; desenharPip(true); pip.win.focus(); return; }
+  let w = null;
+  pip.flutuante = pipSuportado();
+  try {
+    if (pip.flutuante) {
+      // Chrome/Edge: janela que fica sempre por cima das outras
+      w = await window.documentPictureInPicture.requestWindow({ width: 400, height: 400 });
+    } else {
+      // Firefox e outros: janelinha separada (o Windows pode deixá-la por cima: veja a dica no rodapé dela)
+      w = window.open('', 'cotacaoJanelaQtd', 'popup=yes,width=420,height=470');
+      if (!w) return avisar('O navegador bloqueou a janela. Permita janelas pop-up para este site (ícone na barra de endereço) e clique de novo.');
+      w.document.open();
+      w.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Quantidades</title></head><body></body></html>');
+      w.document.close();
+    }
+  } catch (e) {
+    console.error(e);
+    return avisar('Não consegui abrir a janela flutuante: ' + (e.message || e));
+  }
+  pip.win = w;
+  pip.cotId = c.id;
+  const lista = itensPip(c);
+  pip.i = ui.linhaComp?.cotId === c.id && lista.includes(ui.linhaComp.i) ? ui.linhaComp.i : lista[0] ?? 0;
+  const d = w.document;
+  // mesmo visual do sistema
+  for (const ss of document.styleSheets) {
+    try {
+      const st = d.createElement('style');
+      st.textContent = [...ss.cssRules].map(r => r.cssText).join('\n');
+      d.head.appendChild(st);
+    } catch (e) {
+      if (ss.href) { const l = d.createElement('link'); l.rel = 'stylesheet'; l.href = ss.href; d.head.appendChild(l); }
+    }
+  }
+  if (document.documentElement.dataset.theme) d.documentElement.dataset.theme = document.documentElement.dataset.theme;
+  d.title = `Quantidades · cotação nº ${c.numero || ''}`;
+  d.body.className = 'pip-corpo';
+  d.body.innerHTML = '<div id="pip"></div>';
+  d.addEventListener('input', e => {
+    const t = e.target;
+    if (t.dataset.qtdLoja == null) return;
+    const cot = db.cotacoes.find(x => x.id === pip.cotId);
+    aplicarQtdLoja(t, cot);
+  });
+  d.addEventListener('focusin', e => {
+    const t = e.target;
+    if (t.dataset?.qtdLoja == null) return;
+    t.select();
+    pip.loja = Math.max(0, lojas().findIndex(lj => lj.id === t.dataset.qtdLoja));
+  });
+  d.addEventListener('click', e => {
+    const b = e.target.closest('[data-pip]');
+    if (!b) return;
+    const acao = b.dataset.pip;
+    if (acao === 'ant') irPip(-1);
+    else if (acao === 'prox') irPip(1);
+    else if (acao === 'copiar') copiarCodigoPip(b);
+  });
+  d.addEventListener('keydown', e => teclaPip(e, d));
+  w.addEventListener('pagehide', () => { if (pip.win === w) pip.win = null; });
+  desenharPip(true);
+  w.focus();
+}
+
+function teclaPip(e, d) {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const t = e.target;
+  const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
+  const k = campos.indexOf(t);
+  if (k < 0) {
+    // fora dos campos: número ou seta leva para a quantidade
+    const ehNumero = /^[0-9]$/.test(e.key);
+    if (!ehNumero && !['Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    if (t.closest?.('button') && e.key === 'Enter') return;
+    const campo = campos[Math.min(pip.loja, campos.length - 1)];
+    if (!campo) return;
+    e.preventDefault();
+    campo.focus();
+    if (ehNumero) { campo.value = e.key; campo.setSelectionRange(1, 1); campo.dispatchEvent(new Event('input', { bubbles: true })); }
+    return;
+  }
+  const mover = (delta, loja) => { e.preventDefault(); pip.loja = loja; irPip(delta); };
+  if (e.key === 'Enter' || e.key === 'ArrowDown') mover(1, k);
+  else if (e.key === 'ArrowUp') mover(-1, k);
+  else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    e.preventDefault();
+    campos[k + (e.key === 'ArrowRight' ? 1 : -1)]?.focus();
+  } else if (e.key === 'Tab') {
+    // Tab: próxima loja; na última, o próximo item (Shift+Tab volta)
+    const prox = k + (e.shiftKey ? -1 : 1);
+    if (campos[prox]) { e.preventDefault(); campos[prox].focus(); }
+    else mover(e.shiftKey ? -1 : 1, e.shiftKey ? campos.length - 1 : 0);
+  }
+}
+
+/** Vai para outro item (delta: +1 próximo, -1 anterior) e marca a mesma linha no comparativo. */
+function irPip(delta) {
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  if (!c) return;
+  const lista = itensPip(c);
+  const pos = lista.indexOf(pip.i);
+  const novo = lista[pos < 0 ? 0 : pos + delta];
+  if (novo == null) { desenharPip(true); return; } // já é o primeiro/último
+  pip.i = novo;
+  // o comparativo acompanha (sem tirar o cursor de lá)
+  if (cotAtual() === c) {
+    ui.linhaComp = { cotId: c.id, i: novo };
+    const tr = document.querySelector(`.tab-comp tr[data-comp-linha="${novo}"]`);
+    document.querySelectorAll('tr.linha-atual').forEach(x => { if (x !== tr) x.classList.remove('linha-atual'); });
+    if (tr) { tr.classList.add('linha-atual'); tr.scrollIntoView({ block: 'center' }); }
+  }
+  desenharPip(true);
+}
+
+function copiarCodigoPip(b) {
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  const cod = c?.itens[pip.i]?.codigo || '';
+  if (!cod) return;
+  const feito = () => { b.classList.add('copiado'); setTimeout(() => b.classList.remove('copiado'), 1200); };
+  (pip.win.navigator.clipboard || navigator.clipboard).writeText(cod).then(feito, () => {
+    const ta = pip.win.document.createElement('textarea');
+    ta.value = cod;
+    pip.win.document.body.appendChild(ta);
+    ta.select();
+    pip.win.document.execCommand('copy');
+    ta.remove();
+    feito();
+  });
+}
+
+/** Desenha a janela flutuante. `focar`: põe o cursor na quantidade (senão só mantém onde estava). */
+function desenharPip(focar) {
+  if (!pip.win || pip.win.closed) { pip.win = null; return; }
+  const d = pip.win.document;
+  const raiz = d.getElementById('pip');
+  if (!raiz) return;
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  if (!c) { raiz.innerHTML = '<p class="muted">Esta cotação não existe mais. Feche a janela.</p>'; return; }
+  const ativo = d.activeElement?.dataset?.qtdLoja != null ? d.activeElement : null;
+  const sel = ativo ? [ativo.dataset.qtdLoja, ativo.selectionStart, ativo.selectionEnd] : null;
+  const comp = comparar(c);
+  const lista = itensPip(c);
+  if (!c.itens[pip.i]) pip.i = lista[0] ?? 0;
+  const l = comp.linhas[pip.i];
+  if (!l) { raiz.innerHTML = '<p class="muted">Nenhum item.</p>'; return; }
+  const pos = lista.indexOf(pip.i);
+  const f = l.vencedor >= 0 ? c.fornecedores[l.vencedor] : null;
+  const marcaVenc = f?.respostas?.[l.i]?.marca;
+  const LJ = lojas();
+  raiz.innerHTML = `
+    <div class="pip-topo">
+      <button type="button" data-pip="ant" title="Item anterior (↑)" ${pos <= 0 ? 'disabled' : ''}>◀</button>
+      <span>Item <b>#${l.i + 1}</b> <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
+      <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>
+    </div>
+    <button type="button" class="pip-cod" data-pip="copiar" title="Clique para copiar o código (e colar no DataCar)">${esc(l.it.codigo || '—')} <span class="pip-copiar">⧉ copiar</span></button>
+    <div class="pip-desc">${esc(l.it.descricao || '')}${l.it.marca ? ` <span class="marca-pedida">${esc(l.it.marca)}</span>` : ''}</div>
+    ${l.duvida ? '<div><span class="chip-duvida">❓ em dúvida · fora do pedido</span></div>' : ''}
+    <div class="pip-venc">${f ? `<b>${fmtMoeda(l.preco)}</b> · ${esc(f.nome)}${marcaVenc ? ` · <span class="marca-venc">${esc(marcaVenc)}</span>` : ''}${l.estoque != null ? ` · <span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : ''}` : l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>
+    <div class="pip-qtds">${LJ.map(lj => {
+      const v = c.qtds?.[l.i]?.[lj.id];
+      return `<label><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
+    }).join('')}</div>
+    <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
+    <p class="pip-ajuda">Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja${pip.flutuante ? '' : '<br>Para deixar esta janela sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)'}</p>`;
+  const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
+  if (sel) {
+    const el = campos.find(x => x.dataset.qtdLoja === sel[0]);
+    if (el) { el.focus(); try { el.setSelectionRange(sel[1], sel[2]); } catch (e) { /* sem seleção */ } }
+  } else if (focar) {
+    const el = campos[Math.min(pip.loja, campos.length - 1)];
+    if (el) { el.focus(); el.select(); }
+  }
+}
+
+/** Mesma quantidade nos dois lugares (comparativo e janela flutuante) sem redesenhar tudo. */
+function espelharQtd(t, c, i) {
+  if (pip.win?.closed) pip.win = null;
+  const outros = [document];
+  if (pip.win) outros.push(pip.win.document);
+  for (const d of outros) {
+    const el = d.querySelector(`input[data-qtd-loja="${CSS.escape(t.dataset.qtdLoja)}"][data-i="${i}"]`);
+    if (el && el !== t) {
+      el.value = t.value;
+      el.classList.toggle('preenchida', t.classList.contains('preenchida'));
+      el.classList.toggle('zerada', t.classList.contains('zerada'));
+    }
+  }
+  if (pip.win && pip.cotId === c.id && pip.i === i) {
+    const tot = pip.win.document.getElementById('pipTotal');
+    if (tot) tot.innerHTML = celTotal(comparar(c).linhas[i]);
+  }
+}
+
 /** Linha atual do comparativo: fica marcada para o olho não se perder (clique ou foco numa quantidade). */
 function marcarLinhaComp(tr) {
   const c = cotAtual();
@@ -6931,6 +7152,7 @@ function marcarLinhaComp(tr) {
   ui.linhaComp = { cotId: c.id, i: +tr.dataset.compLinha };
   document.querySelectorAll('tr.linha-atual').forEach(x => { if (x !== tr) x.classList.remove('linha-atual'); });
   tr.classList.add('linha-atual');
+  if (pip.win && pip.cotId === c.id && pip.i !== ui.linhaComp.i) { pip.i = ui.linhaComp.i; desenharPip(false); }
 }
 document.addEventListener('click', e => marcarLinhaComp(e.target.closest?.('[data-comp-linha]')), true);
 document.addEventListener('focusin', e => marcarLinhaComp(e.target.closest?.('[data-comp-linha]')));
