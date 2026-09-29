@@ -23,6 +23,7 @@ Sistema web de cotação de autopeças para duas lojas (Paranoá = DPR, São Seb
   (funções do `cotacao-supabase/usuarios.sql`, já aplicado em 29/09/2026, junto com o tempo real).
 - **Backup automático:** `cotacao-supabase/backup.sql` (aplicado em 29/09/2026): pg_cron às 12h e 23h (Brasília) copia
   todos os documentos para `cotacao_backups` se algo mudou; guarda 30 dias. Configurações → Backup lista, baixa e restaura.
+- **Presença:** `cotacao-supabase/presenca.sql` (aplicado em 29/09/2026): canal privado `cotacao-presenca` do Realtime.
 - **Publicar de novo** depois de mudar o sistema (na pasta do repositório, com `npx wrangler login` feito uma vez):
 
       npx wrangler pages deploy cotacao --project-name cotacoes-disppar --branch main

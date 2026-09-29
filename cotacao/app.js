@@ -819,8 +819,8 @@ async function iniciarSupabase(cfg) {
     for (;;) {
       if (!session) session = await telaLogin(cli);
       // só entra quem estiver na lista de acesso (tabela cotacao_usuarios)
-      const { data, error } = await cli.from('cotacao_usuarios').select('email').limit(1);
-      if (!error && data.length) break;
+      const { data, error } = await cli.from('cotacao_usuarios').select('*').limit(1);
+      if (!error && data.length) { nuvem.nome = data[0].nome || ''; break; }
       await cli.auth.signOut();
       session = null;
       mensagemLogin(error ? `Erro ao verificar o acesso: ${error.message}` : 'Este e-mail não tem acesso ao sistema. Peça para liberar em "cotacao_usuarios".');
@@ -829,6 +829,7 @@ async function iniciarSupabase(cfg) {
     fecharLogin();
     await usarNuvem(adaptadorSupabase(cli));
     assinarMudancas(cli);
+    iniciarPresenca(cli);
     verSeAdmin(cli);
     render();
   } catch (e) {
@@ -939,6 +940,92 @@ function assinarMudancas(cli) {
       .subscribe(status => { nuvem.tempoReal = status === 'SUBSCRIBED'; });
   } catch (e) {
     console.error(e); // sem tempo real: continua verificando a cada minuto
+  }
+}
+
+/* ---------------- quem está nesta cotação agora (presença) ----------------
+ * Canal privado do Supabase (só quem está logado e liberado entra: presenca.sql). Cada computador
+ * anuncia onde está (tela, cotação e o fornecedor escolhido em "Mostrar itens de"). */
+
+const presenca = { canal: null, pronto: false, chave: null, outros: [], ultimo: '', timer: null };
+
+function iniciarPresenca(cli) {
+  if (typeof cli.channel !== 'function') return;
+  presenca.chave = `${nuvem.usuario}#${uid()}`;
+  try {
+    presenca.canal = cli.channel('cotacao-presenca', { config: { private: true, presence: { key: presenca.chave } } });
+    presenca.canal
+      .on('presence', { event: 'sync' }, () => {
+        const estado = presenca.canal.presenceState();
+        const eu = String(nuvem.usuario || '').toLowerCase();
+        const porEmail = new Map();
+        for (const lista of Object.values(estado)) {
+          for (const x of lista) {
+            if (!x?.email || String(x.email).toLowerCase() === eu) continue; // eu mesmo (inclusive outra aba) não aparece
+            const atual = porEmail.get(x.email);
+            if (!atual || (x.cotId && !atual.cotId)) porEmail.set(x.email, x);
+          }
+        }
+        presenca.outros = [...porEmail.values()];
+        atualizarPresencaTela();
+      })
+      .subscribe(status => {
+        presenca.pronto = status === 'SUBSCRIBED';
+        if (presenca.pronto) { presenca.ultimo = ''; anunciarPresenca(); }
+      });
+  } catch (e) {
+    console.error(e); // sem presença: o sistema funciona igual
+  }
+}
+
+function meuEstadoPresenca() {
+  const { nome, id } = rota();
+  const cotId = nome === 'cotacao' ? id : pip.win && !pip.win.closed ? pip.cotId : null;
+  const c = cotId ? db.cotacoes.find(x => x.id === cotId) : null;
+  const fv = c ? filtroVencedor(c) : '';
+  const forn = !fv ? '' : fv === '__sem' ? 'sem preço' : c.fornecedores.find(f => f.fornecedorId === fv)?.nome || '';
+  return { email: nuvem.usuario, nome: nuvem.nome || '', tela: nome, cotId: c ? cotId : null, forn, janela: !!(pip.win && !pip.win.closed) };
+}
+
+/** Avisa os outros onde estou (só quando muda). */
+function anunciarPresenca() {
+  clearTimeout(presenca.timer);
+  presenca.timer = setTimeout(() => {
+    if (!presenca.canal || !presenca.pronto) return;
+    const e = meuEstadoPresenca();
+    const k = JSON.stringify(e);
+    if (k === presenca.ultimo) return;
+    presenca.ultimo = k;
+    Promise.resolve(presenca.canal.track(e)).catch(err => console.error(err));
+  }, 250);
+}
+
+const nomePessoa = x => x.nome || String(x.email || '').split('@')[0];
+const pessoasNaCot = cotId => presenca.outros.filter(x => x.cotId === cotId);
+
+/** Chips "Maria · KAIZEN" de quem está na cotação (e aviso se alguém está no mesmo fornecedor que eu). */
+function htmlPresencaCot(cotId) {
+  const outros = pessoasNaCot(cotId);
+  if (!outros.length) return '';
+  const meu = meuEstadoPresenca().forn;
+  const mesmo = meu ? outros.filter(x => x.forn === meu) : [];
+  return `<span class="presenca-rot">👥 Nesta cotação agora:</span>${outros.map(x => `<span class="presenca-chip${mesmo.includes(x) ? ' conflito' : ''}" title="${esc(x.email)}${x.janela ? ' · usando a janela flutuante' : ''}"><span class="presenca-ponto"></span>${esc(nomePessoa(x))}${x.forn ? ` <span class="presenca-forn">· ${esc(x.forn)}</span>` : ''}</span>`).join('')}${mesmo.length ? `<span class="presenca-aviso">⚠ ${esc(mesmo.map(nomePessoa).join(' e '))} também ${mesmo.length > 1 ? 'estão' : 'está'} em ${esc(meu)}</span>` : ''}`;
+}
+
+/** Bolinhas na lista de cotações. */
+function htmlPresencaLista(cotId) {
+  const outros = pessoasNaCot(cotId);
+  return outros.map(x => `<span class="presenca-mini" title="${esc(nomePessoa(x))} está nesta cotação${x.forn ? ` (${esc(x.forn)})` : ''}">${esc(nomePessoa(x).slice(0, 1).toUpperCase())}</span>`).join('');
+}
+
+/** Atualiza só os pedaços da tela que mostram a presença (sem redesenhar). */
+function atualizarPresencaTela() {
+  const el = document.getElementById('presencaCot');
+  if (el) { el.innerHTML = htmlPresencaCot(el.dataset.cot); el.hidden = !el.innerHTML; }
+  for (const x of document.querySelectorAll('.presenca-lista[data-cot]')) x.innerHTML = htmlPresencaLista(x.dataset.cot);
+  if (pip.win && !pip.win.closed) {
+    const p = pip.win.document.getElementById('pipPresenca');
+    if (p) { p.innerHTML = htmlPresencaCot(pip.cotId); p.hidden = !p.innerHTML; }
   }
 }
 
@@ -3841,7 +3928,7 @@ function linhasCotacoes() {
     const resp = c.fornecedores.filter(f => f.respondidoEm).length;
     const { melhor, itensCotados } = comparar(c);
     return `<tr>
-      <td><a href="#" data-route="cotacao" data-id="${c.id}"><b>${esc(c.numero)}</b></a></td>
+      <td><a href="#" data-route="cotacao" data-id="${c.id}"><b>${esc(c.numero)}</b></a><span class="presenca-lista" data-cot="${esc(c.id)}">${htmlPresencaLista(c.id)}</span></td>
       <td>${fmtData(c.data)}</td>
       <td>${esc(c.titulo || '—')}</td>
       <td class="c">${c.itens.length}</td>
@@ -4196,6 +4283,8 @@ function opcoesVencedor(c, comp, atual = filtroVencedor(c)) {
 /** Escolhe o fornecedor em "Mostrar itens de" (do comparativo ou da janela flutuante). */
 function definirFiltroVencedor(c, valor) {
   ui.filtroVenc = { cotId: c.id, valor };
+  anunciarPresenca();
+  setTimeout(atualizarPresencaTela, 300); // o aviso "também está em …" depende do meu fornecedor
   if (cotAtual() !== c) return;
   const sel = $('#filtroVencedor');
   if (sel && sel.value !== valor) sel.value = valor;
@@ -4768,7 +4857,8 @@ function renderCotacao(id) {
   return `
   <section class="card">
     <div class="row-between">
-      <h2>Cotação nº ${esc(c.numero)} ${statusBadge(c.status)}${c.arquivada ? ' <span class="badge">🗂️ arquivada</span>' : ''}</h2>
+      <div><h2>Cotação nº ${esc(c.numero)} ${statusBadge(c.status)}${c.arquivada ? ' <span class="badge">🗂️ arquivada</span>' : ''}</h2>
+      <div id="presencaCot" class="presenca" data-cot="${esc(c.id)}" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div></div>
       <div class="row">
         <a class="btn" href="#" data-route="cotacoes">← Voltar</a>
         <select data-change="statusCot" style="width:auto">
@@ -5891,6 +5981,7 @@ function render() {
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
+  anunciarPresenca();
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
@@ -7316,7 +7407,7 @@ async function abrirPip() {
     pip.loja = 0;
     desenharPip(true);
   });
-  w.addEventListener('pagehide', () => { if (pip.win === w) pip.win = null; });
+  w.addEventListener('pagehide', () => { if (pip.win === w) pip.win = null; anunciarPresenca(); });
   desenharPip(true);
   w.focus();
 }
@@ -7453,6 +7544,7 @@ function desenharPip(focar) {
       <span class="pip-pos" title="Item da cotação · posição na lista">#${l.i + 1} <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
       <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>
     </div>
+    <div id="pipPresenca" class="presenca" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div>
     <div id="pipAviso">${avisoConcluidoPip(c, lista)}</div>
     <button type="button" class="pip-cod" data-pip="copiar" title="Clique para copiar o código (e colar no DataCar)"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉</span></button>
     <div class="pip-desc" title="${esc([l.it.descricao, l.it.marca && 'marca pedida: ' + l.it.marca].filter(Boolean).join(' · '))}">${esc(l.it.descricao || '')}${l.it.marca ? ` · <span class="pip-pedida">pedida <b>${esc(l.it.marca)}</b></span>` : ''}</div>

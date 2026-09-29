@@ -41,6 +41,8 @@ Você só precisa, uma vez:
 7. Rode [`backup.sql`](backup.sql): cópia automática de todos os dados duas vezes por dia (12h e 23h),
    guardada por 30 dias. Administradores baixam ou restauram as cópias em Configurações → Backup.
 
+8. Rode [`presenca.sql`](presenca.sql): "quem está nesta cotação agora" num canal privado (só usuários liberados).
+
 Para liberar outra pessoa depois: no sistema, **Configurações → Conta → Usuários → + Adicionar usuário**
 (e-mail e senha inicial; a conta já nasce confirmada). Lá também dá para trocar a senha e tirar o acesso.
 

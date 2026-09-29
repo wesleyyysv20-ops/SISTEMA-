@@ -1223,3 +1223,20 @@ input.qtd-loja.no-limite, input.qtd-loja.no-limite.preenchida, input.qtd-loja.no
 .pip-seg-dif { margin-left: 0; }
 .pip-seg-acao { flex: none; padding: 3px 9px; border-radius: 999px; background: var(--primary); color: var(--on-primary); font-size: 12px; font-weight: 700; }
 .pip-segundo:hover .pip-seg-acao { background: var(--primary-2); }
+
+/* quem está nesta cotação agora */
+.presenca { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; }
+.presenca-rot { color: var(--muted); font-weight: 600; }
+.presenca-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px 2px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); font-weight: 700; border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); }
+.presenca-chip.conflito { background: var(--warn-bg); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.presenca-forn { font-weight: 500; }
+.presenca-ponto { width: 8px; height: 8px; border-radius: 50%; background: #2fbf71; box-shadow: 0 0 0 3px color-mix(in srgb, #2fbf71 25%, transparent); animation: pulsar 2s ease-in-out infinite; }
+@keyframes pulsar { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, #2fbf71 8%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .presenca-ponto { animation: none; } }
+.presenca-aviso { padding: 2px 10px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-weight: 700; }
+.presenca-lista { display: inline-flex; gap: 2px; vertical-align: middle; }
+.presenca-mini { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #2fbf71; color: #fff; font-size: 11px; font-weight: 800; box-shadow: 0 0 0 2px var(--card); }
+.pip-corpo .presenca { margin: 0 0 4px; font-size: 11px; gap: 3px; }
+.pip-corpo .presenca-rot { display: none; }
+.pip-corpo .presenca-chip, .pip-corpo .presenca-aviso { padding: 0 6px; }
+.presenca-lista:not(:empty) { margin-left: 6px; }
