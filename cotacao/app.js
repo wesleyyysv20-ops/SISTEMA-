@@ -1052,6 +1052,8 @@ function atualizarPresencaTela() {
   const el = document.getElementById('presencaCot');
   if (el) { el.innerHTML = htmlPresencaCot(el.dataset.cot); el.hidden = !el.innerHTML; }
   for (const x of document.querySelectorAll('.presenca-lista[data-cot]')) x.innerHTML = htmlPresencaLista(x.dataset.cot);
+  const ini = document.getElementById('presencaInicio');
+  if (ini) { ini.innerHTML = htmlPresencaInicio(); document.getElementById('presencaInicioCard').hidden = !presenca.outros.length; }
   if (pip.win && !pip.win.closed) {
     const p = pip.win.document.getElementById('pipPresenca');
     if (p) { p.innerHTML = htmlPresencaCot(pip.cotId); p.hidden = !p.innerHTML; }
@@ -4339,6 +4341,7 @@ function opcoesVencedor(c, comp, atual = filtroVencedor(c)) {
 function definirFiltroVencedor(c, valor) {
   ui.filtroVenc = { cotId: c.id, valor };
   anunciarPresenca();
+  anotarUltimoLugar();
   setTimeout(atualizarPresencaTela, 300); // o aviso "também está em …" depende do meu fornecedor
   if (cotAtual() !== c) return;
   const sel = $('#filtroVencedor');
@@ -5569,7 +5572,8 @@ function pendencias() {
   const add = (nivel, texto, detalhe, rota, id, botao) => lista.push({ nivel, texto, detalhe, rota, id, botao });
   const r = db.rascunho;
   if (r && r.itens?.length) add('info', `Nova cotação em andamento com ${r.itens.length} item(ns)`, 'Ainda não foi criada.', 'nova', null, 'Continuar');
-  const ativas = db.cotacoes.filter(c => !c.arquivada && c.status !== 'cancelada')
+  // finalizada = concluída: não pede mais nada (nem pedidos, nem notas); cancelada também não
+  const ativas = db.cotacoes.filter(c => !c.arquivada && c.status === 'aberta')
     .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
   for (const c of ativas) {
     const nome = `Cotação nº ${c.numero}${c.titulo ? ' · ' + c.titulo : ''}`;
@@ -5601,7 +5605,8 @@ function pendencias() {
     if (divergencia.length) add('urgente', `${nome}: nota(s) com divergência${cobrar ? ` — cobrar ${fmtMoeda(cobrar)}` : ''}`, divergencia.join(', '), 'cotacao', c.id, 'Ver notas');
     if (aguardando.length) add('info', `${nome}: aguardando nota fiscal`, aguardando.join(', '), 'cotacao', c.id, 'Conferir NF-e');
   }
-  if (db.duvidas.length) add('aviso', `${db.duvidas.length} item(ns) em dúvida esperando a resposta da loja`, 'Copie o texto e mande no WhatsApp.', 'duvidas', null, 'Abrir Dúvidas');
+  const duvPend = duvidasPendentes().length;
+  if (duvPend) add('aviso', `${duvPend} item(ns) em dúvida esperando a resposta da loja`, 'Copie o texto e mande no WhatsApp.', 'duvidas', null, 'Abrir Dúvidas');
   const ordem = { urgente: 0, aviso: 1, info: 2 };
   return lista.sort((a, b) => ordem[a.nivel] - ordem[b.nivel]);
 }
@@ -5620,12 +5625,21 @@ function renderInicio() {
         <label class="btn" style="margin:0">📥 Importar planilhas respondidas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>
       </div>
     </div>
+    ${htmlContinuar()}
     <div class="stats">
       <div class="stat"><span class="muted small">Itens no banco</span><b>${db.produtos.length.toLocaleString('pt-BR')}</b></div>
       <div class="stat"><span class="muted small">Cotações abertas</span><b>${ativas.length}</b></div>
-      <div class="stat"><span class="muted small">Itens em dúvida</span><b>${db.duvidas.length}</b></div>
+      <div class="stat"><span class="muted small">Itens em dúvida</span><b>${duvidasPendentes().length}</b></div>
       <div class="stat${pend.some(p => p.nivel === 'urgente') ? ' stat-ruim' : ''}"><span class="muted small">Pendências</span><b>${pend.length}</b></div>
     </div>
+  </section>
+  ${ativas.length ? `<section class="card">
+    <h3>Andamento das cotações abertas</h3>
+    <div class="cartoes-cot">${[...ativas].sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))).map(cartaoAndamento).join('')}</div>
+  </section>` : ''}
+  <section class="card" id="presencaInicioCard" ${presenca.outros.length ? '' : 'hidden'}>
+    <h3>👥 Trabalhando agora</h3>
+    <div id="presencaInicio">${htmlPresencaInicio()}</div>
   </section>
   <section class="card">
     <h3>O que fazer agora</h3>
@@ -5637,16 +5651,133 @@ function renderInicio() {
   </section>`;
 }
 
+/* ---------------- Início: andamento, prazo, continuar e quem está trabalhando ---------------- */
+
+const CHAVE_ULTIMO_LUGAR = 'cotacao.ultimoLugar';
+function lerUltimoLugar() {
+  try { return JSON.parse(localStorage.getItem(CHAVE_ULTIMO_LUGAR) || 'null'); } catch (e) { return null; }
+}
+/** Guarda onde a pessoa estava (cotação e fornecedor escolhido, ou a nova cotação), neste computador. */
+function anotarUltimoLugar() {
+  const { nome, id } = rota();
+  let lugar = null;
+  if (nome === 'cotacao') {
+    const c = db.cotacoes.find(x => x.id === id);
+    if (c) lugar = { rota: 'cotacao', id, filtro: filtroVencedor(c) || '' };
+  } else if (nome === 'nova') lugar = { rota: 'nova' };
+  if (!lugar) return;
+  const ant = lerUltimoLugar();
+  if (ant && ant.rota === lugar.rota && ant.id === lugar.id && ant.filtro === lugar.filtro && Date.now() - ant.quando < 60000) return;
+  try { localStorage.setItem(CHAVE_ULTIMO_LUGAR, JSON.stringify({ ...lugar, quando: Date.now() })); } catch (e) { /* sem acesso */ }
+}
+
+const haQuanto = t => {
+  const min = Math.round((Date.now() - t) / 60000);
+  if (min < 1) return 'agora há pouco';
+  if (min < 60) return `há ${min} min`;
+  const h = Math.round(min / 60);
+  return h < 24 ? `há ${h} h` : `há ${Math.round(h / 24)} dia(s)`;
+};
+
+function htmlContinuar() {
+  const u = lerUltimoLugar();
+  if (!u) return '';
+  let texto = '';
+  if (u.rota === 'cotacao') {
+    const c = db.cotacoes.find(x => x.id === u.id);
+    if (!c || c.status !== 'aberta') return '';
+    const forn = u.filtro && u.filtro !== '__sem' ? c.fornecedores.find(f => f.fornecedorId === u.filtro)?.nome : u.filtro === '__sem' ? 'sem preço' : '';
+    texto = `Cotação nº ${esc(c.numero)}${c.titulo ? ` · ${esc(c.titulo)}` : ''}${forn ? ` · <b>${esc(forn)}</b>` : ''}`;
+  } else if (u.rota === 'nova') {
+    const n = rascunho().itens.length;
+    if (!n) return '';
+    texto = `Nova cotação em montagem · ${n} item(ns)`;
+  } else return '';
+  return `<button type="button" class="continuar" data-act="continuarDeOndeParei">
+    <span class="continuar-icone">▶</span>
+    <span><span class="small muted">Continuar de onde parei (${esc(haQuanto(u.quando))})</span><br>${texto}</span>
+  </button>`;
+}
+
+/** Tempo até o prazo de resposta: "faltam 2 h 10 min" / "venceu há 1 dia". */
+function textoAtePrazo(c) {
+  const lim = limitePrazo(c);
+  if (!lim) return null;
+  const ms = lim - Date.now();
+  const abs = Math.abs(ms);
+  const min = Math.round(abs / 60000);
+  const txt = min < 60 ? `${min} min` : min < 1440 ? `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `${Math.round(min / 1440)} dia(s)`;
+  return { vencido: ms < 0, perto: ms >= 0 && ms < 3 * 3600000, texto: ms < 0 ? `venceu há ${txt}` : `faltam ${txt}` };
+}
+
+function barraAndamento(rotulo, feito, total, detalhe, parte, cotId) {
+  const pct = total ? Math.round((feito / total) * 100) : 0;
+  return `<button type="button" class="andamento${total && feito >= total ? ' completo' : ''}" data-act="irCotParte" data-id="${esc(cotId)}" data-parte="${parte}" title="Abrir: ${esc(rotulo)}">
+    <span class="andamento-topo"><span>${rotulo}</span><b>${feito}/${total}</b></span>
+    <span class="andamento-barra"><span style="width:${pct}%"></span></span>
+    ${detalhe ? `<span class="andamento-det">${detalhe}</span>` : ''}
+  </button>`;
+}
+
+function cartaoAndamento(c) {
+  const nf = c.fornecedores.length;
+  const pend = c.fornecedores.filter(f => !respondeu(f));
+  const resp = nf - pend.length;
+  const comp = comparar(c);
+  const LJ = lojas();
+  const comPreco = comp.linhas.filter(l => l.vencedor >= 0);
+  const comQtd = comPreco.filter(l => LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null)).length;
+  const peds = resp ? pedidosPorFornecedor(c) : [];
+  const exportados = peds.filter(p => p.f.concluidoEm).length;
+  const prazo = textoAtePrazo(c);
+  const nomes = l => l.slice(0, 3).map(f => esc(f.nome)).join(', ') + (l.length > 3 ? ` e mais ${l.length - 3}` : '');
+  const quem = pessoasNaCot(c.id);
+  return `<article class="cartao-cot">
+    <div class="cartao-cot-topo">
+      <a href="#" data-route="cotacao" data-id="${esc(c.id)}"><b>Cotação nº ${esc(c.numero)}</b></a>
+      <span class="small muted">${esc(c.titulo || '')}${c.titulo ? ' · ' : ''}${fmtData(c.data)} · ${c.itens.length} itens</span>
+      ${quem.length ? `<span class="presenca-lista">${htmlPresencaLista(c.id)}</span>` : ''}
+    </div>
+    ${prazo ? `<div class="cartao-prazo${prazo.vencido ? ' vencido' : prazo.perto ? ' perto' : ''}">
+      ⏰ Responder até ${esc(textoDataPrazo(c))} · <b>${esc(prazo.texto)}</b>
+      ${pend.length && (prazo.vencido || prazo.perto) ? `<button type="button" class="sm" data-act="cobrarCot" data-id="${esc(c.id)}">📣 Cobrar quem falta (${pend.length})</button>` : ''}
+    </div>` : ''}
+    <div class="andamentos">
+      ${barraAndamento('Respostas', resp, nf, pend.length ? `falta: ${nomes(pend)}` : '✓ todos responderam', 'fornecedores', c.id)}
+      ${resp ? barraAndamento('Quantidades', comQtd, comPreco.length, comQtd < comPreco.length ? `${comPreco.length - comQtd} item(ns) sem quantidade` : '✓ todos com quantidade', 'comparativo', c.id) : ''}
+      ${peds.length ? barraAndamento('Pedidos exportados', exportados, peds.length, exportados < peds.length ? `falta: ${nomes(peds.filter(p => !p.f.concluidoEm).map(p => p.f))}` : '✓ todos exportados', 'pedidos', c.id) : ''}
+    </div>
+  </article>`;
+}
+
+const NOMES_TELA = { inicio: 'Início', nova: 'Nova cotação', cotacoes: 'Cotações', produtos: 'Produtos', fornecedores: 'Fornecedores', duvidas: 'Dúvidas', relatorios: 'Relatórios', config: 'Configurações' };
+function htmlPresencaInicio() {
+  if (!presenca.outros.length) return '';
+  return `<ul class="trabalhando">${presenca.outros.map(x => {
+    const c = x.cotId ? db.cotacoes.find(y => y.id === x.cotId) : null;
+    const onde = c ? `<a href="#" data-route="cotacao" data-id="${esc(c.id)}">cotação nº ${esc(c.numero)}</a>${x.forn ? ` · ${esc(x.forn)}` : ''}${x.janela ? ' · janela flutuante' : ''}` : esc(NOMES_TELA[x.tela] || x.tela || '');
+    return `<li><span class="presenca-ponto"></span><b>${esc(nomePessoa(x))}</b> <span class="muted">·</span> ${onde}</li>`;
+  }).join('')}</ul>`;
+}
+
 /* ---------------- dúvidas (texto para o WhatsApp, padrão do DISPPAR) ---------------- */
 
 function empresasDuvida() {
   return [...lojas().map(siglaLoja), 'N/A'];
 }
 
+/** Dúvidas que ainda pedem resposta: as de cotações finalizadas (ou canceladas) não contam mais. */
+function duvidasPendentes() {
+  const status = new Map(db.cotacoes.map(c => [c.id, c.status]));
+  return db.duvidas.filter(d => !d.origem?.cotId || !status.has(d.origem.cotId) || status.get(d.origem.cotId) === 'aberta');
+}
+/** Dúvidas mostradas na tela de Dúvidas (as das cotações finalizadas só com "mostrar"). */
+const duvidasDaTela = () => (ui.verDuvFinal ? db.duvidas : duvidasPendentes());
+
 /** Dúvidas iguais (mesmo código, valor, marca, observação e origem) viram uma linha só, com a quantidade de cada loja. */
 const chaveDuvida = x => [String(x.codigo || '').toUpperCase().trim(), Number(x.valor) || 0, String(x.marca || '').toUpperCase().trim(),
   String(x.obs || '').toUpperCase().trim(), x.origem?.cotId || '', x.origem?.fornecedor || ''].join('|');
-function gruposDuvidas(lista = db.duvidas) {
+function gruposDuvidas(lista = duvidasDaTela()) {
   const ordem = empresasDuvida();
   const pos = e => (ordem.indexOf(e) < 0 ? ordem.length : ordem.indexOf(e));
   const m = new Map();
@@ -5671,7 +5802,8 @@ const fornDuvida = x => x.origem?.fornecedor || SEM_FORN_DUV;
 
 /** Dúvidas do fornecedor escolhido no filtro da fila (sem filtro: todas). */
 function duvidasFiltradas() {
-  return ui.duvForn ? db.duvidas.filter(x => fornDuvida(x) === ui.duvForn) : db.duvidas;
+  const base = duvidasDaTela();
+  return ui.duvForn ? base.filter(x => fornDuvida(x) === ui.duvForn) : base;
 }
 
 /** Um item no formato do DISPPAR: "- *CÓDIGO. OBS*" / "R$ 10,00 - MARCA" / "*PEDE 2 DPR E 5 DSS ?*". */
@@ -5787,17 +5919,17 @@ function renderDuvidas() {
   const v = ed || { empresa: ui.ultimaEmpresa || empresasDuvida()[0], qtd: 1 };
   const qtdEd = e => (grupoEd ? qtdsGrupoDuvida(grupoEd).find(x => x.empresa === e)?.qtd ?? '' : '');
   const emps = empresasDuvida();
-  if (ui.duvForn && !db.duvidas.some(x => fornDuvida(x) === ui.duvForn)) ui.duvForn = null; // o fornecedor filtrado não tem mais dúvidas
+  if (ui.duvForn && !duvidasDaTela().some(x => fornDuvida(x) === ui.duvForn)) ui.duvForn = null; // o fornecedor filtrado não tem mais dúvidas
   const lista = duvidasFiltradas();
   const grupos = gruposDuvidas(lista);
   // fornecedores com dúvidas, em ordem alfabética (as digitadas à mão no fim); conta os itens (linhas da fila)
   const todosGrupos = gruposDuvidas();
-  const fornsNaFila = [...new Set(db.duvidas.map(fornDuvida))]
+  const fornsNaFila = [...new Set(duvidasDaTela().map(fornDuvida))]
     .sort((a, b) => (a === SEM_FORN_DUV) - (b === SEM_FORN_DUV) || COLLATOR.compare(a, b));
   const contaForn = fo => todosGrupos.filter(g => fornDuvida(g[0]) === fo).length;
   return `
   <section class="card">
-    <h2>Dúvidas <span class="badge">${db.duvidas.length}</span></h2>
+    <h2>Dúvidas <span class="badge">${duvidasDaTela().length}</span></h2>
     <p class="muted small" style="margin-top:0">Itens que dependem da confirmação da loja antes de fechar a compra (marca diferente, preço estranho…). Monte a lista e copie o texto para o WhatsApp. No comparativo, o botão <b>❓</b> de cada item pergunta a loja (uma ou as duas), a quantidade e a observação e traz o item para cá já preenchido.</p>
     <form data-form="duvida" class="grid form-duvida">
       ${ed ? '' : `<label>Empresa<select name="empresa">${emps.map(e => `<option ${v.empresa === e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></label>`}
@@ -5815,6 +5947,7 @@ function renderDuvidas() {
   <div class="duvidas-grid">
     <section class="card">
       <div class="row-between"><h3>Fila de dúvidas</h3>${db.duvidas.length ? '<button class="sm danger" data-act="limparDuvidas">Limpar tudo</button>' : ''}</div>
+      ${db.duvidas.length > duvidasPendentes().length ? `<p class="small muted" style="margin:0 0 8px">${ui.verDuvFinal ? 'Mostrando também' : 'Ocultas:'} ${db.duvidas.length - duvidasPendentes().length} dúvida(s) de cotações finalizadas. <button type="button" class="link" data-act="alternarDuvFinal">${ui.verDuvFinal ? 'Ocultar' : 'Mostrar'}</button></p>` : ''}
       ${fornsNaFila.length ? `<div class="filtro-duv" role="group" aria-label="Fornecedor">
         <button type="button" data-act="filtroDuvForn" data-forn="" class="${ui.duvForn ? '' : 'ativo'}">Todos <span class="badge">${todosGrupos.length}</span></button>
         ${fornsNaFila.map(fo => `<button type="button" data-act="filtroDuvForn" data-forn="${esc(fo)}" class="${ui.duvForn === fo ? 'ativo' : ''}">${esc(fo)} <span class="badge">${contaForn(fo)}</span></button>`).join('')}
@@ -6092,13 +6225,15 @@ function render() {
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
   anunciarPresenca();
+  anotarUltimoLugar();
   const cotTela = nome === 'cotacao' ? db.cotacoes.find(x => x.id === id) : null;
   ui.telaCot = cotTela ? { cotId: cotTela.id, sig: assinaturaSemQtd(cotTela) } : null;
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
   const navDuv = $('#nav a[data-route="duvidas"]');
-  if (navDuv) navDuv.innerHTML = `Dúvidas${db.duvidas.length ? ` <span class="nav-alerta nav-info">${db.duvidas.length}</span>` : ''}`;
+  const nDuv = duvidasPendentes().length;
+  if (navDuv) navDuv.innerHTML = `Dúvidas${nDuv ? ` <span class="nav-alerta nav-info">${nDuv}</span>` : ''}`;
   const navCot = $('#nav a[data-route="cotacoes"]');
   if (navCot) {
     const n = cotacoesComPrazo().length;
@@ -6726,6 +6861,7 @@ const acoes = {
   editarDuvida: el => { ui.editDuvida = el.dataset.id; render(); window.scrollTo(0, 0); },
   cancelarDuvida: () => { ui.editDuvida = null; render(); },
   filtroDuvForn: el => { ui.duvForn = el.dataset.forn || null; render(); },
+  alternarDuvFinal: () => { ui.verDuvFinal = !ui.verDuvFinal; render(); },
   removerDuvida: el => {
     const ids = new Set(el.dataset.id.split(','));
     db.duvidas = db.duvidas.filter(x => !ids.has(x.id));
@@ -6832,6 +6968,39 @@ const acoes = {
   },
   sairSupabase: () => sairSupabase(),
   abrirBusca: () => abrirBusca(),
+  continuarDeOndeParei: () => {
+    const u = lerUltimoLugar();
+    if (!u) return;
+    if (u.rota === 'cotacao') {
+      const c = db.cotacoes.find(x => x.id === u.id);
+      if (!c) return;
+      if (u.filtro) ui.filtroVenc = { cotId: c.id, valor: u.filtro };
+      ir('cotacao', c.id);
+      document.querySelector('.tab-comp')?.scrollIntoView({ block: 'start' });
+      const primeiro = [...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]:not([hidden])')]
+        .find(tr => [...tr.querySelectorAll('input[data-qtd-loja]')].every(x => x.value === ''));
+      if (primeiro) { marcarLinhaComp(primeiro); primeiro.scrollIntoView({ block: 'center' }); primeiro.querySelector('input[data-qtd-loja]')?.focus({ preventScroll: true }); }
+    } else ir(u.rota);
+  },
+  irCotParte: el => {
+    const c = db.cotacoes.find(x => x.id === el.dataset.id);
+    if (!c) return;
+    const parte = el.dataset.parte;
+    if (parte === 'fornecedores') { try { localStorage.setItem(CHAVE_FORN_ABERTO, '1'); } catch (e) { ui.fornAberto = true; } }
+    ir('cotacao', c.id);
+    const alvo = parte === 'fornecedores' ? document.querySelector('.corpo-recolhe')?.closest('section')
+      : parte === 'pedidos' ? document.getElementById('secPedidos') : document.querySelector('.tab-comp');
+    alvo?.scrollIntoView({ block: 'start' });
+    if (parte === 'comparativo') {
+      const sem = [...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]:not([hidden])')]
+        .find(tr => tr.querySelector('input[data-qtd-loja]') && [...tr.querySelectorAll('input[data-qtd-loja]')].every(x => x.value === ''));
+      if (sem) { marcarLinhaComp(sem); sem.scrollIntoView({ block: 'center' }); sem.querySelector('input[data-qtd-loja]')?.focus({ preventScroll: true }); }
+    }
+  },
+  cobrarCot: el => {
+    ir('cotacao', el.dataset.id);
+    acoes.cobrarPendentes();
+  },
   abrirAtalhos: () => abrirAtalhos(),
   editarTituloCot: async el => {
     const c = db.cotacoes.find(x => x.id === el.dataset.id);

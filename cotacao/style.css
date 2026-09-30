@@ -1292,3 +1292,26 @@ kbd { display: inline-block; min-width: 18px; padding: 1px 5px; border: 1px soli
 @media (max-width: 1600px) { .btn-busca .txt-busca { display: none; } }
 @media (max-width: 1450px) { .btn-busca kbd { display: none; } }
 @media (max-width: 1400px) { nav a { padding: 6px 7px; } .topbar { gap: 8px 12px; } }
+
+/* Início: continuar, andamento das cotações, quem está trabalhando */
+.continuar { display: flex; width: 100%; justify-content: flex-start; gap: 12px; margin: 4px 0 14px; padding: 12px 16px; text-align: left; white-space: normal; border: 1.5px solid var(--primary-2); background: var(--blue-bg); color: var(--text); font-size: 15px; }
+.continuar:hover:not(:disabled) { background: color-mix(in srgb, var(--primary-2) 16%, var(--card)); }
+.continuar-icone { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--primary); color: var(--on-primary); font-size: 14px; }
+.cartoes-cot { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 14px; }
+.cartao-cot { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--card); box-shadow: var(--shadow-card); }
+.cartao-cot-topo { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
+.cartao-cot-topo a { font-size: 16px; text-decoration: none; color: var(--primary); }
+.cartao-prazo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 10px; padding: 6px 10px; border-radius: 8px; background: var(--card-2); font-size: 13px; }
+.cartao-prazo.perto { background: var(--warn-bg); color: var(--warn); }
+.cartao-prazo.vencido { background: var(--danger-bg); color: var(--danger); }
+.andamentos { display: grid; gap: 8px; }
+.andamento { display: grid; gap: 4px; width: 100%; padding: 8px 10px; text-align: left; white-space: normal; background: var(--card-2); border-color: var(--line); box-shadow: none; font-size: 13px; }
+.andamento-topo { display: flex; justify-content: space-between; }
+.andamento-barra { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 18%, transparent); overflow: hidden; }
+.andamento-barra > span { display: block; height: 100%; border-radius: 999px; background: var(--primary-2); transition: width .3s ease; }
+.andamento.completo .andamento-barra > span { background: #2fbf71; }
+.andamento-det { color: var(--muted); font-size: 12px; }
+.andamento.completo .andamento-det { color: var(--ok); }
+.trabalhando { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.trabalhando li { display: flex; align-items: center; gap: 8px; }
+.andamento { justify-content: stretch; justify-items: stretch; }
