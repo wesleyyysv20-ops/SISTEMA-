@@ -2048,8 +2048,15 @@ function aplicarResposta(c, fi, ws, meta) {
   if (cond) COND_CAMPOS.forEach(([k], j) => { condicoes[k] = cellTexto(ws.getCell(`D${cond + j}`)); });
 
   const f = c.fornecedores[fi];
+  const antes = f.respostas || {};
   f.respostas = respostas;
   ajustarKaizen(c);
+  // planilha nova do fornecedor com o preço corrigido: a diferença do item fica aceita com o valor novo
+  c.itens.forEach((_, i) => {
+    const velho = antes[i]?.preco;
+    const novo = f.respostas[i]?.preco;
+    if (velho > 0 && novo > 0 && Math.round(velho * 100) !== Math.round(novo * 100)) aceitarDifCorrigida(c, i);
+  });
   f.cond = condicoes;
   f.respondidoEm = new Date().toISOString();
   salvar();
