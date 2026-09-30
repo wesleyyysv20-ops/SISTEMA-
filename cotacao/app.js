@@ -6511,6 +6511,15 @@ function formDados(form) {
   return Object.fromEntries([...new FormData(form).entries()].map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]));
 }
 
+/**
+ * Você corrigiu um preço do item i: a diferença grande entre o 1º e o 2º fica aceita com os preços novos
+ * (o aviso "confira o preço" não volta a pedir conferência por causa da correção).
+ */
+function aceitarDifCorrigida(c, i) {
+  const precos = c.fornecedores.map(f => { const p = f.respostas?.[i]?.preco; return p != null && p > 0 ? p : null; });
+  c.difConferida = { ...(c.difConferida || {}), [i]: assinaturaPrecos(precos) };
+}
+
 /** Altera o preço que o fornecedor respondeu (guarda o valor original). */
 async function alterarPrecoResposta(c, i, fi) {
   const f = c.fornecedores[fi];
@@ -6522,6 +6531,7 @@ async function alterarPrecoResposta(c, i, fi) {
   const novo = parseNum(v);
   if (!(novo > 0)) return avisar('Valor inválido. Para tirar o preço, use "Remover o preço".');
   f.respostas = { ...f.respostas, [i]: { ...o, preco: novo, precoOriginal: o.precoOriginal ?? o.preco } };
+  aceitarDifCorrigida(c, i);
   salvar();
   render();
   toast(`Preço de ${f.nome} alterado: ${fmtMoeda(o.preco)} → ${fmtMoeda(novo)}.`);
@@ -6537,6 +6547,7 @@ function removerPrecoResposta(c, i, fi) {
   delete r[i];
   f.respostas = r;
   if (c.escolhas?.[i] === f.fornecedorId) { c.escolhas = { ...c.escolhas }; delete c.escolhas[i]; }
+  aceitarDifCorrigida(c, i);
   salvar();
   render();
   toast(`Preço de ${f.nome} (${fmtMoeda(o.preco)}) removido do item ${it.codigo || it.descricao}.`);
@@ -7469,7 +7480,13 @@ const formularios = {
       // 0,00 ou vazio: sem resposta; o resto do que já havia (marca, estoque…) continua
       if (preco != null && preco > 0) respostas[i] = { ...(f.respostas?.[i] || {}), preco, prazo, obs };
     });
+    // preço corrigido (já tinha outro valor): a diferença do item fica aceita com o valor novo
+    const antes = f.respostas || {};
     f.respostas = respostas;
+    c.itens.forEach((_, i) => {
+      const velho = antes[i]?.preco;
+      if (velho > 0 && Math.round(velho * 100) !== Math.round((respostas[i]?.preco || 0) * 100)) aceitarDifCorrigida(c, i);
+    });
     f.cond = Object.fromEntries(COND_CAMPOS.map(([k]) => [k, d[`c_${k}`] || '']));
     f.respondidoEm = Object.keys(respostas).length ? f.respondidoEm || new Date().toISOString() : null;
     ui.digitando = null;
