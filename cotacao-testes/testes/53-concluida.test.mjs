@@ -47,3 +47,24 @@ test('"✓ marcar concluída" para quem já exportou antes', async () => {
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('digitar as quantidades acende o "Exportar (N)" do fornecedor na hora (sem redesenhar a tela)', async () => {
+  const s = await abrir(base({ config: { loja: 'DISPPAR', lojas: LOJAS }, cotacoes: [cotacao('c1', '0053', '2026-09-29', 'aberta', itens, [
+    forn('f1', 'KAMPEAO', { 0: { preco: 10, marca: 'NGK' }, 1: { preco: 20, marca: 'NGK' } }),
+    forn('f2', 'OUTRO', { 2: { preco: 5, marca: 'NGK' } }),
+  ], { itens: [...itens, item('PC', 'PECA C', 'NGK', { codigo: 'COD-C' })], qtds: { 2: { paranoa: 1 } } })] }));
+  const { page } = s;
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  const botao = () => page.locator('.corpo-recolhe tbody tr', { hasText: 'KAMPEAO' }).locator('.exp-forn').innerText().then(t => t.trim());
+  assert.equal(await botao(), '⬇ Exportar (0)');
+  await page.evaluate(() => { document.querySelector('.tab-comp').dataset.marca = 'antes'; });
+  await page.fill('.tab-comp [data-qtd-loja=paranoa][data-i="0"]', '3');
+  await page.waitForFunction(() => document.querySelector('.corpo-recolhe .exp-forn[data-exp-f="0"]').innerText.trim() === '⬇ Exportar (1)', null, { timeout: 3000 });
+  await page.fill('.tab-comp [data-qtd-loja="sao-sebastiao"][data-i="1"]', '2');
+  await page.waitForFunction(() => document.querySelector('.corpo-recolhe .exp-forn[data-exp-f="0"]').innerText.trim() === '⬇ Exportar (2)', null, { timeout: 3000 });
+  assert.equal(await page.evaluate(() => document.querySelector('.tab-comp').dataset.marca), 'antes', 'a tabela não foi redesenhada');
+  assert.equal(await page.locator('.corpo-recolhe [data-act=exportarPedidoForn][data-f="0"]').count(), 1, 'botão ativo');
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

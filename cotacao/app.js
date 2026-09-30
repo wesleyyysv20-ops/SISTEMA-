@@ -4356,8 +4356,15 @@ function opcoesVencedor(c, comp, atual = filtroVencedor(c)) {
   const cont = {};
   for (const l of comp.linhas) if (l.vencedor >= 0) cont[c.fornecedores[l.vencedor].fornecedorId] = (cont[c.fornecedores[l.vencedor].fornecedorId] || 0) + 1;
   const sem = comp.linhas.filter(l => l.vencedor < 0).length;
+  const LJ = lojas();
+  const falta = {};
+  if (comp.porLoja) for (const l of comp.linhas) {
+    if (l.vencedor < 0 || l.duvida) continue;
+    if (!LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null)) { const id = c.fornecedores[l.vencedor].fornecedorId; falta[id] = (falta[id] || 0) + 1; }
+  }
+  const andamento = f => (f.concluidoEm ? ' · ✓ exportado' : !comp.porLoja ? '' : falta[f.fornecedorId] ? ` · faltam ${falta[f.fornecedorId]}` : ' · ✓ completo');
   const opcoes = ordemFornecedores(c).map(j => c.fornecedores[j]).filter(f => cont[f.fornecedorId])
-    .map(f => `<option value="${esc(f.fornecedorId)}" ${atual === f.fornecedorId ? 'selected' : ''}>${esc(f.nome)} (${cont[f.fornecedorId]})</option>`).join('');
+    .map(f => `<option value="${esc(f.fornecedorId)}" ${atual === f.fornecedorId ? 'selected' : ''}>${esc(f.nome)} (${cont[f.fornecedorId]})${andamento(f)}</option>`).join('');
   return `<option value="">Todos os itens (${comp.linhas.length})</option>${opcoes}
       ${sem ? `<option value="__sem" ${atual === '__sem' ? 'selected' : ''}>Sem preço / aguardando (${sem})</option>` : ''}`;
 }
@@ -4606,8 +4613,17 @@ function celulaDifSegundo(c, l) {
   return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta && !l.difConferida ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span> <span class="small muted">o 2º é mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>${marcaAlternativa(c, l, l.segundoIdx)}`;
 }
 
+/** Modo compacto do comparativo (meia tela): sem as colunas de cada fornecedor. Guardado neste computador. */
+const CHAVE_COMPACTO = 'cotacao.compacto';
+function modoCompacto() {
+  let v = null;
+  try { v = localStorage.getItem(CHAVE_COMPACTO); } catch (e) { /* sem acesso */ }
+  return v == null ? window.innerWidth < 1000 : v === '1'; // sem escolha: compacto em janela estreita
+}
+
 /** Colunas de fornecedores do comparativo: esconde quem ainda não mandou nenhum preço (dá para mostrar). */
 function fornecedoresVisiveisComp(c) {
+  if (modoCompacto()) return [];
   const ordem = ordemFornecedores(c);
   if (ui.mostrarSemResposta) return ordem;
   const comPreco = ordem.filter(j => Object.values(c.fornecedores[j].respostas || {}).some(o => o?.preco > 0));
@@ -4801,6 +4817,23 @@ function secaoPedidos(c, comp) {
 }
 
 /** Atualiza totais e pedidos sem redesenhar a tabela (para não perder o campo em edição). */
+/** Botão "⬇ Exportar (N)" do quadro Fornecedores (atualizado também enquanto se digitam as quantidades). */
+function botaoExportarForn(f, fi, n) {
+  return `<span class="exp-forn" data-exp-f="${fi}">${n
+    ? `<button class="sm primary" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido: só os itens que ${esc(f.nome)} ganhou (planilhas por loja ou somada) e marcar a cotação dele como concluída">⬇ Exportar (${n})</button>`
+    : `<span class="btn-desligado" title="${f.respondidoEm ? `${esc(f.nome)} não ganhou nenhum item (com quantidade) no comparativo` : `${esc(f.nome)} ainda não respondeu: quando responder e ganhar itens, dá para exportar o pedido`}"><button class="sm" disabled>⬇ Exportar (0)</button></span>`}</span>`;
+}
+function atualizarBotoesExportar(c) {
+  const qtd = Object.fromEntries(pedidosPorFornecedor(c).map(p => [p.fi, p.itens.length]));
+  for (const el of document.querySelectorAll('.exp-forn[data-exp-f]')) {
+    const fi = +el.dataset.expF;
+    const f = c.fornecedores[fi];
+    if (!f) continue;
+    const novo = botaoExportarForn(f, fi, qtd[fi] || 0);
+    if (el.outerHTML !== novo) el.outerHTML = novo;
+  }
+}
+
 function atualizarTotaisComp(c, i = null) {
   const comp = comparar(c);
   // quando as quantidades passam a valer (1ª digitada) todos os totais mudam; senão, só o da linha digitada
@@ -4818,6 +4851,7 @@ function atualizarTotaisComp(c, i = null) {
     const sec = $('#secPedidos');
     const atual = cotAtual();
     if (sec && atual === c) sec.outerHTML = secaoPedidos(c, comparar(c));
+    if (atual === c) atualizarBotoesExportar(c); // "Exportar (N)" acende assim que o fornecedor tem itens com quantidade
   }, 350);
 }
 
@@ -4848,9 +4882,7 @@ function renderCotacao(id) {
       <td>${f.respondidoEm ? `<span class="badge ok">${t.cotados}/${c.itens.length} itens</span>` : `<span class="badge ${atrasado ? (prazo.dias < 0 ? 'danger' : 'warn') : 'warn'}">${atrasado ? 'aguardando · ' + textoPrazo(prazo.dias, c.prazoHora) : 'aguardando'}</span>`}${f.cobradoEm && !f.respondidoEm ? `<br><span class="small muted">cobrado em ${fmtData(f.cobradoEm)}</span>` : ''}</td>
       <td class="r">${f.respondidoEm ? fmtMoeda(t.total) : '—'}</td>
       <td class="actions-cell">
-        ${pedidoDe[fi]
-          ? `<button class="sm primary" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido: só os itens que ${esc(f.nome)} ganhou (planilhas por loja ou somada) e marcar a cotação dele como concluída">⬇ Exportar (${pedidoDe[fi].itens.length})</button>`
-          : `<span class="btn-desligado" title="${f.respondidoEm ? `${esc(f.nome)} não ganhou nenhum item (com quantidade) no comparativo` : `${esc(f.nome)} ainda não respondeu: quando responder e ganhar itens, dá para exportar o pedido`}"><button class="sm" disabled>⬇ Exportar (0)</button></span>`}
+        ${botaoExportarForn(f, fi, pedidoDe[fi]?.itens.length || 0)}
         <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥 Importar<input type="file" class="hidden" accept=".xlsx,.xls" data-import="${fi}"></label>
         <button class="sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎ Digitar</button>
         <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="Baixar a planilha de cotação deste fornecedor (para enviar a ele)">⬇ Excel</button>
@@ -4940,7 +4972,7 @@ function renderCotacao(id) {
   const ordemForn = fornecedoresVisiveisComp(c); // colunas de fornecedores em ordem alfabética (sem quem não respondeu)
   const escondidos = c.fornecedores.length - ordemForn.length;
   const tabelaComp = `
-    <div class="table-wrap painel-comp"><table class="tab-comp">
+    <div class="table-wrap painel-comp"><table class="tab-comp${modoCompacto() ? ' compacto' : ''}">
       <thead><tr>
         <th class="c">#</th><th>Produto</th>${temResposta ? '' : '<th class="r">Qtd.</th>'}
         ${ordemForn.map(j => `<th class="r">${esc(c.fornecedores[j].nome)}</th>`).join('')}
@@ -4995,9 +5027,9 @@ function renderCotacao(id) {
         </tr>`;
         }).join('')}
         ${temResposta ? linhaTotalComp(c, comp) : ''}
-        ${temResposta ? COND_CAMPOS.map(([k, label]) => c.fornecedores.some(f => f.cond?.[k]) ? `<tr>
+        ${temResposta && ordemForn.length ? COND_CAMPOS.map(([k, label]) => ordemForn.some(j => c.fornecedores[j].cond?.[k]) ? `<tr>
           <td></td><td class="small muted">${label}</td>
-          ${c.fornecedores.map(f => `<td class="r small">${esc(f.cond?.[k] || '—')}</td>`).join('')}
+          ${ordemForn.map(j => `<td class="r small">${esc(c.fornecedores[j].cond?.[k] || '—')}</td>`).join('')}
           <td colspan="${(nf > 1 ? 4 : 3) + LJ.length}"></td></tr>` : '').join('') : ''}
       </tbody>
     </table></div>`;
@@ -5054,13 +5086,13 @@ function renderCotacao(id) {
   <section class="card">
     <div class="row-between">
       <h3>${temResposta ? 'Comparativo de preços' : 'Itens da cotação'}</h3>
-      ${temResposta ? `<div class="row">${seletorVencedor(c, comp)}<button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button></div>` : ''}
+      ${temResposta ? `<div class="row">${seletorVencedor(c, comp)}<button type="button" class="sm btn-compacto${modoCompacto() ? ' ativo' : ''}" data-act="alternarCompacto" aria-pressed="${modoCompacto()}" title="${modoCompacto() ? 'Mostrar as colunas de todos os fornecedores' : 'Esconder as colunas de cada fornecedor: fica só o preço escolhido, o 2º lugar e as quantidades (bom para meia tela)'}">${modoCompacto() ? '▦ Compacto' : '▤ Compacto'}</button><button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button></div>` : ''}
     </div>
     ${!temResposta ? '<div class="tip">⏳ <b>Aguardando as respostas dos fornecedores.</b> Assim que o primeiro responder (Importar ou Digitar, no quadro Fornecedores), aparecem aqui o <b>comparativo de preços</b>, as <b>quantidades das lojas</b>, o filtro <b>Mostrar itens de</b> e o botão <b>🗗 Janela flutuante</b>.</div>' : ''}
     ${temResposta ? `<div class="barra-comp small">
       ${escondidos ? `<span class="muted">${escondidos} fornecedor(es) ainda sem resposta não aparecem na tabela.</span> <button type="button" class="link" data-act="mostrarSemResposta">mostrar</button>` : ui.mostrarSemResposta && c.fornecedores.some(f => !Object.values(f.respostas || {}).some(o => o?.preco > 0)) ? '<button type="button" class="link" data-act="mostrarSemResposta">esconder quem não respondeu</button>' : ''}
-      ${comp.escolhasManuais ? `<button class="sm" data-act="limparEscolhas">Desfazer as ${comp.escolhasManuais} escolha(s)</button>` : ''}
-      <details class="ajuda-comp"><summary>ⓘ Como usar</summary>
+      <details class="ajuda-comp"><summary>ⓘ Como usar${comp.escolhasManuais ? ' · mais opções' : ''}</summary>
+        ${comp.escolhasManuais ? `<p><button type="button" class="sm danger" data-act="limparEscolhas">↺ Desfazer as ${comp.escolhasManuais} escolha(s) feitas na mão</button> <span class="small muted">volta todos esses itens para o menor preço (pede confirmação)</span></p>` : ''}
         ${nf > 1 ? '<p>O vencedor de cada item fica em <b>verde</b>. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço. Preços iguais: ganha quem respondeu primeiro.</p>' : ''}
         <p>📦 <b>Quantidades:</b> digite quantas unidades cada loja vai comprar nas colunas ${LJ.map(l => '<b>' + esc(l.nome) + '</b>').join(' e ')} (Enter ou ↓ vai para o item de baixo). Use <b>Mostrar itens de</b> para ver só os itens de um fornecedor. ${comp.porLoja ? '' : 'Enquanto nenhuma quantidade for digitada, os totais usam 1 unidade de cada item.'}</p>
       </details>
@@ -5071,17 +5103,17 @@ function renderCotacao(id) {
       const nDif = comp.linhas.filter(difSuspeita).length;
       const nDuv = comp.linhas.filter(l => l.duvida).length;
       const et = [];
-      if (nDuv) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso aviso-duvida" data-tipo="duvida" title="Clique para ver só esses itens. Itens na fila de Dúvidas não vão no pedido exportado até saírem da fila.">❓ ${nDuv} item(ns) em dúvida — fora do pedido</button>`);
-      if (nAg) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-recusa" data-tipo="aguardando" title="Clique para ver só esses itens. Linhas em vermelho: a marca foi recusada e não há outro preço, então o mais barato está sendo comprado assim mesmo. Quando chegar a resposta de outro fornecedor, ela passa a valer.">✗ ${nAg} item(ns) com a marca recusada (sem outro preço: comprando o mais barato)</button>`);
-      if (nDif) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-dif" data-tipo="dif" title="Clique para ver só esses itens. Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} item(ns) com mais de 100% de diferença — confira o preço</button>`);
-      if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} com marca diferente da pedida` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abreviação(ões) para conferir` : ''].filter(Boolean).join(' · ')}</button>`);
+      if (nDuv) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso aviso-duvida" data-tipo="duvida" title="Clique para ver só esses itens. Itens na fila de Dúvidas não vão no pedido exportado até saírem da fila.">❓ ${nDuv} em dúvida</button>`);
+      if (nAg) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-recusa" data-tipo="aguardando" title="Clique para ver só esses itens. Linhas em vermelho: a marca foi recusada e não há outro preço, então o mais barato está sendo comprado assim mesmo. Quando chegar a resposta de outro fornecedor, ela passa a valer.">✗ ${nAg} marca recusada</button>`);
+      if (nDif) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-dif" data-tipo="dif" title="Clique para ver só esses itens. Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} dif. &gt;100%</button>`);
+      if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} marca diferente` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abrev. a conferir` : ''].filter(Boolean).join(' · ')}</button>`);
       const nRegra = comp.linhas.filter(l => l.preferencia).length;
-      if (nRegra) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso regra" data-tipo="regra" title="Clique para ver só esses itens. A Comando ganha quando está até 5% acima do 1º lugar. Em cada item, clique no preço do mais barato para escolher ele.">⭐ ${nRegra} item(ns) da Comando ganhando pela regra dos 5%</button>`);
-      if (qtdDemora) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso demora" data-tipo="demora" title="Clique para ver só esses itens. Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} item(ns) GO da Rio Juntas (demoram mais para chegar)</button>`);
-      if (qtdAlertas) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso atencao aviso-alertas" data-tipo="alertas" title="Clique para ver só esses itens. Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} preço(s) fora do normal</button>`);
+      if (nRegra) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso regra" data-tipo="regra" title="Clique para ver só esses itens. A Comando ganha quando está até 5% acima do 1º lugar. Em cada item, clique no preço do mais barato para escolher ele.">⭐ ${nRegra} regra Comando</button>`);
+      if (qtdDemora) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso demora" data-tipo="demora" title="Clique para ver só esses itens. Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} GO (demora)</button>`);
+      if (qtdAlertas) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso atencao aviso-alertas" data-tipo="alertas" title="Clique para ver só esses itens. Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} fora do normal</button>`);
       const fa = filtroAviso(c);
       const ets = et.map(x => (fa && x.includes(`data-tipo="${fa}"`) ? x.replace('class="pill-aviso', 'class="pill-aviso ativo') : x));
-      return et.length ? `<div class="avisos-comp" data-filtro="${fa}">${ets.join('')}<button type="button" class="link limpar-aviso" data-act="filtroAviso" data-tipo="${fa}" ${fa ? '' : 'hidden'}>✕ ver todos os itens</button></div>` : '';
+      return et.length ? `<div class="avisos-comp" data-filtro="${fa}">${ets.join('')}<button type="button" class="link limpar-aviso" data-act="filtroAviso" data-tipo="${fa}" ${fa ? '' : 'hidden'}>✕ ver todos</button></div>` : '';
     })()}
     ${tabelaComp}
   </section>
@@ -6866,7 +6898,10 @@ const acoes = {
 
   limparEscolhas: async () => {
     const c = cotAtual();
-    if (!(await confirmar('Desfazer todas as escolhas feitas na mão e voltar ao menor preço em todos os itens?'))) return;
+    const comp = comparar(c);
+    const itens = comp.linhas.filter(l => l.manual || c.escolhas?.[l.i]);
+    const lista = itens.slice(0, 12).map(l => `• ${l.it.codigo || '#' + (l.i + 1)}: ${c.fornecedores[l.vencedor]?.nome || '—'} ${fmtMoeda(l.preco)}`).join('\n');
+    if (!(await confirmar(`Desfazer ${itens.length} escolha(s) feitas na mão?\n\nEsses itens voltam para o menor preço:\n${lista}${itens.length > 12 ? `\n… e mais ${itens.length - 12}` : ''}`, 'Desfazer as escolhas'))) return;
     c.escolhas = {};
     salvar();
     render();
@@ -7041,6 +7076,11 @@ const acoes = {
   },
   sairSupabase: () => sairSupabase(),
   abrirBusca: () => abrirBusca(),
+  alternarCompacto: () => {
+    try { localStorage.setItem(CHAVE_COMPACTO, modoCompacto() ? '0' : '1'); } catch (e) { /* sem acesso */ }
+    render();
+    toast(modoCompacto() ? 'Modo compacto: só o preço escolhido, o 2º lugar e as quantidades. Clique no 2º lugar para trocar.' : 'Modo completo: todas as colunas de fornecedores.');
+  },
   marcarConcluida: el => {
     const c = cotAtual();
     const f = c?.fornecedores[+el.dataset.f];

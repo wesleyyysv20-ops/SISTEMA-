@@ -81,7 +81,7 @@ test('Rio Juntas: itens com marca GO ficam destacados (demoram mais para chegar)
   // item 2: "SABO GO" da Rio Juntas também conta; "GOLD" não; quem ganha é a Via Peças (sem destaque na coluna Fornecedor)
   assert.equal(await linhas.nth(1).locator('td.demora').count(), 1);
   assert.equal(await linhas.nth(1).locator('.chip-demora').count(), 1);
-  assert.match(await page.locator('.pill-aviso.demora').innerText(), /2 item\(ns\) GO da Rio Juntas/);
+  assert.match(await page.locator('.pill-aviso.demora').innerText(), /🐢 2 GO \(demora\)/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
@@ -98,7 +98,7 @@ test('Comando: ganha até 5% acima do 1º lugar, com o detalhe; clicar no mais b
   assert.match(n(await linha.innerText()), /⭐ regra Comando · \+4,9% do 1º/);
   assert.match(n(await linha.innerText()), /COMANDO\s+pela regra dos 5% \(\+4,9% do 1º\)/);
   assert.match(n(await linha.innerText()), /\+4,9%[\s\S]*1º KAIZEN R\$ 100,00/, 'a Dif. mostra o mais barato de verdade');
-  assert.match(await page.locator('.pill-aviso.regra').innerText(), /1 item\(ns\) da Comando ganhando pela regra dos 5%/);
+  assert.match(await page.locator('.pill-aviso.regra').innerText(), /⭐ 1 regra Comando/);
   // escolher o mais barato (Kaizen) desfaz a regra neste item
   const kaizen = linha.locator('td.escolhivel', { hasText: '100,00' });
   const caixa = await kaizen.boundingBox();

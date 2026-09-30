@@ -1397,16 +1397,24 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .marca-alt.sem { font-weight: 500; font-style: italic; }
 .pip-segundo .marca-alt { margin-top: 0; font-size: 11.5px; }
 /* janela estreita (tela dividida com o DataCar): topo compacto, menu numa linha só (rola para o lado) */
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .topbar { gap: 6px 8px; padding: 6px 12px; }
   .brand { font-size: 14px; gap: 8px; }
   .logo-marca { width: 36px; height: 23px; }
   .status-nuvem { font-size: 11px; padding: 2px 8px; }
   .topo-atalhos { order: 2; margin-left: auto; }
   .topo-atalhos button { padding: 3px 7px; }
-  nav { order: 3; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px; }
+  nav { order: 3; width: 100%; flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px; }
   nav::-webkit-scrollbar { display: none; }
   nav a { white-space: nowrap; padding: 5px 9px; font-size: 13.5px; }
   main, main[data-tela="cotacao"], main[data-tela="nova"], main[data-tela="produtos"] { padding: 12px; }
 }
 @media (max-width: 560px) { .brand { font-size: 0; } .brand .logo-marca { font-size: 14px; } }
+
+/* comparativo: modo compacto e etiquetas curtas */
+.btn-compacto.ativo { background: color-mix(in srgb, var(--primary-2) 14%, var(--card)); color: var(--primary); border-color: color-mix(in srgb, var(--primary-2) 40%, var(--line)); font-weight: 600; }
+.tab-comp.compacto td { padding-top: 5px; padding-bottom: 5px; }
+.tab-comp.compacto td.col-escolhido { min-width: 150px; }
+.tab-comp.compacto .escolhe-dif { min-width: 150px; }
+.avisos-comp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.avisos-comp .pill-aviso { padding: 3px 10px; font-size: 12.5px; white-space: nowrap; }

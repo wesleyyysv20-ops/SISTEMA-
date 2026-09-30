@@ -95,7 +95,7 @@ test('diferença acima de 100% entre o 1º e o 2º: alerta de possível preço e
   assert.equal(await linhas.nth(0).locator('.chip-alerta-dif').count(), 0, '36,7%: sem alerta');
   assert.equal(await linhas.nth(1).locator('.chip-alerta-dif').innerText(), '⚠ confira o preço');
   assert.equal(await linhas.nth(1).locator('.dif-seg.suspeita').count(), 1);
-  assert.match(n(await page.locator('.aviso-dif').innerText()), /1 item\(ns\) com mais de 100% de diferença/);
+  assert.match(n(await page.locator('.aviso-dif').innerText()), /⚠ 1 dif\. >100%/);
   // escolhido o mais caro: continua avisando (o escolhido está mais de 100% acima do menor)
   await linhas.nth(1).locator('td.escolhivel', { hasText: '95,00' }).click();
   assert.equal(await page.locator('.tab-comp tbody tr[data-comp-linha]').nth(1).locator('.chip-alerta-dif').count(), 1);

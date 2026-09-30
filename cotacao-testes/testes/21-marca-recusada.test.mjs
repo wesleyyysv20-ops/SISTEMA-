@@ -31,7 +31,7 @@ test('marca recusada sem outro preço: o mais barato ganha assim mesmo, com a ma
   assert.doesNotMatch(txt, /aguardando outro preço/);
   assert.match(await linha(page, 0).getAttribute('class'), /\blinha-aguardando\b.*\bsit-aguardando\b/, 'linha vermelha em destaque');
   assert.equal(await linha(page, 0).locator('td.recusada-venc').count(), 1, 'o preço não fica riscado: está sendo comprado');
-  assert.match(n(await page.locator('.aviso-recusa').innerText()), /1 item\(ns\) com a marca recusada \(sem outro preço: comprando o mais barato\)/);
+  assert.match(n(await page.locator('.aviso-recusa').innerText()), /✗ 1 marca recusada/);
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 0);
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].recusadaGanhou), true);
   assert.match(n(await page.locator('#toast').innerText()), /Não há outro preço: o mais barato \(Auto Mix\) fica como escolhido/);

@@ -115,7 +115,7 @@ test('janela flutuante: escolher o fornecedor mostra só os itens que ele ganhou
   await j.locator('#pipForn').evaluate(el => { el.dataset.marca = 'aberta'; });
   await page.evaluate(() => { render(); atualizarQtdsTela(); });
   assert.equal(await j.locator('#pipForn').getAttribute('data-marca'), 'aberta', 'a lista continua a mesma');
-  await j.locator('#pipForn').selectOption({ label: 'VIA PEÇAS (2)' });
+  await j.locator('#pipForn').selectOption('f2');
   assert.match(n(await j.locator('.pip-barra').innerText()), /#2 · 1 de 2/);
   assert.match(n(await j.locator('.pip-forn').innerText()), /VIA PEÇAS/);
   assert.equal(await page.inputValue('#filtroVencedor'), 'f2', 'o comparativo mostra os mesmos itens');
@@ -237,7 +237,7 @@ test('janela flutuante: escolher o 2º lugar vai para o próximo item sem quanti
   await page.click('[data-route=cotacao][data-id=c1]');
   await page.click('[data-act=abrirPip]');
   const j = page.frameLocator('#janelaTeste');
-  await j.locator('#pipForn').selectOption({ label: 'KAIZEN (5)' });
+  await j.locator('#pipForn').selectOption('f1');
   // vai para o item 3 (COD-C)
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');

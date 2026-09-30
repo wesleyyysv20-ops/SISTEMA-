@@ -44,7 +44,7 @@ test('item em dúvida: linha destacada e fora do pedido exportado; sai da fila e
   await page.click('.dlg button[data-r="1"]'); // as duas lojas (as que têm quantidade)
   assert.match(await linha.getAttribute('class'), /\bsit-duvida\b/);
   assert.match(n(await linha.locator('.chip-duvida').innerText()), /❓ em dúvida · DPR \+ DSS · fora do pedido/);
-  assert.match(n(await page.locator('.pill-aviso.aviso-duvida').innerText()), /1 item\(ns\) em dúvida/);
+  assert.match(n(await page.locator('.pill-aviso.aviso-duvida').innerText()), /❓ 1 em dúvida/);
   assert.match(n(await page.locator('#secPedidos').innerText()), /1 item\(ns\) em Dúvidas ficam fora dos pedidos/);
   assert.deepEqual(await itensKaizen(page), [['COD-C', 4]]);
 

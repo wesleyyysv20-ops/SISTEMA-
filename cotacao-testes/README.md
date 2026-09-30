@@ -58,6 +58,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `51-nota-por-cotacao` | nota dos fornecedores: análise geral e por cotação (seletor em Relatórios e botão na cotação) |
 | `52-temas` | temas: automático, claro, suave, escuro e grafite (Configurações e botão 🎨), guardado no computador; todas as telas em cada tema |
 | `53-concluida` | pedido baixado por qualquer botão marca a cotação do fornecedor como concluída (por loja: quando todas saem); "✓ marcar concluída" para os já exportados |
+| `54-comparativo-compacto` | comparativo: modo compacto (guardado no computador), andamento de cada fornecedor em "Mostrar itens de", desfazer escolhas com a lista do que volta |
 
 ## Rodar
 
