@@ -41,7 +41,7 @@ test('tela de ~950px: a decisão fica presa à direita (versão estreita, 2º lu
 test('cotação finalizada: comparativo só para consulta até "Editar mesmo assim"', async () => {
   const s = await abrirCot('finalizada');
   const { page } = s;
-  assert.match(await page.locator('.aviso-travada').innerText(), /Cotação finalizada/);
+  assert.match(await page.locator('.aviso-travada').innerText(), /Finalizada[\s\S]*só para consulta/);
   const antes = await page.evaluate(() => comparar(db.cotacoes[0]).linhas[1].vencedor);
   // clicar num preço não troca o ganhador
   const outro = page.locator('tr[data-comp-linha="1"] > td:nth-child(3)'); // 1ª coluna de fornecedor (não é o ganhador)
@@ -82,6 +82,28 @@ test('comparativo: buscar item por código ou descrição filtra as linhas; Esc 
   assert.equal(await page.evaluate(() => db.cotacoes[0].qtds[2]), undefined);
   await page.press('#buscaComp', 'Escape');
   assert.equal(await vis(), 6);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
+
+test('status da cotação em botões, com confirmação (e aviso de pedido sem exportar)', async () => {
+  const s = await abrirCot('aberta');
+  const { page } = s;
+  assert.match(await page.locator('.status-cot button.ativo').innerText(), /Aberta/);
+  await page.click('.status-cot [data-status=finalizada]');
+  assert.match(await page.locator('.dlg').innerText(), /Ainda falta exportar[\s\S]*Finalizar a cotação nº 0060 mesmo assim/);
+  await page.click('.dlg button:text("Cancelar")');
+  assert.equal(await page.evaluate(() => db.cotacoes[0].status), 'aberta');
+  await page.click('.status-cot [data-status=finalizada]');
+  await page.click('.dlg button.primary');
+  assert.equal(await page.evaluate(() => db.cotacoes[0].status), 'finalizada');
+  assert.match(await page.locator('.status-cot button.ativo').innerText(), /Finalizada/);
+  assert.equal(await page.locator('.aviso-travada').count(), 1);
+  // reabrir também pergunta
+  await page.click('.status-cot [data-status=aberta]');
+  assert.match(await page.locator('.dlg').innerText(), /Reabrir a cotação nº 0060/);
+  await page.click('.dlg button.primary');
+  assert.equal(await page.evaluate(() => db.cotacoes[0].status), 'aberta');
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

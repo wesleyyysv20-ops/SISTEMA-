@@ -38,3 +38,21 @@ test('relatórios: administrador vê a aba normalmente', async () => {
   assert.deepEqual(erros, []);
   await page.close();
 });
+
+test('cotação finalizada: quem não é administrador não destrava nem reabre', async () => {
+  const cot = { id: 'c1', numero: '0061', data: '2026-09-30', status: 'finalizada', itens: [{ codigo: 'A', descricao: 'X', marca: 'NGK', quantidade: 1 }],
+    fornecedores: [{ fornecedorId: 'f1', nome: 'KAIZEN', respostas: { 0: { preco: 10, marca: 'NGK' } } }, { fornecedorId: 'f2', nome: 'VIA', respostas: { 0: { preco: 12, marca: 'NGK' } } }] };
+  const sb = supabaseFalso({ docs: new Map([['sistema/config', { loja: 'DISPPAR' }], ['cotacoes/c1', cot]]), liberados: ['wes@loja.com', 'ana@loja.com'], admins: ['wes@loja.com'] });
+  const { page } = await abrirSite(sb);
+  await logado(page, 'ana@loja.com', '123456');
+  await page.waitForFunction(() => nuvem.admin === false);
+  await page.evaluate(() => ir('cotacao', 'c1'));
+  await page.waitForSelector('.aviso-travada');
+  assert.equal(await page.locator('[data-act=destravarCot]').count(), 0);
+  assert.match(await page.locator('.aviso-travada').innerText(), /peça a um administrador/);
+  await page.click('.status-cot [data-status=aberta]');
+  assert.match(await page.locator('.dlg').innerText(), /Só um administrador pode reabrir/);
+  await page.click('.dlg button.primary');
+  assert.equal(await page.evaluate(() => db.cotacoes[0].status), 'finalizada');
+  await page.close();
+});

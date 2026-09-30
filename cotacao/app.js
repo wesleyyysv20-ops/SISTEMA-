@@ -4423,7 +4423,7 @@ function definirFiltroVencedor(c, valor) {
 
 function seletorVencedor(c, comp) {
   const atual = filtroVencedor(c);
-  return `<label class="filtro-venc">Mostrar itens de:
+  return `<label class="filtro-venc" title="Mostrar só os itens que um fornecedor ganhou"><span class="filtro-venc-rot">Itens de:</span>
     <select id="filtroVencedor" data-cot="${esc(c.id)}">
       ${opcoesVencedor(c, comp, atual)}
     </select></label>${botaoPedidoFiltro(c, atual)}<button type="button" class="sm btn-pip" data-act="abrirPip" title="Abre uma janela pequena com o item e as quantidades das lojas, para usar ao lado do DataCar (no Chrome/Edge ela fica sempre por cima). Enter vai para o próximo item.">🗗 Janela flutuante</button>`;
@@ -4861,13 +4861,24 @@ function botaoExportarForn(f, fi, n) {
     ? `<button class="sm primary" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido: só os itens que ${esc(f.nome)} ganhou (planilhas por loja ou somada) e marcar a cotação dele como concluída">⬇ Exportar (${n})</button>`
     : `<span class="btn-desligado" title="${f.respondidoEm ? `${esc(f.nome)} não ganhou nenhum item (com quantidade) no comparativo` : `${esc(f.nome)} ainda não respondeu: quando responder e ganhar itens, dá para exportar o pedido`}"><button class="sm" disabled>⬇ Exportar (0)</button></span>`}</span>`;
 }
+/** Administrador (ou uso local, sem login na nuvem). */
+function ehAdmin() {
+  return !nuvem.usuario || nuvem.admin === true;
+}
+
+/** Status da cotação em três botões (troca com confirmação). */
+function seletorStatusCot(c) {
+  return `<div class="status-cot" role="group" aria-label="Status da cotação">${Object.entries(STATUS).map(([k, [t, cls]]) => `<button type="button" class="st-${cls}${c.status === k ? ' ativo' : ''}" data-act="mudarStatusCot" data-status="${k}" aria-pressed="${c.status === k}">${c.status === k ? '● ' : ''}${esc(t)}</button>`).join('')}</div>`;
+}
+
 /** Cotação finalizada fica só para consulta (até você destravar nesta tela). */
 function cotTravada(c) {
   return !!c && c.status === 'finalizada' && !ui.destravadas?.has(c.id);
 }
 const ACOES_TRAVADAS = new Set(['escolherVencedor', 'duvidaItem', 'marcaResposta', 'removerPreco', 'limparEscolhas', 'conferirPreco', 'conferirDif']);
 function avisarTravada() {
-  toast('🔒 Cotação finalizada: só para consulta. Para mudar algo, clique em "Editar mesmo assim" no comparativo.');
+  toast(ehAdmin() ? '🔒 Cotação finalizada: só para consulta. Para mudar algo, clique em "Editar mesmo assim" no comparativo.'
+    : '🔒 Cotação finalizada: só para consulta. Para mudar algo, peça a um administrador.');
 }
 
 /** Números da cotação para o cabeçalho: pedido, economia, pedidos exportados, quantidades e dúvidas. */
@@ -5202,22 +5213,24 @@ function renderCotacao(id) {
     </table></div>`;
 
   return `
-  <section class="card">
-    <div class="row-between">
-      <div><h2>Cotação nº ${esc(c.numero)} ${statusBadge(c.status)}${c.arquivada ? ' <span class="badge">🗂️ arquivada</span>' : ''}</h2>
-      <div id="presencaCot" class="presenca" data-cot="${esc(c.id)}" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div></div>
-      <div class="row">
-        ${podeVerRelatorios() ? `<button type="button" data-act="analiseCot" data-id="${esc(c.id)}" title="Nota dos fornecedores só nesta cotação">📊 Análise dos fornecedores</button>` : ''}
-        <a class="btn" href="#" data-route="cotacoes">← Voltar</a>
-        <select data-change="statusCot" style="width:auto">
-          ${Object.entries(STATUS).map(([k, [t]]) => `<option value="${k}" ${c.status === k ? 'selected' : ''}>${t}</option>`).join('')}
-        </select>
+  <section class="card card-cab-cot">
+    <a href="#" class="voltar-cot" data-route="cotacoes">← Cotações</a>
+    <div class="cab-cot">
+      <div class="cab-cot-titulo">
+        <h2>Cotação nº ${esc(c.numero)}${c.arquivada ? ' <span class="badge">🗂️ arquivada</span>' : ''}</h2>
+        <span class="titulo-cot">${c.titulo ? `<b>${esc(c.titulo)}</b>` : '<span class="muted">Sem título</span>'} <button type="button" class="link editar-titulo" data-act="editarTituloCot" data-id="${esc(c.id)}" title="${c.titulo ? 'Editar o título da cotação' : 'Dar um título à cotação'}">✎</button></span>
+      </div>
+      <div class="cab-cot-acoes">
+        ${podeVerRelatorios() ? `<button type="button" class="sm" data-act="analiseCot" data-id="${esc(c.id)}" title="Nota dos fornecedores só nesta cotação">📊 Análise</button>` : ''}
+        ${seletorStatusCot(c)}
       </div>
     </div>
-    <p class="muted" style="margin:0">Criada em ${fmtData(c.data)} · ${c.status === 'finalizada' ? '' : `<label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"><input type="time" data-change="prazoHoraCot" value="${esc(c.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></label> · `}${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
+    <div class="cab-cot-linha2">
+      <p class="muted">Criada em ${fmtData(c.data)} · ${c.status === 'finalizada' ? '' : `<label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"><input type="time" data-change="prazoHoraCot" value="${esc(c.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></label> · `}${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
+      <div id="presencaCot" class="presenca" data-cot="${esc(c.id)}" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div>
+    </div>
     ${prazo ? `<p class="aviso-prazo ${prazo.dias < 0 ? 'vencido' : ''}">⏰ O prazo de resposta ${textoPrazo(prazo.dias, c.prazoHora)} (${textoDataPrazo(c)}) e ${prazo.pendentes.length === 1 ? 'falta 1 fornecedor responder' : `faltam ${prazo.pendentes.length} fornecedores responderem`}: <b>${prazo.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</b>.
       <button class="sm" data-act="cobrarPendentes">📣 Cobrar quem falta</button></p>` : ''}
-    <p class="titulo-cot" style="margin:6px 0 0">${c.titulo ? `<b>${esc(c.titulo)}</b>` : '<span class="muted">Sem título</span>'} <button type="button" class="link editar-titulo" data-act="editarTituloCot" data-id="${esc(c.id)}" title="Editar o título da cotação">✎ ${c.titulo ? 'Editar título' : 'Dar um título'}</button></p>
     ${c.obs ? `<p class="small" style="margin:6px 0 0;white-space:pre-wrap">${esc(c.obs)}</p>` : ''}
     <div id="resumoCot">${temResposta ? htmlResumoCot(c, comp) : ''}</div>
   </section>
@@ -5255,19 +5268,20 @@ function renderCotacao(id) {
   <section class="card">
     <div class="row-between">
       <h3>${temResposta ? 'Comparativo de preços' : 'Itens da cotação'}</h3>
-      ${temResposta ? `<div class="row"><span class="busca-comp-caixa"><input type="search" id="buscaComp" class="busca-comp" placeholder="🔎 Buscar código ou descrição" value="${esc(buscaComp(c))}" autocomplete="off" aria-label="Buscar item no comparativo" title="Filtra as linhas enquanto você digita (Esc limpa)"><span id="buscaCompCont" class="small muted"></span></span>${seletorVencedor(c, comp)}<button type="button" class="sm btn-compacto${modoCompacto() ? ' ativo' : ''}" data-act="alternarCompacto" aria-pressed="${modoCompacto()}" title="${modoCompacto() ? 'Mostrar as colunas de todos os fornecedores' : 'Esconder as colunas de cada fornecedor: fica só o preço escolhido, o 2º lugar e as quantidades (bom para meia tela)'}">${modoCompacto() ? '▦ Compacto' : '▤ Compacto'}</button><button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button></div>` : ''}
+      ${temResposta ? `<div class="row"><span class="busca-comp-caixa"><input type="search" id="buscaComp" class="busca-comp" placeholder="🔎 Código ou descrição" value="${esc(buscaComp(c))}" autocomplete="off" aria-label="Buscar item no comparativo" title="Filtra as linhas enquanto você digita (Esc limpa)"><span id="buscaCompCont" class="small muted"></span></span>${seletorVencedor(c, comp)}<button type="button" class="sm btn-compacto${modoCompacto() ? ' ativo' : ''}" data-act="alternarCompacto" aria-pressed="${modoCompacto()}" title="${modoCompacto() ? 'Mostrar as colunas de todos os fornecedores' : 'Esconder as colunas de cada fornecedor: fica só o preço escolhido, o 2º lugar e as quantidades (bom para meia tela)'}">${modoCompacto() ? '▦ Compacto' : '▤ Compacto'}</button><button class="sm" data-act="exportarComparativo" title="Exportar o comparativo para o Excel">⬇ Excel</button></div>` : ''}
     </div>
     ${!temResposta ? '<div class="tip">⏳ <b>Aguardando as respostas dos fornecedores.</b> Assim que o primeiro responder (Importar ou Digitar, no quadro Fornecedores), aparecem aqui o <b>comparativo de preços</b>, as <b>quantidades das lojas</b>, o filtro <b>Mostrar itens de</b> e o botão <b>🗗 Janela flutuante</b>.</div>' : ''}
+    <div class="faixa-comp">
     ${temResposta ? `<div class="barra-comp small">
       ${escondidos ? `<span class="muted">${escondidos} fornecedor(es) ainda sem resposta não aparecem na tabela.</span> <button type="button" class="link" data-act="mostrarSemResposta">mostrar</button>` : ui.mostrarSemResposta && c.fornecedores.some(f => !Object.values(f.respostas || {}).some(o => o?.preco > 0)) ? '<button type="button" class="link" data-act="mostrarSemResposta">esconder quem não respondeu</button>' : ''}
-      <details class="ajuda-comp"><summary>ⓘ Como usar${comp.escolhasManuais ? ' · mais opções' : ''}</summary>
+      <details class="ajuda-comp"><summary title="Como usar o comparativo${comp.escolhasManuais ? ' e mais opções' : ''}">ⓘ${comp.escolhasManuais ? ' mais opções' : ' Como usar'}</summary>
         ${comp.escolhasManuais ? `<p><button type="button" class="sm danger" data-act="limparEscolhas">↺ Desfazer as ${comp.escolhasManuais} escolha(s) feitas na mão</button> <span class="small muted">volta todos esses itens para o menor preço (pede confirmação)</span></p>` : ''}
         ${nf > 1 ? '<p>O vencedor de cada item fica em <b>verde</b>. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço. Preços iguais: ganha quem respondeu primeiro.</p>' : ''}
         <p>📦 <b>Quantidades:</b> digite quantas unidades cada loja vai comprar nas colunas ${LJ.map(l => '<b>' + esc(l.nome) + '</b>').join(' e ')} (Enter ou ↓ vai para o item de baixo). Use <b>Mostrar itens de</b> para ver só os itens de um fornecedor. ${comp.porLoja ? '' : 'Enquanto nenhuma quantidade for digitada, os totais usam 1 unidade de cada item.'}</p>
       </details>
     </div>` : ''}
     ${temResposta && c.status === 'finalizada' ? (cotTravada(c)
-      ? '<div class="aviso-travada">🔒 <b>Cotação finalizada:</b> o comparativo está só para consulta (escolhas, dúvidas e quantidades não mudam por acidente). <button type="button" class="sm" data-act="destravarCot">🔓 Editar mesmo assim</button></div>'
+      ? `<div class="aviso-travada" title="Escolhas, dúvidas e quantidades não mudam por acidente">🔒 <b>Finalizada</b> — só para consulta.${ehAdmin() ? ' <button type="button" class="sm" data-act="destravarCot">🔓 Editar mesmo assim</button>' : ' <span class="muted">Para mudar algo, peça a um administrador.</span>'}</div>`
       : '<div class="aviso-travada aberta">🔓 <b>Edição liberada</b> nesta cotação finalizada. <button type="button" class="sm" data-act="travarCot">🔒 Travar de novo</button></div>') : ''}
     ${(() => {
       // avisos do comparativo em etiquetas curtas, lado a lado (o texto completo aparece ao passar o mouse)
@@ -5287,6 +5301,7 @@ function renderCotacao(id) {
       const ets = et.map(x => (fa && x.includes(`data-tipo="${fa}"`) ? x.replace('class="pill-aviso', 'class="pill-aviso ativo') : x));
       return et.length ? `<div class="avisos-comp" data-filtro="${fa}">${ets.join('')}<button type="button" class="link limpar-aviso" data-act="filtroAviso" data-tipo="${fa}" ${fa ? '' : 'hidden'}>✕ ver todos</button></div>` : '';
     })()}
+    </div>
     ${tabelaComp}
   </section>
 
@@ -7416,9 +7431,34 @@ const acoes = {
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
   analiseForn: el => abrirAnaliseFornecedor(el.dataset.id),
+  mudarStatusCot: async el => {
+    const c = cotAtual();
+    const novo = el.dataset.status;
+    if (!c || !STATUS[novo] || c.status === novo) return;
+    // tirar do "finalizada" libera a edição: só administrador
+    if (c.status === 'finalizada' && !ehAdmin()) return avisar('Só um administrador pode reabrir ou cancelar uma cotação finalizada.');
+    let msg;
+    if (novo === 'finalizada') {
+      const pend = pedidosPorFornecedor(c).filter(p => !p.f.concluidoEm);
+      msg = pend.length
+        ? `Ainda falta exportar ${pend.length === 1 ? 'o pedido de' : `${pend.length} pedidos:`} ${pend.map(p => p.f.nome).join(', ')}.\n\nFinalizar a cotação nº ${c.numero} mesmo assim? Ela fica só para consulta e sai das pendências.`
+        : `Finalizar a cotação nº ${c.numero}?\n\nEla fica só para consulta (sem mudanças por acidente) e sai das pendências.`;
+    } else if (novo === 'cancelada') {
+      msg = `Cancelar a cotação nº ${c.numero}?\n\nEla sai das pendências e dos relatórios.`;
+    } else {
+      msg = `Reabrir a cotação nº ${c.numero}?\n\nEla volta a poder ser editada e a aparecer nas pendências.`;
+    }
+    if (!(await confirmar(msg, novo === 'finalizada' ? 'Finalizar' : novo === 'cancelada' ? 'Cancelar a cotação' : 'Reabrir'))) return;
+    c.status = novo;
+    ui.destravadas?.delete(c.id);
+    salvar();
+    render();
+    toast(`Cotação nº ${c.numero}: ${STATUS[novo][0].toLowerCase()}.`);
+  },
   destravarCot: el => {
     const c = cotAtual();
     if (!c) return;
+    if (!ehAdmin()) return avisar('Só um administrador pode editar uma cotação finalizada.');
     ui.destravadas = new Set([...(ui.destravadas || []), c.id]);
     render();
     toast('🔓 Edição liberada nesta tela. A cotação continua finalizada.');
