@@ -1418,3 +1418,8 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .tab-comp.compacto .escolhe-dif { min-width: 150px; }
 .avisos-comp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .avisos-comp .pill-aviso { padding: 3px 10px; font-size: 12.5px; white-space: nowrap; }
+/* janela flutuante: exportar, só os que faltam */
+.pip-exportar { margin-top: 5px; width: 100%; }
+.pip-faltam { display: flex; justify-content: space-between; align-items: center; gap: 6px; text-align: left; }
+.pip-sofaltam { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-size: 11px; color: var(--muted); cursor: pointer; }
+.pip-sofaltam input { width: auto; margin: 0; }

@@ -1249,9 +1249,9 @@ function abrirDialogo(msg, botoes, doc = document) {
 }
 
 /** Diálogo com um campo (texto com sugestões ou lista). Devolve o valor, ou null se cancelar. */
-function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK' } = {}) {
+function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK', doc = document } = {}) {
   return new Promise(resolve => {
-    const fundo = document.createElement('div');
+    const fundo = doc.createElement('div');
     fundo.className = 'dlg-fundo';
     const campo = tipo === 'lista'
       ? `<select id="dlgCampo">${opcoes.map(o => `<option value="${esc(o.valor)}">${esc(o.texto)}</option>`).join('')}</select>`
@@ -1262,7 +1262,7 @@ function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK' } 
       <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" class="primary" data-r="1">${esc(ok)}</button></div>
     </div>`;
     const inp = () => fundo.querySelector('#dlgCampo');
-    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const fechar = v => { fundo.remove(); doc.removeEventListener('keydown', tecla, true); resolve(v); };
     const tecla = e => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(null); }
       else if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); fechar(inp().value.trim() || null); }
@@ -1273,8 +1273,8 @@ function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK' } 
       const b = e.target.closest('button[data-r]');
       if (b) fechar(b.dataset.r === '1' ? (inp().value.trim() || null) : null);
     });
-    document.addEventListener('keydown', tecla, true);
-    document.body.appendChild(fundo);
+    doc.addEventListener('keydown', tecla, true);
+    doc.body.appendChild(fundo);
     inp().focus();
     if (inp().select) inp().select();
   });
@@ -1284,8 +1284,8 @@ function confirmar(msg, ok = 'Confirmar', doc = document) {
   return abrirDialogo(msg, [{ txt: 'Cancelar', valor: false }, { txt: ok, valor: true, cls: 'primary' }], doc);
 }
 
-function avisar(msg) {
-  return abrirDialogo(msg, [{ txt: 'OK', valor: undefined, cls: 'primary' }]);
+function avisar(msg, doc = document) {
+  return abrirDialogo(msg, [{ txt: 'OK', valor: undefined, cls: 'primary' }], doc);
 }
 
 const TIPO_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -1296,16 +1296,18 @@ const TIPO_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
  * gerar() devolve o Blob. Retorna false se a pessoa cancelou.
  */
 let ultimoSalvo = null; // o próximo "Salvar como" abre na mesma pasta
+let janelaSalvar = null; // exportando pela janela flutuante: a janela "Salvar como" é aberta por ela
 async function salvarComo(nome, gerar, tipo = { description: 'Planilha do Excel', accept: { [TIPO_XLSX]: ['.xlsx'] } }) {
-  if (!nuvem.downloads && typeof window.showSaveFilePicker === 'function') {
+  const jan = janelaSalvar && !janelaSalvar.closed && typeof janelaSalvar.showSaveFilePicker === 'function' ? janelaSalvar : window;
+  if (!nuvem.downloads && typeof jan.showSaveFilePicker === 'function') {
     let handle = null;
     try {
       const opcoes = { suggestedName: nome, types: [tipo] };
       try {
-        handle = await window.showSaveFilePicker(ultimoSalvo ? { ...opcoes, startIn: ultimoSalvo } : opcoes);
+        handle = await jan.showSaveFilePicker(ultimoSalvo ? { ...opcoes, startIn: ultimoSalvo } : opcoes);
       } catch (e) {
         if (!ultimoSalvo || (e && e.name === 'AbortError')) throw e;
-        handle = await window.showSaveFilePicker(opcoes); // pasta anterior não existe mais
+        handle = await jan.showSaveFilePicker(opcoes); // pasta anterior não existe mais
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return false; // cancelou a janela
@@ -4445,7 +4447,7 @@ function htmlChecklistPedido(c, lista, total) {
   </div>`;
 }
 
-function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos = () => [], checklist = '', pendente = false }) {
+function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos = () => [], checklist = '', pendente = false, doc = document }) {
   const LJ = lojas();
   const opcoes = [
     { valor: 'individual', titulo: 'Planilhas individuais por loja', texto: `Um arquivo para cada loja, com a quantidade e o endereço de entrega dela${lojasComItens.length > 1 ? ` (${lojasComItens.map(x => x.nome).join(' e ')}, cada uma com o seu "Salvar como")` : ''}.`, desligada: !porLoja || !lojasComItens.length },
@@ -4454,7 +4456,7 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos
   const atual = padrao ? (padrao.tipo === 'individual' ? 'individual' : 'somada:' + padrao.lojaId) : null;
   let marcada = opcoes.find(o => o.valor === atual && !o.desligada) || opcoes.find(o => !o.desligada);
   return new Promise(resolve => {
-    const fundo = document.createElement('div');
+    const fundo = doc.createElement('div');
     fundo.className = 'dlg-fundo';
     fundo.innerHTML = `<div class="dlg dlg-formato" role="dialog" aria-modal="true" aria-label="Exportar pedido">
       <h3 style="margin:0 0 4px">⬇ Exportar pedido — ${esc(f.nome)}</h3>
@@ -4476,7 +4478,7 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos
         <input data-nome-arq="${esc(x.id)}" value="${esc(x.nome)}" autocomplete="off" spellcheck="false"></label>`).join('')}` : '';
     };
     fundo.addEventListener('change', e => { if (e.target.name === 'formatoExport') mostrarNomes(); });
-    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const fechar = v => { fundo.remove(); doc.removeEventListener('keydown', tecla, true); resolve(v); };
     const confirmar = () => {
       const v = fundo.querySelector('input[name=formatoExport]:checked')?.value;
       if (!v) return;
@@ -4493,20 +4495,20 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos
       const b = e.target.closest('button[data-r]');
       if (b) { if (b.dataset.r === '1') confirmar(); else if (b.dataset.r === 'revisar') fechar({ revisar: true }); else fechar(null); }
     });
-    document.addEventListener('keydown', tecla, true);
-    document.body.appendChild(fundo);
+    doc.addEventListener('keydown', tecla, true);
+    doc.body.appendChild(fundo);
     mostrarNomes();
     fundo.querySelector('input[name=formatoExport]:checked')?.focus();
   });
 }
 
 /** Exporta o pedido de um fornecedor no formato que ele usa e marca a cotação dele como concluída. */
-async function exportarPedidoForn(c, fi) {
+async function exportarPedidoForn(c, fi, doc = document) {
   const f = c.fornecedores[fi];
   const LJ = lojas();
   const comp = comparar(c);
   const total = pedidosPorFornecedor(c).find(p => p.fi === fi);
-  if (!f || !total) return avisar('Este fornecedor não ganhou nenhum item com quantidade.');
+  if (!f || !total) return avisar('Este fornecedor não ganhou nenhum item com quantidade.', doc);
   const porLoja = LJ.map(lj => ({ lj, ped: pedidosPorFornecedor(c, lj.id).find(p => p.fi === fi) })).filter(x => x.ped);
   const cad = db.fornecedores.find(x => x.id === f.fornecedorId);
   const nomeSomada = lj => `Pedido_${c.numero}_${slug(f.nome)}_entrega_${slug(lj.nome)}.xlsx`;
@@ -4520,7 +4522,7 @@ async function exportarPedidoForn(c, fi) {
   const lista = checklistPedido(c, fi);
   const ganhos = comp.linhas.filter(l => l.vencedor === fi).length;
   const pendente = lista.some(x => x.nivel !== 'info');
-  const resp = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja, nomesArquivos, checklist: htmlChecklistPedido(c, lista, ganhos), pendente });
+  const resp = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja, nomesArquivos, checklist: htmlChecklistPedido(c, lista, ganhos), pendente, doc });
   if (!resp) return;
   if (resp.revisar) {
     // mostra só os itens deste fornecedor e leva até o primeiro com pendência
@@ -4547,12 +4549,12 @@ async function exportarPedidoForn(c, fi) {
     // (o navegador só abre a janela de salvar depois de um clique)
     const salvas = [];
     for (const [k, a] of arquivos.entries()) {
-      if (k > 0 && !(await confirmar(`✓ Planilha de ${porLoja[k - 1].lj.nome} salva.\n\nAgora salve a planilha de ${porLoja[k].lj.nome}.`, `Salvar a de ${porLoja[k].lj.nome}`))) break;
+      if (k > 0 && !(await confirmar(`✓ Planilha de ${porLoja[k - 1].lj.nome} salva.\n\nAgora salve a planilha de ${porLoja[k].lj.nome}.`, `Salvar a de ${porLoja[k].lj.nome}`, doc))) break;
       if (!(await baixarWorkbook(a.wb, a.nome))) break;
       salvas.push(porLoja[k].lj.nome);
     }
     ok = salvas.length === arquivos.length;
-    if (!ok && salvas.length) return avisar(`Só a planilha de ${salvas.join(' e ')} foi salva. A cotação de ${f.nome} não foi marcada como concluída: exporte de novo para salvar as outras.`);
+    if (!ok && salvas.length) return avisar(`Só a planilha de ${salvas.join(' e ')} foi salva. A cotação de ${f.nome} não foi marcada como concluída: exporte de novo para salvar as outras.`, doc);
   } else {
     const lj = LJ.find(x => x.id === escolha.lojaId) || LJ[0];
     const wb = novoWb();
@@ -7566,7 +7568,7 @@ function abrirAtalhos() {
     ${grupo('Em qualquer tela', [['Ctrl+K', 'Busca rápida: código, descrição, cotação, fornecedor ou tela'], ['?', 'Esta lista de atalhos'], ['Alt+Tab', 'Sair e voltar para o sistema: o cursor continua no mesmo campo']])}
     ${grupo('Nova cotação (lista de itens)', [['↑ / ↓', 'Anda pelos itens (mesmo com o cursor fora da lista)'], ['Home / End', 'Primeiro / último item'], ['qualquer letra', 'Começa a preencher a marca do item'], ['Enter', 'Salva a marca só nesta cotação e desce'], ['Enter+Enter', 'Enter duas vezes: grava a marca como padrão no cadastro'], ['F2', 'Editar a marca do item'], ['Backspace', 'Limpar a marca'], ['Esc', 'Desfaz a edição do campo'], ['Ctrl+Delete', 'Tirar o item da cotação']])}
     ${grupo('Comparativo (quantidades)', [['Enter / ↓', 'Mesma loja, próximo item'], ['↑', 'Item anterior'], ['← / →', 'Troca de loja na mesma linha'], ['Tab', 'Próxima loja; na última, o próximo item'], ['número', 'Fora dos campos: vai direto para a quantidade da linha marcada'], ['0', 'Não comprar nesta loja']])}
-    ${grupo('Janela flutuante', [['Enter / ↓', 'Próximo item'], ['↑', 'Item anterior'], ['← / → / Tab', 'Troca de loja'], ['clique no código', 'Copia o código (para colar no DataCar)']])}
+    ${grupo('Janela flutuante', [['Enter / ↓', 'Próximo item'], ['↑', 'Item anterior'], ['← / → / Tab', 'Troca de loja'], ['C', 'Copia o código (para colar no DataCar)'], ['D', 'Põe o item em Dúvida'], ['S / 2', 'Escolhe o 2º lugar (o 2 fora do campo de quantidade)'], ['/', 'Vai para um item pelo código']])}
     ${grupo('Janelas de confirmação', [['Enter', 'Confirma'], ['Esc', 'Cancela']])}
   </div>`;
 }
@@ -7991,7 +7993,7 @@ async function escolherVencedorItem(c, i, fi, doc = document) {
  * Para quem usa uma tela só, dividida com o DataCar: uma janelinha sempre por cima das outras
  * com o item atual e as quantidades das lojas. Chrome/Edge 116+ (documentPictureInPicture). */
 
-const pip = { win: null, cotId: null, i: null, loja: 0, flutuante: false };
+const pip = { win: null, cotId: null, i: null, loja: 0, flutuante: false, soFaltam: (() => { try { return localStorage.getItem('cotacao.pipSoFaltam') === '1'; } catch (e) { return false; } })() };
 window.addEventListener('pagehide', () => { try { pip.win?.close(); } catch (e) { /* já fechada */ } });
 const pipSuportado = () => typeof window.documentPictureInPicture?.requestWindow === 'function';
 
@@ -8065,6 +8067,7 @@ async function abrirPip() {
     else if (acao === 'copiar') copiarCodigoPip(b);
     else if (acao === 'duvida') duvidaPip();
     else if (acao === 'escolher') escolherPip(+b.dataset.f);
+    else if (acao === 'exportar') exportarPip(+b.dataset.f);
   });
   d.addEventListener('keydown', marcarTecla, true);
   d.addEventListener('input', marcarTecla, true);
@@ -8074,6 +8077,14 @@ async function abrirPip() {
     if (e.target.id === 'pipForn' && pip.redesenharDepois) setTimeout(() => desenharPip(false), 0);
   });
   d.addEventListener('change', e => {
+    if (e.target.dataset?.pipSofaltam != null) {
+      pip.soFaltam = e.target.checked;
+      try { localStorage.setItem('cotacao.pipSoFaltam', pip.soFaltam ? '1' : '0'); } catch (err) { /* sem acesso */ }
+      const cot = db.cotacoes.find(x => x.id === pip.cotId);
+      // ligou: se o item atual já tem quantidade, vai para o próximo que falta
+      if (pip.soFaltam && cot && !pendentesPip(cot, [pip.i]).length) irPip(1); else desenharPip(true);
+      return;
+    }
     if (e.target.id !== 'pipForn') return;
     e.target.blur(); // escolheu: a lista sai de foco para a janela poder se redesenhar
     const cot = db.cotacoes.find(x => x.id === pip.cotId);
@@ -8092,6 +8103,18 @@ function teclaPip(e, d) {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   const t = e.target;
   if (t.tagName === 'SELECT' || d.querySelector('.dlg-fundo')) return; // lista de fornecedores ou diálogo aberto
+  // atalhos de uma tecla (as quantidades só aceitam números, então as letras ficam livres)
+  const naQtd = t.dataset?.qtdLoja != null;
+  const atalho = e.key === '/' ? 'buscar' : /^[cC]$/.test(e.key) ? 'copiar' : /^[dD]$/.test(e.key) ? 'duvida'
+    : /^[sS]$/.test(e.key) || (e.key === '2' && !naQtd) ? 'segundo' : null;
+  if (atalho && !(t.matches?.('input, textarea') && !naQtd)) {
+    e.preventDefault();
+    if (atalho === 'copiar') { const b = d.querySelector('.pip-cod'); if (b) copiarCodigoPip(b); }
+    else if (atalho === 'duvida') { if (d.querySelector('.pip-btn-duv')) duvidaPip(); }
+    else if (atalho === 'segundo') { const b = d.querySelector('.pip-segundo'); if (b) escolherPip(+b.dataset.f); }
+    else buscarPip();
+    return;
+  }
   const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
   const k = campos.indexOf(t);
   if (k < 0) {
@@ -8133,8 +8156,14 @@ function avisoConcluidoPip(c, lista) {
   const falta = pendentesPip(c, lista).length;
   const valor = filtroVencedor(c);
   const de = valor === '__sem' ? 'sem preço' : valor ? c.fornecedores.find(f => f.fornecedorId === valor)?.nome || '' : 'da cotação';
-  if (!falta) return `<div class="pip-concluido" role="status">✓ Todos os itens ${valor && valor !== '__sem' ? `de <b>${esc(de)}</b>` : esc(de)} já têm a quantidade informada.</div>`;
-  return `<div class="pip-faltam">faltam <b>${falta}</b> de ${lista.length}</div>`;
+  const fi = valor && valor !== '__sem' ? c.fornecedores.findIndex(f => f.fornecedorId === valor) : -1;
+  if (!falta) {
+    const f = c.fornecedores[fi];
+    const exp = !f ? '' : f.concluidoEm ? '<br><span class="small">✓ pedido já exportado</span>'
+      : `<br><button type="button" class="sm primary pip-exportar" data-pip="exportar" data-f="${fi}" title="Exportar o pedido de ${esc(f.nome)} (com o checklist) sem sair desta janela">⬇ Exportar pedido de ${esc(f.nome)}</button>`;
+    return `<div class="pip-concluido" role="status">✓ Todos os itens ${fi >= 0 ? `de <b>${esc(de)}</b>` : esc(de)} já têm a quantidade informada.${exp}</div>`;
+  }
+  return `<div class="pip-faltam"><label class="pip-sofaltam" title="Enter e as setas passam só pelos itens ainda sem quantidade"><input type="checkbox" data-pip-sofaltam ${pip.soFaltam ? 'checked' : ''}> só os que faltam</label><span>faltam <b>${falta}</b> de ${lista.length}</span></div>`;
 }
 
 function irPip(delta) {
@@ -8143,6 +8172,12 @@ function irPip(delta) {
   const lista = itensPip(c);
   const pos = lista.indexOf(pip.i);
   let novo = lista[pos < 0 ? 0 : pos + delta];
+  if (pip.soFaltam) {
+    // só os que faltam: pula os itens que já têm quantidade
+    const pend = pendentesPip(c, lista).filter(i => i !== pip.i);
+    const ordem = i => lista.indexOf(i);
+    novo = delta > 0 ? pend.find(i => ordem(i) > pos) : [...pend].reverse().find(i => ordem(i) < pos);
+  }
   // Enter no último item: volta para o primeiro que ainda está sem quantidade
   if (novo == null && delta > 0) novo = pendentesPip(c, lista).find(i => i !== pip.i);
   if (novo == null) { desenharPip(true); return; } // já é o primeiro/último
@@ -8177,6 +8212,46 @@ async function escolherPip(fi) {
   }
   desenharPip(true);
   toast(`Item ${c.itens[antes]?.codigo || ''}: comprando de ${c.fornecedores[comparar(c).linhas[antes].vencedor]?.nome || ''}.${prox !== antes ? ` Próximo: ${c.itens[prox]?.codigo || ''}.` : ''}`);
+}
+
+/** Exportar o pedido pela janela flutuante: formato, checklist e "Salvar como" abrem nela mesma. */
+async function exportarPip(fi) {
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  if (!c || !pip.win) return;
+  janelaSalvar = pip.win;
+  try {
+    await exportarPedidoForn(c, fi, pip.win.document);
+  } finally {
+    janelaSalvar = null;
+  }
+  desenharPip(true);
+}
+
+/** "/" na janela flutuante: vai direto para um item pelo código (ou pela descrição). */
+async function buscarPip() {
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  if (!c || !pip.win) return;
+  const txt = await pedirValor('Ir para o item (código ou descrição):', { ok: 'Ir', doc: pip.win.document, opcoes: c.itens.map(it => it.codigo).filter(Boolean) });
+  if (!txt) { desenharPip(true); return; }
+  const q = normCod(txt), qd = semAcento(txt);
+  const acha = i => normCod(c.itens[i].codigo) === q;
+  const parecido = i => normCod(c.itens[i].codigo).includes(q) || semAcento(c.itens[i].descricao).includes(qd);
+  let lista = itensPip(c);
+  let i = lista.find(acha) ?? lista.find(parecido);
+  if (i == null) {
+    const todos = c.itens.map((_, k) => k);
+    i = todos.find(acha) ?? todos.find(parecido);
+    if (i != null) definirFiltroVencedor(c, ''); // está com outro fornecedor: mostra todos
+  }
+  if (i == null) { await avisar(`Nenhum item com "${txt}" nesta cotação.`, pip.win.document); desenharPip(true); return; }
+  pip.i = i;
+  if (cotAtual() === c) {
+    ui.linhaComp = { cotId: c.id, i };
+    const tr = document.querySelector(`.tab-comp tr[data-comp-linha="${i}"]`);
+    document.querySelectorAll('tr.linha-atual').forEach(x => { if (x !== tr) x.classList.remove('linha-atual'); });
+    if (tr) { tr.classList.add('linha-atual'); tr.scrollIntoView({ block: 'center' }); }
+  }
+  desenharPip(true);
 }
 
 /** ❓ na janela flutuante: a janela de perguntar à loja abre nela mesma (fica por cima do DataCar). */
@@ -8275,7 +8350,7 @@ function desenharPip(focar) {
       return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
     }).join('')}</div>
     <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
-    ${pip.flutuante ? '' : '<p class="pip-ajuda">Sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)</p>'}`;
+    <p class="pip-ajuda" title="Atalhos de uma tecla">C copia · D dúvida · S 2º lugar · / buscar${pip.flutuante ? '' : ' · sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)'}</p>`;
   const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
   if (sel) {
     const el = campos.find(x => x.dataset.qtdLoja === sel[0]);
