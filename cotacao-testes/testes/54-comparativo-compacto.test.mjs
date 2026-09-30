@@ -26,7 +26,7 @@ test('comparativo: modo compacto, andamento na lista de fornecedores, etiquetas 
   await page.click('[data-act=alternarCompacto]');
   assert.match(await page.locator('.tab-comp').getAttribute('class'), /compacto/);
   assert.equal(await page.locator('.tab-comp thead th', { hasText: 'KAIZEN' }).count(), 0, 'sem as colunas dos fornecedores');
-  assert.match(n(await page.locator('.tab-comp tbody tr[data-comp-linha="0"]').innerText()), /R\$ 10,00[\s\S]*KAIZEN[\s\S]*2º VIA PEÇAS R\$ 12,00/);
+  assert.match(n(await page.locator('.tab-comp tbody tr[data-comp-linha="0"]').innerText()), /R\$ 10,00[\s\S]*KAIZEN[\s\S]*R\$ 12,00\s*\+20,0%\s*VIA PEÇAS/);
   // no compacto dá para trocar pelo 2º lugar
   await page.locator('.tab-comp tbody tr[data-comp-linha="0"] .escolhe-dif').click();
   await page.click('.dlg button.primary');

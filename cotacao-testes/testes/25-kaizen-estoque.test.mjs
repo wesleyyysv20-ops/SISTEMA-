@@ -97,7 +97,7 @@ test('Comando: ganha até 5% acima do 1º lugar, com o detalhe; clicar no mais b
   const linha = page.locator('.tab-comp tbody tr[data-comp-linha]').first();
   assert.match(n(await linha.innerText()), /⭐ regra Comando · \+4,9% do 1º/);
   assert.match(n(await linha.innerText()), /COMANDO[\s\S]*pela regra dos 5% \(\+4,9% do 1º\)/);
-  assert.match(n(await linha.innerText()), /\+4,9%[\s\S]*1º KAIZEN R\$ 100,00/, 'a Dif. mostra o mais barato de verdade');
+  assert.match(n(await linha.innerText()), /R\$ 100,00\s*\+4,9%\s*menor\s*KAIZEN/, 'a Dif. mostra o mais barato de verdade');
   assert.match(await page.locator('.pill-aviso.regra').innerText(), /⭐ 1 regra Comando/);
   // escolher o mais barato (Kaizen) desfaz a regra neste item
   const kaizen = linha.locator('td.escolhivel', { hasText: '100,00' });

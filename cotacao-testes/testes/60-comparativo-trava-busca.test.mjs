@@ -29,7 +29,7 @@ test('tela de ~950px: a decisão fica presa à direita (versão estreita, 2º lu
   assert.equal(await page.locator('.tab-comp th.col-dif').isVisible(), false);
   const mini = page.locator('.tab-comp tbody tr').first().locator('.seg-mini');
   assert.equal(await mini.isVisible(), true);
-  assert.match(await mini.innerText(), /^2º .+ R\$\s[\d,]+ · \+[\d,]+%$/);
+  assert.match(await mini.innerText(), /^R\$\s[\d,]+ · .+ · \+[\d,]+%$/);
   // a marca pedida comprida fica numa linha só
   const mp = page.locator('tr[data-comp-linha="3"] .marca-pedida');
   assert.equal(await mp.evaluate(el => getComputedStyle(el).whiteSpace), 'nowrap');

@@ -3155,6 +3155,23 @@ function gruposDataCar() {
   return [...mapa.values()].sort((a, b) => (!a.k - !b.k) || COLLATOR.compare(a.k, b.k));
 }
 
+/** Grupo aparece na lista? (busca por OBS, código ou descrição; filtro "só sem decisão") */
+function grupoVisivelDc(g) {
+  const d = ui.datacar;
+  if (d.soPend && !['pendente', 'incompleto'].includes(estadoGrupo(g).estado)) return false;
+  const q = (d.busca || '').trim();
+  if (!q) return true;
+  const t = semAcento(q);
+  const k = normCod(q);
+  return semAcento(g.rotulo).includes(t) || g.itens.some(l => (d.colDesc >= 0 && semAcento(l.cels[d.colDesc] || '').includes(t))
+    || (k.length >= 2 && normCod(l.codigo).includes(k)) || semAcento(l.codigo || '').includes(t));
+}
+
+/** Índices (na lista completa) dos grupos visíveis. */
+function visiveisDc(gs = gruposDataCar()) {
+  return gs.map((g, i) => (grupoVisivelDc(g) ? i : -1)).filter(i => i >= 0);
+}
+
 function estadoGrupo(g) {
   const vai = g.itens.filter(l => l.decisao === 'vai').length;
   const nao = g.itens.filter(l => l.decisao === 'nao').length;
@@ -3173,8 +3190,9 @@ function contagemDataCar() {
 
 function proximoGrupoPendente(depois) {
   const gs = gruposDataCar();
-  for (let i = depois + 1; i < gs.length; i++) if (['pendente', 'incompleto'].includes(estadoGrupo(gs[i]).estado)) return i;
-  for (let i = 0; i <= depois && i < gs.length; i++) if (['pendente', 'incompleto'].includes(estadoGrupo(gs[i]).estado)) return i;
+  const ok = i => ['pendente', 'incompleto'].includes(estadoGrupo(gs[i]).estado) && grupoVisivelDc(gs[i]);
+  for (let i = depois + 1; i < gs.length; i++) if (ok(i)) return i;
+  for (let i = 0; i <= depois && i < gs.length; i++) if (ok(i)) return i;
   return gs.length; // linha "Concluir"
 }
 
@@ -3209,8 +3227,55 @@ function aplicarSugestoesDataCar() {
   toast(n ? `Sugestão aplicada em ${n} grupo(s).` : 'Nenhum grupo pendente com sugestão.');
 }
 
+/** Decide todos os grupos selecionados de uma vez. */
+function decidirSelecionadosDc(decisao) {
+  const d = ui.datacar;
+  const gs = gruposDataCar();
+  const alvo = gs.map((g, i) => [g, i]).filter(([g]) => d.selG?.has(g.k));
+  for (const [g] of alvo) for (const l of g.itens) { l.decisao = decisao; l.sel = decisao === 'vai'; }
+  d.selG = new Set();
+  d.ancoraG = null;
+  if (alvo.length) d.gcur = proximoGrupoPendente(alvo[alvo.length - 1][1]);
+  desenharConferencia();
+  toast(`${alvo.length} grupo(s): ${decisao === 'vai' ? '✓ vão' : '✗ não vão'}.`);
+}
+
+/** Todos os grupos ainda sem decisão (os que aparecem, se houver busca) vão / não vão. */
+async function decidirRestantesDc(decisao) {
+  const d = ui.datacar;
+  const gs = gruposDataCar().filter(g => ['pendente', 'incompleto'].includes(estadoGrupo(g).estado) && grupoVisivelDc(g));
+  if (!gs.length) return toast('Nenhum grupo sem decisão.');
+  const itens = gs.reduce((t, g) => t + g.itens.filter(l => !l.decisao).length, 0);
+  if (!(await confirmar(`${decisao === 'vai' ? '✓ Todos vão' : '✗ Nenhum vai'}: ${gs.length} grupo(s) sem decisão${d.busca ? ` (da busca "${d.busca}")` : ''}, ${itens} item(ns).\n\nOs grupos que você já decidiu não mudam.`, decisao === 'vai' ? 'Todos vão' : 'Nenhum vai'))) { focarDataCar(); return; }
+  for (const g of gs) for (const l of g.itens) if (!l.decisao) { l.decisao = decisao; l.sel = decisao === 'vai'; }
+  d.gcur = proximoGrupoPendente(-1);
+  desenharConferencia();
+}
+
+/** Seleção de grupos: faixa (Shift) ou um a um (Ctrl / caixinha). */
+function selecionarGrupoDc(i, modo) {
+  const d = ui.datacar;
+  const gs = gruposDataCar();
+  if (!gs[i]) return;
+  d.selG ||= new Set();
+  if (modo === 'faixa') {
+    const vis = visiveisDc(gs);
+    const a = d.ancoraG ?? d.gcur ?? i;
+    const [ini, fim] = a < i ? [a, i] : [i, a];
+    for (const k of vis) if (k >= ini && k <= fim) d.selG.add(gs[k].k);
+    d.ancoraG = a;
+  } else {
+    const k = gs[i].k;
+    if (d.selG.has(k)) d.selG.delete(k); else d.selG.add(k);
+    d.ancoraG = i;
+  }
+  d.gcur = i;
+  desenharConferencia();
+}
+
 function decidirGrupoDataCar(gi, decisao) {
   const d = ui.datacar;
+  if (d.selG?.size) return decidirSelecionadosDc(decisao); // há grupos selecionados: vale para todos
   const g = gruposDataCar()[gi];
   if (!g) return;
   for (const l of g.itens) { l.decisao = decisao; l.sel = decisao === 'vai'; }
@@ -3263,6 +3328,22 @@ function moverGrupoDataCar(i) {
   desenharConferencia();
 }
 
+/** ↑/↓ andando só pelos grupos que aparecem (a linha "Concluir" é a última). */
+function passoGrupoDc(delta, estender) {
+  const d = ui.datacar;
+  const gs = gruposDataCar();
+  const vis = [...visiveisDc(gs), gs.length];
+  let pos = vis.indexOf(d.gcur);
+  if (pos < 0) pos = delta > 0 ? -1 : vis.length;
+  const novo = vis[Math.max(0, Math.min(vis.length - 1, pos + delta))];
+  if (estender && novo < gs.length) {
+    d.selG ||= new Set();
+    if (d.ancoraG == null) { d.ancoraG = d.gcur < gs.length ? d.gcur : novo; if (gs[d.ancoraG]) d.selG.add(gs[d.ancoraG].k); }
+    d.selG.add(gs[novo].k);
+  }
+  moverGrupoDataCar(novo);
+}
+
 function editarMarcaDataCar(textoInicial) {
   const caixa = $('#dcMarcaCampo');
   if (!caixa || caixa.querySelector('input')) return;
@@ -3287,6 +3368,7 @@ function fecharMarcaDataCar(inp, salvarValor) {
 }
 
 function focarDataCar() {
+  if (document.activeElement?.id === 'dcBusca') return; // digitando na busca: não tira o cursor de lá
   $('#dcCaixa')?.focus({ preventScroll: true });
 }
 
@@ -3326,6 +3408,12 @@ function teclaDataCar(e) {
     }
     return;
   }
+  if (t.id === 'dcBusca') {
+    // na busca: Esc limpa; ↓ ou Enter vai para a lista
+    if (e.key === 'Escape') { e.preventDefault(); if (t.value) { t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); } else { t.blur(); focarDataCar(); } }
+    else if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); d.gcur = visiveisDc()[0] ?? gruposDataCar().length; t.blur(); desenharConferencia(); }
+    return;
+  }
   if (t.matches('select, input, textarea')) return; // seletores de coluna
   if (e.repeat && [' ', 'ArrowRight', 'ArrowLeft', 'Backspace', 'Enter'].includes(e.key)) { e.preventDefault(); return; } // tecla segurada não decide vários
 
@@ -3333,8 +3421,20 @@ function teclaDataCar(e) {
     // ----- nível 1: grupos
     const n = gruposDataCar().length;
     const naLista = d.gcur < n;
-    if (e.key === 'ArrowDown') { e.preventDefault(); moverGrupoDataCar(d.gcur + 1); }
-    else if (e.key === 'ArrowUp' || e.key === 'Backspace') { e.preventDefault(); moverGrupoDataCar(d.gcur - 1); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); passoGrupoDc(1, e.shiftKey); }
+    else if (e.key === 'ArrowUp' || e.key === 'Backspace') { e.preventDefault(); passoGrupoDc(-1, e.shiftKey && e.key === 'ArrowUp'); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      const gs = gruposDataCar();
+      d.selG = new Set(visiveisDc(gs).map(i => gs[i].k));
+      desenharConferencia();
+    }
+    else if (e.key === 'Escape' && d.selG?.size) { e.preventDefault(); d.selG = new Set(); d.ancoraG = null; desenharConferencia(); }
+    else if (e.key === '/' || (e.key.length === 1 && /[a-z0-9]/i.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+      // digitar na lista vai para a busca
+      const b = $('#dcBusca');
+      if (b) { e.preventDefault(); b.focus(); if (e.key !== '/') { b.value += e.key; b.dispatchEvent(new Event('input', { bubbles: true })); } }
+    }
     else if ((e.key === 'ArrowRight' || e.key === ' ') && naLista) { e.preventDefault(); decidirGrupoDataCar(d.gcur, 'vai'); }
     else if (e.key === 'ArrowLeft' && naLista) { e.preventDefault(); decidirGrupoDataCar(d.gcur, 'nao'); }
     else if (e.key === 'Enter') { e.preventDefault(); if (naLista) abrirGrupoDataCar(d.gcur); else enterDuploDataCar(); }
@@ -3403,10 +3503,16 @@ function conteudoGrupos() {
   const gs = gruposDataCar();
   if (d.gcur == null || d.gcur > gs.length) d.gcur = 0;
   const rotEstado = { pendente: 'sem decisão', incompleto: 'incompleto', vai: 'VAI', nao: 'NÃO VAI', misto: 'escolhido' };
+  const vis = new Set(visiveisDc(gs));
+  if (d.gcur < gs.length && !vis.has(d.gcur)) d.gcur = [...vis][0] ?? gs.length;
+  d.selG ||= new Set();
   const linhas = gs.map((g, i) => {
+    if (!vis.has(i)) return '';
     const e = estadoGrupo(g);
     const amostra = g.itens.slice(0, 3).map(l => (d.colDesc >= 0 && l.cels[d.colDesc]) || l.codigo).filter(Boolean);
-    return `<div class="conf-grupo est-${e.estado} ${i === d.gcur ? 'atual' : ''}" data-g-idx="${i}">
+    const sel = d.selG.has(g.k);
+    return `<div class="conf-grupo est-${e.estado} ${i === d.gcur ? 'atual' : ''}${sel ? ' selecionado' : ''}" data-g-idx="${i}">
+      <span class="cg-sel" title="Selecionar (ou Shift+clique / Shift+↓ para uma faixa)"><input type="checkbox" tabindex="-1" ${sel ? 'checked' : ''} aria-label="Selecionar o grupo ${esc(g.rotulo)}"></span>
       <div class="cg-obs"><b>${esc(g.rotulo)}</b><span>${e.n} ${e.n === 1 ? 'item' : 'itens'}</span>${(sug => (sug ? `<span class="sug-obs ${sug.tipo}" title="A OBS diz &quot;${esc(sug.palavra)}&quot;">${{ vai: 'sugestão: vai', nao: 'sugestão: não vai', revisar: 'revisar' }[sug.tipo]}</span>` : ''))(sugestaoObs(g.rotulo))}</div>
       <div class="cg-amostra small">${amostra.map(esc).join(' · ')}${e.n > 3 ? ` <span class="muted">+${e.n - 3}</span>` : ''}</div>
       <div class="cg-estado"><span class="badge ${e.estado === 'vai' ? 'ok' : e.estado === 'nao' ? 'danger' : e.estado === 'pendente' ? '' : 'warn'}">${rotEstado[e.estado]}${e.estado === 'misto' || e.estado === 'incompleto' ? ` · ${e.vai} vão` : ''}</span></div>
@@ -3420,7 +3526,21 @@ function conteudoGrupos() {
   const pend = gs.filter(g => ['pendente', 'incompleto'].includes(estadoGrupo(g).estado)).length;
   const c = contagemDataCar();
   const nSug = gs.filter(g => estadoGrupo(g).estado === 'pendente' && ['vai', 'nao'].includes(sugestaoObs(g.rotulo)?.tipo)).length;
+  const nSel = d.selG.size;
+  const itensSel = nSel ? gs.filter(g => d.selG.has(g.k)).reduce((t, g) => t + g.itens.length, 0) : 0;
+  const nVis = vis.size;
+  const pendVis = gs.filter((g, i) => vis.has(i) && ['pendente', 'incompleto'].includes(estadoGrupo(g).estado)).length;
   return `${progressoDataCar()}
+    <div class="conf-lote">
+      ${nSel ? `<span class="conf-lote-sel"><b>${nSel}</b> grupo(s) selecionado(s) · ${itensSel} item(ns)</span>
+        <button type="button" class="sm conf-mini-vai" data-act="dcSelVai" title="Os selecionados vão (→)">✓ Vão</button>
+        <button type="button" class="sm conf-mini-nao" data-act="dcSelNao" title="Os selecionados não vão (←)">✗ Não vão</button>
+        <button type="button" class="sm link" data-act="dcSelLimpar" title="Esc">limpar seleção</button>`
+      : `<span class="small muted">${d.busca || d.soPend ? `${nVis} de ${gs.length} grupo(s) aparecendo · ` : ''}Shift+↓ ou Shift+clique seleciona vários · Ctrl+A todos</span>`}
+      ${pendVis ? `<span class="conf-lote-rest">Os ${pendVis} sem decisão${d.busca ? ' (da busca)' : ''}:
+        <button type="button" class="sm conf-mini-vai" data-act="dcRestVai">✓ todos vão</button>
+        <button type="button" class="sm conf-mini-nao" data-act="dcRestNao">✗ nenhum vai</button></span>` : ''}
+    </div>
     ${nSug ? `<div class="conf-sugestoes small">A OBS de ${nSug} grupo(s) já diz o que fazer (ex.: "CORTAR", "NÃO COTAR", "OK"). <button type="button" class="sm" data-act="dcSugestoes">Aplicar sugestões</button></div>` : ''}
     <div class="conf-grupos" role="listbox" aria-label="Grupos de ${esc(d.cab[d.col])}">
       ${linhas}
@@ -3431,7 +3551,7 @@ function conteudoGrupos() {
     </div>
     <p class="small muted" style="margin:8px 0 0">
       <span class="kbd">↑</span> <span class="kbd">↓</span> grupos · <span class="kbd">→</span>/<span class="kbd">Espaço</span> grupo todo vai ·
-      <span class="kbd">←</span> grupo todo não vai · <span class="kbd">Enter</span> escolher itens do grupo · <span class="kbd">Esc</span> sair
+      <span class="kbd">←</span> grupo todo não vai · <span class="kbd">Enter</span> escolher itens do grupo · <span class="kbd">Shift</span>+<span class="kbd">↓</span> seleciona vários · digite para buscar · <span class="kbd">Esc</span> sair
     </p>`;
 }
 
@@ -3519,6 +3639,10 @@ function renderDataCar() {
           ${d.colCod < 0 ? '<span class="badge warn">Não achei a coluna de código: escolha ao lado</span>' : ''}
         </div>
       </details>
+      <div class="conf-busca">
+        <input type="search" id="dcBusca" value="${esc(d.busca || '')}" placeholder="🔎 Buscar OBS, código ou descrição" autocomplete="off" aria-label="Buscar grupos">
+        <label class="check-inline small"><input type="checkbox" id="dcSoPend" ${d.soPend ? 'checked' : ''}> só sem decisão</label>
+      </div>
       <div id="dcConferencia">${conteudoConferencia()}</div>
       <div class="row-between" style="margin-top:8px">
         <span></span>
@@ -4728,13 +4852,21 @@ function marcaAlternativa(c, l, j) {
 function celulaDifSegundo(c, l) {
   const alerta = difGrande(l);
   const avisoDifSuspeita = alerta ? avisoDif(l) : '';
-  if ((l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0) {
-    const dif = difDaLinha(l);
-    return `<span class="dif-seg${dif >= 0.1 ? ' grande' : ''}${alerta && !l.difConferida ? ' suspeita' : ''}" title="${l.preferencia ? 'Regra da Comando: ganha até 5% acima do menor preço' : 'Quanto o escolhido está mais caro que o menor preço'}">+${fmtPct(dif)}</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="Menor preço (ganharia sem a sua escolha)">1º ${esc(c.fornecedores[l.minIdx].nome)} ${fmtMoeda(l.min)}</span>${marcaAlternativa(c, l, l.minIdx)}`;
-  }
-  if (l.difSegundo == null) return '<span class="muted">—</span>';
-  // conta a partir do 1º lugar: quanto o 2º está mais caro que o 1º
-  return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta && !l.difConferida ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span> <span class="small muted">o 2º é mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>${marcaAlternativa(c, l, l.segundoIdx)}`;
+  // escolhido na mão (ou regra dos 5%): mostra o mais barato; senão, o 2º lugar
+  const trocou = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0;
+  if (!trocou && l.difSegundo == null) return '<span class="muted">—</span>';
+  const j = trocou ? l.minIdx : l.segundoIdx;
+  const preco = trocou ? l.min : l.segundo;
+  const dif = trocou ? difDaLinha(l) : l.difSegundo;
+  const f = c.fornecedores[j];
+  const titulo = trocou
+    ? (l.preferencia ? `Regra da Comando: ganha até 5% acima do menor preço. Menor preço: ${f.nome}, ${fmtMoeda(preco)}` : `Menor preço (ganharia sem a sua escolha): ${f.nome}, ${fmtMoeda(preco)}. O escolhido está ${fmtPct(dif)} mais caro.`)
+    : `2º lugar: ${f.nome}, ${fmtMoeda(preco)} (${fmtPct(dif)} mais caro que o 1º, ${fmtMoeda(l.min)})`;
+  return `<div class="dif-cel${trocou ? ' dif-menor' : ''}" title="${esc(titulo)}">
+    <div class="dif-l1"><b class="dif-preco">${fmtMoeda(preco)}</b><span class="dif-seg${dif >= 0.1 ? ' grande' : ''}${alerta && !l.difConferida ? ' suspeita' : ''}">+${fmtPct(dif)}</span></div>
+    <div class="dif-forn">${trocou ? '<span class="dif-tag">menor</span> ' : ''}${esc(f.nome)}</div>
+    ${marcaAlternativa(c, l, j).replace('<br>', '')}${alerta ? avisoDifSuspeita : ''}
+  </div>`;
 }
 
 /** Modo compacto do comparativo (meia tela): sem as colunas de cada fornecedor. Guardado neste computador. */
@@ -5277,7 +5409,7 @@ function renderCotacao(id) {
             const alvoS = (l.manual || l.preferencia) && l.minIdx >= 0 ? l.minIdx : l.segundoIdx;
             const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
             const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
-              ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${alvoS === l.minIdx && alvoS !== l.segundoIdx ? '1º' : '2º'} ${esc(c.fornecedores[alvoS].nome)} ${fmtMoeda(l.precos[alvoS])}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
+              ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${fmtMoeda(l.precos[alvoS])} · ${esc(c.fornecedores[alvoS].nome)}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
             return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}</td>`;
           })()}
             ${nf > 1 ? (() => {
@@ -6744,7 +6876,12 @@ function render() {
 
 document.addEventListener('click', e => {
   const linhaGrupo = e.target.closest('[data-g-idx]');
-  if (linhaGrupo && ui.datacar && !e.target.closest('button')) moverGrupoDataCar(+linhaGrupo.dataset.gIdx);
+  if (linhaGrupo && ui.datacar && !e.target.closest('button')) {
+    const gi = +linhaGrupo.dataset.gIdx;
+    if (e.target.closest('.cg-sel') || e.ctrlKey || e.metaKey) selecionarGrupoDc(gi, 'um');
+    else if (e.shiftKey) selecionarGrupoDc(gi, 'faixa');
+    else { ui.datacar.ancoraG = gi; moverGrupoDataCar(gi); }
+  }
   const linhaItem = e.target.closest('[data-item-linha]');
   if (linhaItem) {
     const campo = e.target.closest('[data-marca-item], [data-similar-prod], [data-codigo-item]');
@@ -6832,6 +6969,11 @@ const acoes = {
   dcDecidir: el => decidirDataCar(el.dataset.d),
   dcEditarMarca: () => editarMarcaDataCar(),
   dcSugestoes: () => aplicarSugestoesDataCar(),
+  dcSelVai: () => decidirSelecionadosDc('vai'),
+  dcSelNao: () => decidirSelecionadosDc('nao'),
+  dcSelLimpar: () => { ui.datacar.selG = new Set(); ui.datacar.ancoraG = null; desenharConferencia(); },
+  dcRestVai: () => decidirRestantesDc('vai'),
+  dcRestNao: () => decidirRestantesDc('nao'),
   dcGVai: el => decidirGrupoDataCar(+el.dataset.i, 'vai'),
   dcGNao: el => decidirGrupoDataCar(+el.dataset.i, 'nao'),
   dcGAbrir: el => abrirGrupoDataCar(+el.dataset.i),
@@ -8135,6 +8277,12 @@ document.addEventListener('input', e => {
     aplicarFiltroItens();
     return;
   }
+  if (t.id === 'dcBusca' && ui.datacar) {
+    ui.datacar.busca = t.value;
+    ui.datacar.selG = new Set();
+    desenharConferencia();
+    return;
+  }
   if (t.id === 'buscaComp') {
     const c = cotAtual();
     if (!c) return;
@@ -9281,6 +9429,11 @@ async function aoMudarCampo(e) {
     cotAtual().prazoHora = t.value;
     salvar();
     render();
+  } else if (t.id === 'dcSoPend' && ui.datacar) {
+    ui.datacar.soPend = t.checked;
+    ui.datacar.selG = new Set();
+    desenharConferencia();
+    focarDataCar();
   } else if (t.dataset.change === 'statusCot') {
     cotAtual().status = t.value;
     salvar();

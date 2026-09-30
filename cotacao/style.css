@@ -1731,3 +1731,37 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .barra-criar-alerta { padding: 2px 10px; border-radius: 999px; font-weight: 700; color: var(--warn); background: var(--warn-bg); cursor: help; }
 .barra-criar-ok { color: var(--ok); font-weight: 700; }
 .barra-criar-acoes { display: flex; gap: 8px; align-items: center; }
+
+/* ===== conferência do DataCar: compacta, busca e seleção em lote ===== */
+.dlg.dlg-conf { width: min(900px, 100%); max-height: calc(100vh - 24px); display: flex; flex-direction: column; }
+.dlg.dlg-conf > * { flex-shrink: 0; }
+.dlg.dlg-conf > #dcConferencia { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#dcConferencia > .conf-grupos { flex: 1 1 auto; max-height: none; min-height: 180px; }
+.conf-busca { display: flex; align-items: center; gap: 12px; margin: 6px 0 4px; }
+.conf-busca input[type=search] { flex: 1; height: 32px; padding: 4px 10px; font-size: 13.5px; border-radius: 9px; }
+.conf-lote { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 4px 0 6px; font-size: 13px; min-height: 28px; }
+.conf-lote-sel { color: var(--primary-2); }
+.conf-lote-rest { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.conf-grupo { grid-template-columns: 22px minmax(90px, 15%) 1fr auto auto; padding: 3px 10px; gap: 2px 10px; }
+.conf-concluir { grid-template-columns: 1fr; padding: 8px 12px; }
+.cg-obs { flex-direction: row; align-items: baseline; gap: 6px; }
+.cg-obs b { font-size: 14px; }
+.cg-obs span { font-size: 11px; white-space: nowrap; }
+.cg-obs .sug-obs { font-size: 10.5px; }
+.cg-amostra { font-size: 12.5px; }
+.cg-estado .badge { font-size: 10.5px; padding: 1px 7px; }
+.cg-acoes .sm { padding: 1px 8px; min-height: 0; height: 24px; font-size: 12px; }
+.cg-sel { display: flex; align-items: center; }
+.cg-sel input { width: 15px; height: 15px; margin: 0; cursor: pointer; }
+.conf-grupo.selecionado { background: color-mix(in srgb, var(--primary-2) 12%, var(--card)); }
+.conf-grupo.selecionado.atual { background: color-mix(in srgb, var(--primary-2) 20%, var(--card)); }
+
+/* coluna Dif.: preço do 2º, %, empresa e marca */
+.dif-cel { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.dif-l1 { display: flex; align-items: baseline; gap: 6px; }
+.dif-preco { font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
+.dif-cel .dif-seg { font-size: 12px; font-weight: 700; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--laranja) 12%, transparent); }
+.dif-cel .dif-seg.suspeita { background: var(--danger-bg); }
+.dif-forn { font-size: 11.5px; font-weight: 600; color: var(--muted); max-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dif-tag { font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 4px; background: var(--blue-bg); color: var(--primary-2); }
+.dif-cel .marca-alt { margin: 0; }
