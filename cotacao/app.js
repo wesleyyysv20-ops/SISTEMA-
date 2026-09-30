@@ -4863,12 +4863,13 @@ function renderCotacao(id) {
       <h3>Digitar preços — ${esc(f.nome)}</h3>
       <form data-form="precosManuais" data-f="${fi}">
         <div class="table-wrap"><table>
-          <thead><tr><th class="c">#</th><th>Código</th><th>Descrição</th><th class="r">Qtd.</th><th class="r">Preço unit. (R$)</th><th>Prazo</th><th>Observação</th></tr></thead>
+          <thead><tr><th class="c">#</th><th>Código</th><th>Marca pedida</th><th>Descrição</th><th class="r">Qtd.</th><th class="r">Preço unit. (R$)</th><th>Prazo</th><th>Observação</th></tr></thead>
           <tbody>${c.itens.map((it, i) => {
             const rr = f.respostas?.[i] || {};
             return `<tr>
               <td class="c">${i + 1}</td>
               <td class="cod-digitar">${esc(it.codigo || '—')}</td>
+              <td>${it.marca ? `<span class="marca-pedida">${esc(it.marca)}</span>` : '<span class="muted">—</span>'}${rr.marca ? `<br><span class="small muted" title="Marca que o fornecedor respondeu">respondeu: ${esc(rr.marca)}</span>` : ''}</td>
               <td>${esc(it.descricao)} <span class="muted small">${esc(it.unidade)}</span></td>
               <td class="r">${fmtNum(it.quantidade)}</td>
               <td style="width:140px"><input class="price" inputmode="decimal" name="p_${i}" value="${rr.preco != null ? esc(rr.preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : ''}"></td>
@@ -4877,6 +4878,7 @@ function renderCotacao(id) {
             </tr>`;
           }).join('')}</tbody>
         </table></div>
+        <p class="small muted" style="margin:8px 0 0">⌨ <kbd>↑</kbd> <kbd>↓</kbd> ou <kbd>Enter</kbd> mudam de item · <kbd>←</kbd> <kbd>→</kbd> no começo/fim do campo mudam de coluna.</p>
         <div class="grid" style="margin-top:12px">
           ${COND_CAMPOS.map(([k, label]) => `<label>${label}<input name="c_${k}" value="${esc(f.cond?.[k])}"></label>`).join('')}
         </div>
@@ -7198,7 +7200,8 @@ const formularios = {
       const preco = parseNum(d[`p_${i}`]);
       const prazo = d[`z_${i}`] || '';
       const obs = d[`o_${i}`] || '';
-      if (preco != null && preco > 0) respostas[i] = { preco, prazo, obs }; // 0,00 ou vazio: sem resposta
+      // 0,00 ou vazio: sem resposta; o resto do que já havia (marca, estoque…) continua
+      if (preco != null && preco > 0) respostas[i] = { ...(f.respostas?.[i] || {}), preco, prazo, obs };
     });
     f.respostas = respostas;
     f.cond = Object.fromEntries(COND_CAMPOS.map(([k]) => [k, d[`c_${k}`] || '']));
@@ -8159,6 +8162,33 @@ document.addEventListener('keydown', e => {
   tab.focus({ preventScroll: true });
   // a tecla vale como se tivesse sido apertada na lista
   teclaItens({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey, target: tab, preventDefault: () => e.preventDefault() });
+});
+
+/* Digitar preços: setas e Enter andam pela tabela (Enter não salva o formulário no meio da digitação). */
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  const m = t.name?.match?.(/^([pzo])_(\d+)$/);
+  if (!m || !t.closest('#painelDigitar') || e.ctrlKey || e.altKey || e.metaKey) return;
+  const cols = ['p', 'z', 'o'];
+  const col = m[1], i = +m[2];
+  const form = t.form;
+  const campo = (c, k) => form.querySelector(`[name="${c}_${k}"]`);
+  let alvo = null;
+  if (e.key === 'ArrowDown' || e.key === 'Enter') alvo = campo(col, i + 1) || (e.key === 'Enter' ? form.querySelector('button.primary') : null);
+  else if (e.key === 'ArrowUp') alvo = campo(col, i - 1);
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    const noInicio = t.selectionStart === 0 && t.selectionEnd === 0;
+    const noFim = t.selectionStart === t.value.length && t.selectionEnd === t.value.length;
+    const tudo = t.selectionStart === 0 && t.selectionEnd === t.value.length && t.value.length > 0;
+    if (e.key === 'ArrowLeft' && (noInicio || tudo)) alvo = campo(cols[cols.indexOf(col) - 1], i);
+    if (e.key === 'ArrowRight' && (noFim || tudo)) alvo = campo(cols[cols.indexOf(col) + 1], i);
+  }
+  if (e.key === 'Enter') e.preventDefault();
+  if (!alvo) return;
+  e.preventDefault();
+  alvo.focus();
+  if (alvo.select) alvo.select();
+  alvo.scrollIntoView({ block: 'nearest' });
 });
 
 /** Campo de quantidade para onde vai o teclado: o último usado, senão o da linha marcada, senão o 1º item mostrado. */
