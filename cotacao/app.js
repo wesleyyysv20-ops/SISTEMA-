@@ -1067,6 +1067,11 @@ function atualizarPresencaTela() {
   }
 }
 
+/** Relatórios (e a análise dos fornecedores) só para administradores; sem login na nuvem (uso local), liberado. */
+function podeVerRelatorios() {
+  return !nuvem.usuario || nuvem.admin === true;
+}
+
 /** Administrador pode cadastrar usuários (funções do usuarios.sql no Supabase). */
 async function verSeAdmin(cli) {
   try {
@@ -1076,6 +1081,13 @@ async function verSeAdmin(cli) {
     nuvem.admin = false;
   }
   if (nuvem.admin && rota().nome === 'config') { await carregarUsuarios(); render(); }
+  else if (['relatorios', 'cotacao', 'fornecedores'].includes(rota().nome)) render(); // mostra (ou esconde) o que é só de administrador
+  else atualizarNavAdmin();
+}
+
+function atualizarNavAdmin() {
+  const a = $('#nav a[data-route="relatorios"]');
+  if (a) a.hidden = !podeVerRelatorios();
 }
 
 async function carregarUsuarios() {
@@ -5195,7 +5207,7 @@ function renderCotacao(id) {
       <div><h2>Cotação nº ${esc(c.numero)} ${statusBadge(c.status)}${c.arquivada ? ' <span class="badge">🗂️ arquivada</span>' : ''}</h2>
       <div id="presencaCot" class="presenca" data-cot="${esc(c.id)}" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div></div>
       <div class="row">
-        <button type="button" data-act="analiseCot" data-id="${esc(c.id)}" title="Nota dos fornecedores só nesta cotação">📊 Análise dos fornecedores</button>
+        ${podeVerRelatorios() ? `<button type="button" data-act="analiseCot" data-id="${esc(c.id)}" title="Nota dos fornecedores só nesta cotação">📊 Análise dos fornecedores</button>` : ''}
         <a class="btn" href="#" data-route="cotacoes">← Voltar</a>
         <select data-change="statusCot" style="width:auto">
           ${Object.entries(STATUS).map(([k, [t]]) => `<option value="${k}" ${c.status === k ? 'selected' : ''}>${t}</option>`).join('')}
@@ -5934,7 +5946,7 @@ function linhasFornecedores() {
       <td>${f.email ? `<a href="mailto:${esc(f.email)}">${esc(f.email)}</a>` : '—'}</td>
       <td>${esc(f.telefone || '—')}</td>
       <td class="c">${n}</td>
-      <td class="c">${d ? `<a href="#" data-route="relatorios" class="link-nota">${badgeNota(d.nota, tituloNota(d))}</a>` : '<span class="muted">—</span>'}</td>
+      <td class="c">${d ? (podeVerRelatorios() ? `<a href="#" data-route="relatorios" class="link-nota">${badgeNota(d.nota, tituloNota(d))}</a>` : badgeNota(d.nota, tituloNota(d))) : '<span class="muted">—</span>'}</td>
       <td class="actions-cell">
         <button class="sm" data-act="editarForn" data-id="${f.id}">Editar</button>
         <button class="sm danger" data-act="excluirForn" data-id="${f.id}">✕</button>
@@ -6585,6 +6597,7 @@ function render() {
   const rolagem = telaDesenhada === tela ? guardarRolagem() : null;
   const foco = telaDesenhada === tela ? guardarFoco() : null;
   telaDesenhada = tela;
+  atualizarNavAdmin();
   const views = {
     inicio: renderInicio,
     nova: renderNova,
@@ -6592,7 +6605,9 @@ function render() {
     cotacao: () => renderCotacao(id),
     produtos: renderProdutos,
     fornecedores: renderFornecedores,
-    relatorios: renderRelatorios,
+    relatorios: () => (podeVerRelatorios() ? renderRelatorios() : `<section class="card"><h2>🔒 Relatórios</h2>
+      <p class="muted">Esta tela é só para administradores${nuvem.admin == null ? ' (verificando o seu acesso…)' : ''}. Peça a um administrador se precisar de alguma informação daqui.</p>
+      <p><a class="btn" href="#" data-route="inicio">← Ir para o Início</a></p></section>`),
     duvidas: renderDuvidas,
     config: renderConfig,
   };
@@ -7821,7 +7836,7 @@ function resultadosBusca(texto) {
     for (const p of prods.slice(0, 8)) add('Produtos do cadastro', p.codigo || '—', `${p.descricao || ''}${p.marca ? ' · ' + p.marca : ''}`, () => { ui.filtroProd = p.codigo || p.descricao; ir('produtos'); });
   }
   // telas
-  for (const [r, t] of TELAS_BUSCA.filter(([, t]) => !q || tem(t))) add('Telas', t, '', () => ir(r));
+  for (const [r, t] of TELAS_BUSCA.filter(([r2, t]) => (!q || tem(t)) && (r2 !== 'relatorios' || podeVerRelatorios()))) add('Telas', t, '', () => ir(r));
   return out;
 }
 
