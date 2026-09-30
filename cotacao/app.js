@@ -4980,6 +4980,7 @@ function renderCotacao(id) {
       <div><h2>Cotação nº ${esc(c.numero)} ${statusBadge(c.status)}${c.arquivada ? ' <span class="badge">🗂️ arquivada</span>' : ''}</h2>
       <div id="presencaCot" class="presenca" data-cot="${esc(c.id)}" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div></div>
       <div class="row">
+        <button type="button" data-act="analiseCot" data-id="${esc(c.id)}" title="Nota dos fornecedores só nesta cotação">📊 Análise dos fornecedores</button>
         <a class="btn" href="#" data-route="cotacoes">← Voltar</a>
         <select data-change="statusCot" style="width:auto">
           ${Object.entries(STATUS).map(([k, [t]]) => `<option value="${k}" ${c.status === k ? 'selected' : ''}>${t}</option>`).join('')}
@@ -5444,13 +5445,14 @@ const PESOS_NOTA = [
  * Desempenho de cada fornecedor do cadastro nas cotações do período (canceladas não contam):
  * resposta, prazo, tempo de resposta, cobertura, marca, notas fiscais e nota de 0 a 10.
  */
-function desempenhoFornecedores(desde = inicioPeriodo()) {
+function desempenhoFornecedores(desde = inicioPeriodo(), cotId = null) {
   const st = {};
   const pega = (id, nome) => (st[id] ||= {
     id, nome, recebidas: 0, respondidas: 0, comPrazo: 0, noPrazo: 0, horas: [], itensPedidos: 0, itensCotados: 0,
     comExigencia: 0, marcaErrada: 0, semMarca: 0, notas: 0, notasDiv: 0, cobrado: 0, faltas: 0,
   });
-  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde));
+  // uma cotação só (análise individual) ou todas do período (análise geral)
+  const cots = cotId ? db.cotacoes.filter(c => c.id === cotId) : db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde));
   for (const c of cots) {
     const comp = comparar(c);
     c.fornecedores.forEach((f, j) => {
@@ -5523,11 +5525,23 @@ function tituloNota(x) {
 }
 
 function secaoNotaFornecedores() {
-  const lista = desempenhoFornecedores();
-  if (!lista.length) return '';
+  const cotsSel = [...db.cotacoes].filter(c => c.status !== 'cancelada' && c.fornecedores.length)
+    .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
+  if (ui.notaCot && !cotsSel.some(c => c.id === ui.notaCot)) ui.notaCot = '';
+  const cot = ui.notaCot ? db.cotacoes.find(c => c.id === ui.notaCot) : null;
+  const lista = desempenhoFornecedores(inicioPeriodo(), cot?.id || null);
+  if (!lista.length && !cot) return '';
   const pct = (a, b) => (b ? `${a}/${b} <span class="small muted">(${fmtPct(a / b, 0)})</span>` : '—');
   return `<section class="card" id="notaFornecedores">
-    <h3>Nota dos fornecedores</h3>
+    <div class="row-between">
+      <h3 style="margin:0">Nota dos fornecedores${cot ? ` — cotação nº ${esc(cot.numero)}` : ''}</h3>
+      <label class="check-inline">Analisar:
+        <select id="notaCot" style="width:auto">
+          <option value="">Geral (todas as cotações${ui.periodoRel ? ' do período' : ''})</option>
+          ${cotsSel.map(c => `<option value="${esc(c.id)}" ${ui.notaCot === c.id ? 'selected' : ''}>Cotação nº ${esc(c.numero)}${c.titulo ? ' · ' + esc(c.titulo) : ''} · ${fmtData(c.data)}</option>`).join('')}
+        </select></label>
+    </div>
+    ${cot ? `<p class="small" style="margin:8px 0 0">Só a cotação nº ${esc(cot.numero)}${cot.titulo ? ` (${esc(cot.titulo)})` : ''} de ${fmtData(cot.data)} · ${cot.itens.length} itens · ${cot.fornecedores.length} fornecedores · <a href="#" data-route="cotacao" data-id="${esc(cot.id)}">abrir a cotação</a></p>` : ''}
     <p class="muted small" style="margin-top:0">Nota de 0 a 10: responde às cotações (25%), no prazo (15%), cota os itens pedidos (20%), manda a marca exigida (20%; sem marca conta meio erro) e notas fiscais sem divergência (20%). O que não tem dados fica fora da conta. Passe o mouse na nota para ver cada parte.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Fornecedor</th><th class="c">Nota</th><th class="r">Respondeu</th><th class="r">No prazo</th><th class="r">Tempo médio</th><th class="r">Itens cotados</th><th class="r">Marca errada</th><th class="r">Sem marca</th><th class="r">Notas com divergência</th><th class="r">Cobrado a mais</th></tr></thead>
@@ -6977,6 +6991,11 @@ const acoes = {
   },
   sairSupabase: () => sairSupabase(),
   abrirBusca: () => abrirBusca(),
+  analiseCot: el => {
+    ui.notaCot = el.dataset.id;
+    ir('relatorios');
+    document.getElementById('notaFornecedores')?.scrollIntoView({ block: 'start' });
+  },
   continuarDeOndeParei: () => {
     const u = lerUltimoLugar();
     if (!u) return;
@@ -8381,6 +8400,10 @@ async function aoMudarCampo(e) {
   } else if (t.id === 'periodoRel') {
     ui.periodoRel = t.value;
     render();
+  } else if (t.id === 'notaCot') {
+    ui.notaCot = t.value;
+    render();
+    document.getElementById('notaFornecedores')?.scrollIntoView({ block: 'start' });
   } else if (t.id === 'statusCot') {
     ui.statusCot = t.value;
     $('#tbCot').innerHTML = linhasCotacoes();
