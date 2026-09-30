@@ -1315,3 +1315,5 @@ kbd { display: inline-block; min-width: 18px; padding: 1px 5px; border: 1px soli
 .trabalhando { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .trabalhando li { display: flex; align-items: center; gap: 8px; }
 .andamento { justify-content: stretch; justify-items: stretch; }
+/* indicador de salvamento com largura fixa (o menu ao lado não se mexe) */
+.status-nuvem { min-width: 10.5em; text-align: center; box-sizing: border-box; }

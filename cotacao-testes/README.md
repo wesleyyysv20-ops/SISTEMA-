@@ -54,6 +54,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `47-clique-unico` | um clique no ✕ basta mesmo editando a marca (botão redesenhado no meio do clique); cotação sem respostas explica onde aparecem comparativo e janela flutuante |
 | `48-busca-atalhos` | busca rápida (Ctrl+K): cotações, itens da cotação aberta, produtos, fornecedores e telas; atalhos (?) por tela |
 | `49-inicio` | início: andamento de cada cotação aberta (respostas, quantidades, pedidos), prazo com cobrar, continuar de onde parei, quem está trabalhando; cotação finalizada sem pendências em nenhuma tela |
+| `50-status-salvando` | indicador de salvamento: salvar rápido não pisca "Salvando…"; só aparece se demorar |
 
 ## Rodar
 

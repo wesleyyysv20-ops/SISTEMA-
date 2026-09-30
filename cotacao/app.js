@@ -647,10 +647,17 @@ function estadoDeDocs(sis, prods, forns, cots) {
   });
 }
 
+let timerStatus = null;
 function mostrarStatus(s) {
   nuvem.status = s;
+  clearTimeout(timerStatus);
+  // salvar costuma levar menos de 1 segundo: o aviso "Salvando…" só aparece se demorar (senão fica piscando)
+  if (s === 'salvando') { timerStatus = setTimeout(() => pintarStatus('salvando'), 1500); return; }
+  pintarStatus(s);
+}
+function pintarStatus(s) {
   const el = $('#statusNuvem');
-  if (!el) return;
+  if (!el || el.dataset.s === s) return;
   const txt = { local: 'Salvo neste navegador', salvando: 'Salvando…', salvo: 'Salvo na nuvem', erro: 'Erro ao salvar', carregando: 'Carregando…' }[s];
   el.textContent = txt;
   el.dataset.s = s;
