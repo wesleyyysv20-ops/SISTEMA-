@@ -110,6 +110,11 @@ test('janela flutuante: escolher o fornecedor mostra só os itens que ele ganhou
   const j = page.frameLocator('#janelaTeste');
   await j.locator('#pipForn').waitFor();
   assert.deepEqual((await j.locator('#pipForn option').allInnerTexts()).map(t => t.trim()), ['Todos os itens (4)', 'KAIZEN (2)', 'VIA PEÇAS (2)']);
+  // com a lista de fornecedores aberta, a tela é atualizada (colega digitou): a lista não é trocada (não fecha)
+  await j.locator('#pipForn').focus();
+  await j.locator('#pipForn').evaluate(el => { el.dataset.marca = 'aberta'; });
+  await page.evaluate(() => { render(); atualizarQtdsTela(); });
+  assert.equal(await j.locator('#pipForn').getAttribute('data-marca'), 'aberta', 'a lista continua a mesma');
   await j.locator('#pipForn').selectOption({ label: 'VIA PEÇAS (2)' });
   assert.match(n(await j.locator('.pip-barra').innerText()), /#2 · 1 de 2/);
   assert.match(n(await j.locator('.pip-forn').innerText()), /VIA PEÇAS/);

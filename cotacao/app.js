@@ -7982,8 +7982,13 @@ async function abrirPip() {
   d.addEventListener('keydown', marcarTecla, true);
   d.addEventListener('input', marcarTecla, true);
   d.addEventListener('keydown', e => teclaPip(e, d));
+  d.addEventListener('focusout', e => {
+    // saiu da lista de fornecedores sem escolher: faz o redesenho que ficou esperando
+    if (e.target.id === 'pipForn' && pip.redesenharDepois) setTimeout(() => desenharPip(false), 0);
+  });
   d.addEventListener('change', e => {
     if (e.target.id !== 'pipForn') return;
+    e.target.blur(); // escolheu: a lista sai de foco para a janela poder se redesenhar
     const cot = db.cotacoes.find(x => x.id === pip.cotId);
     if (!cot) return;
     definirFiltroVencedor(cot, e.target.value);
@@ -8107,6 +8112,9 @@ function desenharPip(focar) {
   const d = pip.win.document;
   const raiz = d.getElementById('pip');
   if (!raiz) return;
+  // escolhendo o fornecedor na lista: redesenhar agora fecharia a lista; espera a escolha (ou sair dela)
+  if (d.activeElement?.id === 'pipForn') { pip.redesenharDepois = true; return; }
+  pip.redesenharDepois = false;
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   if (!c) { raiz.innerHTML = '<p class="muted">Esta cotação não existe mais. Feche a janela.</p>'; return; }
   const ativo = d.activeElement?.dataset?.qtdLoja != null ? d.activeElement : null;
