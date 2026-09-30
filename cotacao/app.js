@@ -2344,6 +2344,22 @@ function nomePedido(c, f, loja) {
  * Baixa pedidos. fi: só daquele fornecedor (sem fi: todos, uma aba por fornecedor).
  * lojaId: só as quantidades daquela loja.
  */
+/**
+ * Pedido do fornecedor fi exportado. lojaId = null: o pedido inteiro (lojas juntas/somada) -> concluída.
+ * Com loja: anota a loja; quando todas as lojas em que ele tem itens foram exportadas -> concluída.
+ */
+function anotarPedidoExportado(c, fi, lojaId = null) {
+  const f = c.fornecedores[fi];
+  if (!f) return;
+  const agora = new Date().toISOString();
+  if (lojaId) {
+    f.exportadoLojas = { ...(f.exportadoLojas || {}), [lojaId]: agora };
+    const lojasComItens = lojas().filter(lj => pedidosPorFornecedor(c, lj.id).some(p => p.fi === fi)).map(lj => lj.id);
+    if (!lojasComItens.every(id => f.exportadoLojas[id])) return;
+  }
+  f.concluidoEm = f.concluidoEm || agora;
+}
+
 async function baixarPedidos(c, fi = null, lojaId = null) {
   const loja = lojaId ? lojas().find(l => l.id === lojaId) : null;
   const peds = pedidosPorFornecedor(c, lojaId).filter(p => fi == null || p.fi === fi);
@@ -2364,7 +2380,14 @@ async function baixarPedidos(c, fi = null, lojaId = null) {
     abaPedido(wb, c, p, nome, loja);
   }
   const arquivo = fi != null ? nomePedido(c, peds[0].f, loja) : `Pedidos_${c.numero}${loja ? '_' + slug(loja.nome) : ''}.xlsx`;
-  await baixarWorkbook(wb, arquivo);
+  if (!(await baixarWorkbook(wb, arquivo))) return;
+  // exportou: a cotação desses fornecedores fica concluída (por loja, quando todas as lojas saírem)
+  const antes = peds.filter(p => !p.f.concluidoEm).length;
+  for (const p of peds) anotarPedidoExportado(c, p.fi, lojaId);
+  const agora = peds.filter(p => p.f.concluidoEm).length - (peds.length - antes);
+  salvar();
+  render();
+  if (agora) toast(`${agora} fornecedor(es) marcado(s) como concluído(s).`);
 }
 
 /* ---------------- NF-e: conferência do recebimento ---------------- */
@@ -4533,7 +4556,7 @@ async function exportarPedidoForn(c, fi) {
   // lembra a forma deste fornecedor (nesta cotação e no cadastro, para as próximas)
   f.formatoPedido = escolha;
   if (cad) cad.formatoPedido = escolha;
-  f.concluidoEm = new Date().toISOString();
+  anotarPedidoExportado(c, fi);
   salvar();
   render();
   toast(`Pedido de ${f.nome} exportado. Cotação de ${f.nome} marcada como concluída.`);
@@ -4821,7 +4844,7 @@ function renderCotacao(id) {
       <td class="small">${esc(f.email || '—')}</td>
       <td>${f.concluidoEm
         ? `<button type="button" class="badge concluida" data-act="reabrirForn" data-f="${fi}" title="Pedido exportado em ${fmtData(f.concluidoEm)}. Clique para reabrir.">✓ Concluída</button>`
-        : f.enviadoEm ? `<span class="badge ok">${fmtData(f.enviadoEm)}</span>` : '<span class="badge">não enviada</span>'}</td>
+        : `${f.enviadoEm ? `<span class="badge ok">${fmtData(f.enviadoEm)}</span>` : '<span class="badge">não enviada</span>'}${pedidosPorFornecedor(c).some(p => p.fi === fi) ? ` <button type="button" class="link small marcar-concluida" data-act="marcarConcluida" data-f="${fi}" title="Já exportou o pedido deste fornecedor por outro caminho? Marque a cotação dele como concluída">✓ marcar concluída</button>` : ''}`}</td>
       <td>${f.respondidoEm ? `<span class="badge ok">${t.cotados}/${c.itens.length} itens</span>` : `<span class="badge ${atrasado ? (prazo.dias < 0 ? 'danger' : 'warn') : 'warn'}">${atrasado ? 'aguardando · ' + textoPrazo(prazo.dias, c.prazoHora) : 'aguardando'}</span>`}${f.cobradoEm && !f.respondidoEm ? `<br><span class="small muted">cobrado em ${fmtData(f.cobradoEm)}</span>` : ''}</td>
       <td class="r">${f.respondidoEm ? fmtMoeda(t.total) : '—'}</td>
       <td class="actions-cell">
@@ -6547,6 +6570,7 @@ const acoes = {
     const f = c?.fornecedores[+el.dataset.f];
     if (!f || !(await confirmar(`Reabrir a cotação de ${f.nome}? (Tira a marca de concluída.)`, 'Reabrir'))) return;
     delete f.concluidoEm;
+    delete f.exportadoLojas;
     salvar();
     render();
   },
@@ -6659,7 +6683,10 @@ const acoes = {
   baixarPedidoForn: async el => {
     const c = cotAtual();
     const g = await gerarPedidoFornecedor(c, el.dataset.forn, ui.lote?.formato);
-    if (g) await baixarWorkbook(g.wb, g.nome);
+    if (!g || !(await baixarWorkbook(g.wb, g.nome))) return;
+    anotarPedidoExportado(c, c.fornecedores.findIndex(f => f.fornecedorId === el.dataset.forn));
+    salvar();
+    render();
   },
   zipPedidos: async () => {
     const c = cotAtual();
@@ -6671,7 +6698,11 @@ const acoes = {
       }
       return criarZip(arquivos);
     }, TIPO_ZIP);
-    if (ok && nuvem.downloads) toast('Pedidos baixados no arquivo .zip.');
+    if (!ok) return;
+    for (const id of ui.lote.ids) anotarPedidoExportado(c, c.fornecedores.findIndex(f => f.fornecedorId === id));
+    salvar();
+    render();
+    if (nuvem.downloads) toast('Pedidos baixados no arquivo .zip.');
   },
   marcarLote: el => {
     marcarEnviado(cotAtual(), +el.dataset.f, ui.lote?.tipo);
@@ -7010,6 +7041,15 @@ const acoes = {
   },
   sairSupabase: () => sairSupabase(),
   abrirBusca: () => abrirBusca(),
+  marcarConcluida: el => {
+    const c = cotAtual();
+    const f = c?.fornecedores[+el.dataset.f];
+    if (!f) return;
+    f.concluidoEm = new Date().toISOString();
+    salvar();
+    render();
+    toast(`Cotação de ${f.nome} marcada como concluída.`);
+  },
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
   analiseCot: el => {
