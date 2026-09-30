@@ -1389,3 +1389,9 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .brand { font-size: 16px; }
 @media (max-width: 1500px) { nav a { padding: 6px 7px; font-size: 13.5px; } .topbar { gap: 8px 10px; } .status-nuvem { min-width: 0; } }
 @media (max-width: 1250px) { .brand span, .brand { font-size: 15px; } }
+/* marca do 2º lugar (ou do mais barato) na coluna Dif. 1º × 2º */
+.marca-alt { display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--card-2); color: var(--muted); border: 1px solid var(--line); }
+.marca-alt.ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.marca-alt.conferir { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.marca-alt.errada { background: var(--danger-bg); color: var(--danger); border-color: transparent; }
+.marca-alt.sem { font-weight: 500; font-style: italic; }

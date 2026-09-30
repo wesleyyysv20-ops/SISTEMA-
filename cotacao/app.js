@@ -4562,16 +4562,25 @@ const avisoDif = l => (l.difConferida
   ? '<br><span class="ok-conferido" title="Você conferiu esta diferença e marcou os preços como certos">✓ diferença conferida</span>'
   : `<br><button type="button" class="chip-alerta-dif" data-act="conferirDif" data-i="${l.i}" title="Diferença acima de 100%: um dos preços pode estar errado na planilha (preço da caixa em vez da unidade, vírgula no lugar errado…). Clique para marcar como certo.">⚠ confira o preço</button>`);
 
+/** Marca que o fornecedor j respondeu no item (com a cor da conferência: certa, a conferir, diferente). */
+function marcaAlternativa(c, l, j) {
+  const m = c.fornecedores[j]?.respostas?.[l.i]?.marca;
+  if (!m) return '<br><span class="marca-alt sem">sem marca</span>';
+  const st = l.marcas[j];
+  const cls = st === 'errada' ? ' errada' : st === 'duvida' ? ' conferir' : st === 'ok' || st === 'abrev' ? ' ok' : '';
+  return `<br><span class="marca-alt${cls}" title="Marca que ${esc(c.fornecedores[j].nome)} respondeu${l.it.marca ? ` (pedida: ${esc(l.it.marca)})` : ''}">${esc(m)}</span>`;
+}
+
 function celulaDifSegundo(c, l) {
   const alerta = difGrande(l);
   const avisoDifSuspeita = alerta ? avisoDif(l) : '';
   if ((l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0) {
     const dif = difDaLinha(l);
-    return `<span class="dif-seg${dif >= 0.1 ? ' grande' : ''}${alerta && !l.difConferida ? ' suspeita' : ''}" title="${l.preferencia ? 'Regra da Comando: ganha até 5% acima do menor preço' : 'Quanto o escolhido está mais caro que o menor preço'}">+${fmtPct(dif)}</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="Menor preço (ganharia sem a sua escolha)">1º ${esc(c.fornecedores[l.minIdx].nome)} ${fmtMoeda(l.min)}</span>`;
+    return `<span class="dif-seg${dif >= 0.1 ? ' grande' : ''}${alerta && !l.difConferida ? ' suspeita' : ''}" title="${l.preferencia ? 'Regra da Comando: ganha até 5% acima do menor preço' : 'Quanto o escolhido está mais caro que o menor preço'}">+${fmtPct(dif)}</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="Menor preço (ganharia sem a sua escolha)">1º ${esc(c.fornecedores[l.minIdx].nome)} ${fmtMoeda(l.min)}</span>${marcaAlternativa(c, l, l.minIdx)}`;
   }
   if (l.difSegundo == null) return '<span class="muted">—</span>';
   // conta a partir do 1º lugar: quanto o 2º está mais caro que o 1º
-  return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta && !l.difConferida ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span> <span class="small muted">o 2º é mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>`;
+  return `<span class="dif-seg${l.difSegundo >= 0.1 ? ' grande' : ''}${alerta && !l.difConferida ? ' suspeita' : ''}" title="O 2º lugar (${esc(c.fornecedores[l.segundoIdx].nome)}, ${fmtMoeda(l.segundo)}) está ${fmtPct(l.difSegundo)} mais caro que o 1º (${fmtMoeda(l.min)})">+${fmtPct(l.difSegundo)}</span> <span class="small muted">o 2º é mais caro</span>${alerta ? avisoDifSuspeita : ''}<br><span class="small muted" title="2º melhor preço">2º ${esc(c.fornecedores[l.segundoIdx].nome)} ${fmtMoeda(l.segundo)}</span>${marcaAlternativa(c, l, l.segundoIdx)}`;
 }
 
 /** Colunas de fornecedores do comparativo: esconde quem ainda não mandou nenhum preço (dá para mostrar). */
