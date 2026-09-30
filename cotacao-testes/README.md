@@ -25,7 +25,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `18-marca-padrao` | nova cotação: Enter salva a marca e vai para o próximo item; Enter duas vezes grava como padrão no cadastro; sugestão de marca ao digitar; código editável só na cotação (KIT CORREIA/TENSOR) |
 | `19-busca-itens` | nova cotação: procurar na lista (código, similar, marca, descrição), incluir do cadastro o que não está na lista, cadastrar no banco o que não existe e tirar item com confirmação |
 | `20-duvida-lojas` | ❓ do comparativo: escolher a loja (uma ou as duas), quantidade e observação; Paranoá antes de São Sebastião |
-| `21-marca-recusada` | "Não, é outra marca": o preço não ganha, o item fica aguardando outro preço; desfazer e nova marca do fornecedor; preço errado: remover ou corrigir pelo ✕ do preço |
+| `21-marca-recusada` | marca recusada: sem outro preço, o mais barato ganha com a marca recusada em destaque; chegando outro preço ele passa a valer; desfazer a recusa; ✕ do preço |
 | `22-marca-obrigatoria` | produto sem marca exigida: aviso e exclusão com confirmação, trocar marca (FREEMAX → FREMAX), bloqueio no formulário, na planilha e no DataCar; pelo DataCar o código novo sem marca entra e a marca é preenchida na cotação |
 | `23-dois-computadores` | gravação segura: juntar versões, dois computadores ao mesmo tempo, aba fechada antes de enviar, lotes antigos viram baldes |
 | `24-ordem-fornecedores` | comparativo com os fornecedores em ordem alfabética (tela, totais e Excel), cada preço no fornecedor certo |

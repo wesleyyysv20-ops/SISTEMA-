@@ -1643,6 +1643,9 @@ function compararCalculo(c) {
     const recusas = c.fornecedores.map(f => recusada(c, i, f));
     // preço com marca diferente da pedida não ganha sozinho (a não ser que só haja esses)
     let aptos = precos.map((p, j) => (recusas[j] ? null : p));
+    // só há preços com a marca recusada: o mais barato ganha mesmo assim (com aviso), até chegar outro preço
+    const soRecusados = !aptos.some(p => p != null) && precos.some((p, j) => p != null && recusas[j]);
+    if (soRecusados) aptos = precos.map((p, j) => (recusas[j] ? p : null));
     if (db.config.marcaErradaNaoGanha !== false) {
       const filtrados = aptos.map((p, j) => (marcas[j] === 'errada' ? null : p));
       if (filtrados.some(p => p != null)) aptos = filtrados;
@@ -1669,6 +1672,7 @@ function compararCalculo(c) {
     }
     // só tinha preço com marca recusada: aguardando o próximo valor
     const aguardando = vencedor < 0 && recusas.some((r, j) => r && precos[j] != null);
+    const recusadaGanhou = soRecusados && vencedor >= 0 && recusas[vencedor]; // comprando a marca recusada (não há outro preço)
     const preco = vencedor >= 0 ? precos[vencedor] : null;
     // segundo colocado (de outro fornecedor) e a diferença em % para o melhor
     const [seg, segIdx] = ordem.length > 1 ? ordem[1] : [null, -1];
@@ -1678,7 +1682,7 @@ function compararCalculo(c) {
     const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
     const difConferida = !!c.difConferida?.[i] && c.difConferida[i] === assinaturaPrecos(precos);
     const duvida = duvidas.get(i) || null; // lojas com o item em Dúvidas
-    return { it, i, q, naoComprar, duvida, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
+    return { it, i, q, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -4396,6 +4400,7 @@ function checklistPedido(c, fi) {
     add('erro', '📦', 'sem quantidade (nenhuma loja digitada)', itens(l => !l.duvida && !LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null)));
   }
   add('erro', '📦', 'acima do estoque informado', itens(l => l.estoque != null && l.q > l.estoque));
+  add('erro', '✗', 'com a marca recusada (comprando por não haver outro preço)', itens(l => l.recusadaGanhou));
   add('aviso', '🏷️', 'marca diferente da pedida ou para conferir', itens(l => (l.marcas[fi] === 'errada' || l.marcas[fi] === 'duvida') && !l.recusas[fi]));
   add('aviso', '⚠', 'preço fora do normal (último preço pago ou os outros fornecedores)', itens(l => {
     const o = f.respostas?.[l.i];
@@ -4923,7 +4928,7 @@ function renderCotacao(id) {
         ${comp.linhas.map(l => {
           const ult = l.it.produtoId ? ultimos[l.it.produtoId] : null;
           const avisosLinha = new Set(); // para as etiquetas de aviso levarem aos itens
-          if (l.aguardando) avisosLinha.add('aguardando');
+          if (l.aguardando || l.recusadaGanhou) avisosLinha.add('aguardando');
           if (difSuspeita(l)) avisosLinha.add('dif');
           if (l.preferencia) avisosLinha.add('regra');
           if (l.duvida) avisosLinha.add('duvida');
@@ -4942,19 +4947,19 @@ function renderCotacao(id) {
             const demora = p != null && entregaDemorada(c.fornecedores[j], o);
             const pelaRegra = j === l.vencedor && l.preferencia;
             if (demora) { qtdDemora++; avisosLinha.add('demora'); }
-            const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : '', l.recusas[j] && p != null ? 'recusada' : ''].filter(Boolean).join(' ');
+            const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : '', l.recusas[j] && p != null ? (j === l.vencedor ? 'recusada-venc' : 'recusada') : ''].filter(Boolean).join(' ');
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
             return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
           }).join('');
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
-          const situacao = l.aguardando ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
-          return `<tr class="${l.aguardando ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
+          const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
+          return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
           <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.codigo || '—')}<br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
-          ${temResposta ? `<td class="r col-escolhido"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 ? `<br><span class="nome-venc">${esc(c.fornecedores[l.vencedor].nome)}</span>` : ''}${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
+          ${temResposta ? `<td class="r col-escolhido"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 ? `<br><span class="nome-venc">${esc(c.fornecedores[l.vencedor].nome)}</span>` : ''}${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
               const alvo = (l.manual || l.preferencia) && l.minIdx >= 0 ? l.minIdx : l.segundoIdx;
@@ -5039,12 +5044,12 @@ function renderCotacao(id) {
     </div>` : ''}
     ${(() => {
       // avisos do comparativo em etiquetas curtas, lado a lado (o texto completo aparece ao passar o mouse)
-      const nAg = comp.linhas.filter(l => l.aguardando).length;
+      const nAg = comp.linhas.filter(l => l.aguardando || l.recusadaGanhou).length;
       const nDif = comp.linhas.filter(difSuspeita).length;
       const nDuv = comp.linhas.filter(l => l.duvida).length;
       const et = [];
       if (nDuv) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso aviso-duvida" data-tipo="duvida" title="Clique para ver só esses itens. Itens na fila de Dúvidas não vão no pedido exportado até saírem da fila.">❓ ${nDuv} item(ns) em dúvida — fora do pedido</button>`);
-      if (nAg) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-recusa" data-tipo="aguardando" title="Clique para ver só esses itens. Linhas em vermelho. Quando chegar a resposta de outro fornecedor, confira a marca dele.">✗ ${nAg} item(ns) com a marca recusada, aguardando outro preço</button>`);
+      if (nAg) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-recusa" data-tipo="aguardando" title="Clique para ver só esses itens. Linhas em vermelho: a marca foi recusada e não há outro preço, então o mais barato está sendo comprado assim mesmo. Quando chegar a resposta de outro fornecedor, ela passa a valer.">✗ ${nAg} item(ns) com a marca recusada (sem outro preço: comprando o mais barato)</button>`);
       if (nDif) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-dif" data-tipo="dif" title="Clique para ver só esses itens. Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} item(ns) com mais de 100% de diferença — confira o preço</button>`);
       if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} com marca diferente da pedida` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abreviação(ões) para conferir` : ''].filter(Boolean).join(' · ')}</button>`);
       const nRegra = comp.linhas.filter(l => l.preferencia).length;
@@ -6759,9 +6764,11 @@ const acoes = {
       aprenderMarca(it.marca, o.marca, escolha);
       recusarMarca(c, i, f);
       const l = comparar(c).linhas[i];
-      toast(l.vencedor >= 0
-        ? `Marca "${o.marca}" recusada. Agora vale o preço de ${c.fornecedores[l.vencedor].nome}: confira a marca dele.`
-        : `Marca "${o.marca}" recusada. O item fica aguardando outro preço.`, 6000);
+      toast(l.recusadaGanhou
+        ? `Marca "${o.marca}" recusada. Não há outro preço: o mais barato (${c.fornecedores[l.vencedor].nome}) fica como escolhido, com o aviso de marca recusada.`
+        : l.vencedor >= 0
+          ? `Marca "${o.marca}" recusada. Agora vale o preço de ${c.fornecedores[l.vencedor].nome}: confira a marca dele.`
+          : `Marca "${o.marca}" recusada. O item fica aguardando outro preço.`, 6000);
     }
     salvar();
     render();
@@ -7281,7 +7288,7 @@ function dicaPrecoComp(c, l, j) {
   const venc = j === l.vencedor && (c.fornecedores.length > 1 || l.manual);
   const pelaRegra = j === l.vencedor && l.preferencia;
   const dica = pelaRegra ? `Regra da Comando: ganha estando ${fmtPct(l.preco / l.min - 1)} acima do menor preço (${fmtMoeda(l.min)}). Clique no preço do mais barato para escolher ele.`
-    : l.recusas[j] ? 'Marca recusada: este preço não entra. Clique na marca para desfazer.'
+    : l.recusas[j] ? (j === l.vencedor ? 'Marca recusada, mas é o único preço: está sendo comprado (a marca não é a pedida). Clique na marca para desfazer a recusa.' : 'Marca recusada: este preço não entra. Clique na marca para desfazer.')
     : venc ? (l.manual ? 'Escolhido por você. Clique para voltar ao menor preço.' : 'Menor preço (vencedor).')
     : (p === l.min ? 'Menor preço. ' : '') + 'Clique para escolher este fornecedor para este item.';
   const extra = [o?.prazo, o?.obs].filter(Boolean).join(' · ');
@@ -8087,6 +8094,7 @@ function desenharPip(focar) {
       const st = l.marcas[l.vencedor];
       const clsMarca = st === 'errada' ? ' errada' : st === 'duvida' ? ' conferir' : '';
       const tags = [
+        l.recusadaGanhou ? '<span class="pip-tag recusada">⚠ marca recusada</span>' : '',
         l.manual ? '<span class="pip-tag">escolhido por você</span>' : '',
         l.preferencia ? `<span class="pip-tag regra">⭐ regra 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',
         entregaDemorada(f, f.respostas?.[l.i]) ? '<span class="pip-tag">🐢 GO demora</span>' : '',

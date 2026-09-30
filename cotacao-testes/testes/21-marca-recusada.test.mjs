@@ -18,7 +18,7 @@ const recusar = async page => {
   await page.click('.dlg button:text("Não, é outra marca")');
 };
 
-test('marca recusada: único preço não ganha, item fica aguardando outro preço', async () => {
+test('marca recusada sem outro preço: o mais barato ganha assim mesmo, com a marca recusada em destaque', async () => {
   const s = await abrirCot([forn('f1', 'Auto Mix', { 0: { preco: 8.67, marca: 'SUN ELETRI/318' }, 1: { preco: 20, marca: 'NGK' } })]);
   const { page } = s;
   // antes: marca errada, mas é o único preço
@@ -27,12 +27,16 @@ test('marca recusada: único preço não ganha, item fica aguardando outro preç
   await recusar(page);
   const txt = n(await linha(page, 0).innerText());
   assert.match(txt, /✗ SUN ELETRI\/318 — marca recusada/);
-  assert.match(txt, /⏳ aguardando outro preço/);
-  assert.match(await linha(page, 0).getAttribute('class'), /\blinha-aguardando\b.*\bsit-aguardando\b/, 'linha vermelha, com a faixa de aguardando');
-  assert.equal(await linha(page, 0).locator('td.recusada').count(), 1);
-  assert.match(n(await page.locator('.aviso-recusa').innerText()), /1 item\(ns\) com a marca recusada, aguardando outro preço/);
-  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), -1);
-  assert.match(n(await page.locator('#toast').innerText()), /O item fica aguardando outro preço/);
+  assert.match(txt, /⚠ marca recusada · não é a pedida/);
+  assert.doesNotMatch(txt, /aguardando outro preço/);
+  assert.match(await linha(page, 0).getAttribute('class'), /\blinha-aguardando\b.*\bsit-aguardando\b/, 'linha vermelha em destaque');
+  assert.equal(await linha(page, 0).locator('td.recusada-venc').count(), 1, 'o preço não fica riscado: está sendo comprado');
+  assert.match(n(await page.locator('.aviso-recusa').innerText()), /1 item\(ns\) com a marca recusada \(sem outro preço: comprando o mais barato\)/);
+  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 0);
+  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].recusadaGanhou), true);
+  assert.match(n(await page.locator('#toast').innerText()), /Não há outro preço: o mais barato \(Auto Mix\) fica como escolhido/);
+  // vai no pedido
+  assert.deepEqual(await page.evaluate(() => pedidosPorFornecedor(db.cotacoes[0]).map(p => p.itens.map(x => x.it.codigo))), [['BI318', 'BKR6E']]);
 
   // chega a resposta de outro fornecedor: ele passa a valer e a marca dele aparece para conferir
   await page.evaluate(() => {
@@ -41,7 +45,7 @@ test('marca recusada: único preço não ganha, item fica aguardando outro preç
     salvar(); render();
   });
   const depois = n(await linha(page, 0).innerText());
-  assert.doesNotMatch(depois, /aguardando/);
+  assert.doesNotMatch(depois, /não é a pedida/);
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 1);
   assert.equal(await page.locator('.aviso-recusa').count(), 0);
 
