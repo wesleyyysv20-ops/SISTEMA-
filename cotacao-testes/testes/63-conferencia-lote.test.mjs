@@ -8,8 +8,8 @@ import { abrir, base, fechar } from '../ajuda.mjs';
 after(fechar);
 
 // 8 grupos de 1 item cada (como o arquivo real: quase todo grupo tem 1 item)
-const linhas = [['A1', 'SENSOR OXIGENIO', '01'], ['A2', 'TERMINAL DIRECAO', '01 XX'], ['B1', 'CILINDRO RODA', '08'], ['B2', 'CILINDRO RODA TRAS', '08 XX'],
-  ['C1', 'HIGIENIZADOR AR', '11'], ['C2', 'HIGIENIZADOR AR LIMAO', '11 XX'], ['D1', 'BICO INJETOR', '15'], ['D2', 'FLEXIVEL FREIO', '15 XX']];
+const linhas = [['A1', 'SENSOR OXIGENIO', '01'], ['A2', 'TERMINAL DIRECAO', '02'], ['B1', 'CILINDRO RODA', '08'], ['B2', 'CILINDRO RODA TRAS', '09'],
+  ['C1', 'HIGIENIZADOR AR', '11'], ['C2', 'HIGIENIZADOR AR LIMAO', '12'], ['D1', 'BICO INJETOR', '15'], ['D2', 'FLEXIVEL FREIO', '16']];
 const arq = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-')), 'lote.csv');
 fs.writeFileSync(arq, 'Código;Descrição;OBS\n' + linhas.map(l => l.join(';')).join('\n'));
 

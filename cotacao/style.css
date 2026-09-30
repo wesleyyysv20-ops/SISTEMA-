@@ -1765,3 +1765,15 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .dif-forn { font-size: 11.5px; font-weight: 600; color: var(--muted); max-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dif-tag { font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 4px; background: var(--blue-bg); color: var(--primary-2); }
 .dif-cel .marca-alt { margin: 0; }
+
+/* XX na OBS: item para São Sebastião (só informação) */
+.tag-loja { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700; white-space: nowrap; background: color-mix(in srgb, var(--roxo-forte) 12%, var(--card)); color: var(--roxo-forte); border: 1px solid color-mix(in srgb, var(--roxo-forte) 35%, transparent); cursor: help; vertical-align: middle; }
+.tab-comp td.loja-obs { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--roxo-forte) 45%, transparent); }
+.pip-qtds label.loja-obs input.qtd-loja { border-color: var(--roxo-forte); }
+.pip-linha-desc .tag-loja { flex: none; }
+/* OBS comprida (ex.: "COMANDO DUVIDA 17"): numa linha, sem quebrar letra por letra; contagem e etiquetas descem se não couberem */
+.conf-grupo { grid-template-columns: 22px minmax(170px, 30%) minmax(0, 1fr) auto auto; }
+.cg-obs { flex-wrap: wrap; align-items: center; column-gap: 6px; row-gap: 1px; }
+.cg-obs b { overflow-wrap: normal; word-break: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; min-width: 0; }
+.cg-obs > span { flex: none; }
+.conf-grupo.conf-concluir { grid-template-columns: 1fr; }
