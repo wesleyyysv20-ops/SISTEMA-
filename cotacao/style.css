@@ -1461,3 +1461,99 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .af-rolar { max-height: 260px; overflow-y: auto; }
 .txt-bom { color: var(--ok); }
 .txt-atencao { color: var(--warn); }
+
+/* ===== códigos: fonte feita para leitura (0 ≠ O, 1 ≠ I ≠ l) ===== */
+:root { --fonte-cod: "Atkinson Hyperlegible Mono", "JetBrains Mono", "Cascadia Mono", Consolas, monospace; }
+.pip-cod-txt, .cod-digitar, .cod-comp, .cod-item, .conf-codigo, .dup-cod { font-family: var(--fonte-cod); font-variant-numeric: slashed-zero; letter-spacing: .02em; }
+.cod-comp { font-weight: 700; }
+
+/* ===== janela flutuante: organização, cores por situação e tamanho que se adapta ===== */
+.pip-corpo { font-family: Inter, system-ui, sans-serif; font-feature-settings: "tnum" 1, "cv11" 1; padding: 8px; }
+.pip-barra { margin-bottom: 6px; }
+.pip-barra select { border-radius: 8px; }
+.pip-barra button { border-radius: 8px; }
+.pip-pos { font-weight: 700; }
+
+/* progresso */
+.pip-faltam { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 11px; color: var(--muted); text-align: left; }
+.pip-prog { flex: 1; min-width: 40px; height: 6px; border-radius: 6px; background: color-mix(in srgb, var(--muted) 18%, transparent); overflow: hidden; }
+.pip-prog > span { display: block; height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--ok), color-mix(in srgb, var(--ok) 70%, var(--primary-2))); transition: width .25s ease; }
+.pip-prog-txt { white-space: nowrap; }
+.pip-prog-txt b { color: var(--text); }
+.pip-sofaltam { white-space: nowrap; }
+.pip-concluido { font-size: 12.5px; border-width: 1.5px; }
+
+/* cartão do item com a cor da situação */
+.pip-item { --cor-estado: var(--line); position: relative; padding: 7px 8px 6px 11px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); box-shadow: 0 1px 3px rgba(10, 18, 40, .06); }
+.pip-item::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 4px; border-radius: 0 4px 4px 0; background: var(--cor-estado); }
+.pip-item.estado-ok { --cor-estado: var(--ok); background: color-mix(in srgb, var(--ok) 6%, var(--card)); border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+.pip-item.estado-falta { --cor-estado: color-mix(in srgb, var(--muted) 55%, transparent); }
+.pip-item.estado-duvida { --cor-estado: var(--roxo-forte, #7b3fc4); background: color-mix(in srgb, var(--roxo-forte, #7b3fc4) 8%, var(--card)); border-color: color-mix(in srgb, var(--roxo-forte, #7b3fc4) 35%, var(--line)); }
+.pip-item.estado-marca { --cor-estado: var(--laranja, #d97706); background: color-mix(in srgb, var(--laranja, #d97706) 8%, var(--card)); border-color: color-mix(in srgb, var(--laranja, #d97706) 40%, var(--line)); }
+.pip-cab { display: flex; align-items: center; gap: 6px; }
+.pip-cod { flex: 1; min-width: 0; padding: 3px 9px; border-radius: 9px; background: var(--card-2); border: 1px solid var(--line); }
+.pip-cod:hover { border-color: var(--primary-2); }
+.pip-cod-txt { font-size: 22px; font-weight: 700; letter-spacing: .04em; line-height: 1.2; }
+.pip-estado { flex: none; padding: 2px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 700; white-space: nowrap; background: color-mix(in srgb, var(--cor-estado) 16%, var(--card)); color: var(--text); border: 1px solid color-mix(in srgb, var(--cor-estado) 45%, transparent); }
+.estado-ok .pip-estado { color: var(--ok); }
+.estado-falta .pip-estado { color: var(--muted); }
+.pip-desc { margin: 4px 0 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
+
+/* ganhador: preço, fornecedor e marca pedida × marca que veio */
+.pip-ganhador { margin: 0 0 6px; padding: 6px 8px; border-radius: 10px; border: 1.5px solid var(--verde-linha); background: var(--ok-bg); }
+.pip-preco-linha { gap: 8px; }
+.pip-preco { font-size: 24px; font-variant-numeric: tabular-nums; }
+.pip-forn { flex: 1; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.pip-marcas { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; min-width: 0; }
+.pip-marca-pedida { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; overflow: hidden; }
+.pip-marca-pedida small { color: var(--muted); font-size: 10.5px; }
+.pip-marca-pedida b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--primary-2); }
+.pip-seta { color: var(--muted); flex: none; }
+.pip-marcas .pip-marca { flex: none; max-width: 55%; font-size: 12px; padding: 1px 8px; background: var(--neutro-forte, #475569); }
+.pip-marcas .pip-marca.ok { background: var(--verde-forte); }
+.pip-marca i { font-style: normal; }
+.pip-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.pip-segundo { margin: 0; border-radius: 10px; }
+
+/* quantidades e estoque */
+.pip-col-qtd { margin-top: 7px; }
+.pip-qtds input.qtd-loja { height: 36px; font-size: 20px; font-weight: 700; border-radius: 9px; font-variant-numeric: tabular-nums; }
+.pip-estoque { display: flex; align-items: baseline; gap: 6px; margin-top: 6px; padding: 3px 8px; border-radius: 8px; font-size: 11.5px; background: color-mix(in srgb, var(--primary-2) 8%, var(--card)); border: 1px solid color-mix(in srgb, var(--primary-2) 30%, var(--line)); }
+.pip-estoque b { font-size: 15px; }
+.pip-estoque small { margin-left: auto; color: var(--muted); }
+.pip-estoque.no-limite { border-color: var(--laranja, #d97706); }
+.pip-estoque.passou { background: var(--danger-bg, #fde8e7); border-color: var(--danger); color: var(--danger); }
+.pip-estoque.passou small { color: var(--danger); font-weight: 700; }
+.pip-total { margin-top: 5px; }
+.pip-total .estoque-info { display: none; }
+.pip-ajuda { margin-top: 6px; text-align: center; }
+
+/* estreita: tudo mais justo */
+@media (max-width: 299px) {
+  .pip-corpo { padding: 5px; }
+  .pip-cod-txt { font-size: 18px; }
+  .pip-preco { font-size: 20px; }
+    .pip-seg-acao { display: none; }
+  .pip-sofaltam { display: none; }
+  .pip-desc { margin: 2px 0 4px; }
+}
+/* larga: item à esquerda, quantidades à direita */
+@media (min-width: 470px) {
+  .pip-grade { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 10px; align-items: start; }
+  .pip-col-qtd { margin-top: 0; position: sticky; top: 0; }
+  .pip-qtds { grid-template-columns: 1fr; }
+  .pip-cod-txt { font-size: 24px; }
+  .pip-preco { font-size: 26px; }
+}
+/* baixa: esconde o que é secundário */
+@media (max-height: 380px) {
+  .pip-ajuda { display: none; }
+}
+@media (max-height: 320px) {
+  .pip-desc, .pip-corpo .presenca, .pip-tags { display: none; }
+  .pip-faltam { margin-bottom: 4px; }
+}
+.pip-linha-desc { display: flex; align-items: center; gap: 6px; margin: 4px 0 6px; min-width: 0; }
+.pip-linha-desc .pip-desc { flex: 1; min-width: 0; margin: 0; }
+.pip-total .acima-estoque, .pip-total .acima-estoque + br { display: none; }
+@media (max-height: 320px) { .pip-linha-desc { display: none; } }

@@ -50,7 +50,7 @@ for (const modo of ['pip', 'popup']) {
     await page.click('[data-act=abrirPip]');
     const j = page.frameLocator('#janelaTeste');
     await j.locator('#pip .pip-cod').waitFor();
-    assert.match(n(await j.locator('#pip').innerText()), /#2 · 2 de 3[\s\S]*COD-B[\s\S]*PECA B[\s\S]*R\$ 20,00\s*NGK\s*❓\s*🏆 KAIZEN/);
+    assert.match(n(await j.locator('#pip').innerText()), /#2 · 2 de 3[\s\S]*COD-B[\s\S]*PECA B[\s\S]*R\$ 20,00\s*🏆 KAIZEN\s*❓\s*pedida\s*SÓ NGK\s*→\s*NGK/);
     assert.equal(await j.locator('#pip .pip-ajuda b').count(), modo === 'pip' ? 0 : 1, 'no Firefox: dica do Win+Ctrl+T');
 
     // digita a quantidade: grava e aparece no comparativo
@@ -208,7 +208,7 @@ test('janela flutuante: 2º lugar com marca e % mais caro; clicar escolhe ele (c
   await j.locator('.dlg button.primary').click();
   assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[0].vencedor), 1);
   // agora o ganhador é a KAIZEN e a alternativa é o mais barato
-  assert.match(n(await j.locator('.pip-ganhador').innerText()), /R\$ 117,50\s*MAGNETI MARELLI\s*❓\s*🏆 KAIZEN[\s\S]*escolhido por você/);
+  assert.match(n(await j.locator('.pip-ganhador').innerText()), /R\$ 117,50\s*🏆 KAIZEN\s*❓\s*pedida[\s\S]*→\s*MAGNETI MARELLI[\s\S]*escolhido por você/);
   assert.match(n(await seg.innerText()), /1º · menor preço\s*R\$ 100,00\s*DELPHI\s*ENVIA PEÇAS\s*escolhido \+17,5%/);
   assert.match(await seg.getAttribute('title'), /Menor preço[\s\S]*o escolhido está \+17,5% mais caro/);
   // o comparativo também mudou

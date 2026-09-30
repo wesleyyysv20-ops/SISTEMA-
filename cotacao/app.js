@@ -5013,7 +5013,7 @@ function renderCotacao(id) {
           const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
           return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
-          <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}${esc(l.it.codigo || '—')}<br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
+          <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span><br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `<td class="r col-escolhido"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 ? `<br><span class="nome-venc">${esc(c.fornecedores[l.vencedor].nome)}</span>` : ''}${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
@@ -8151,7 +8151,7 @@ async function abrirPip() {
   try {
     if (pip.flutuante) {
       // Chrome/Edge: janela que fica sempre por cima das outras
-      w = await window.documentPictureInPicture.requestWindow({ width: 330, height: 330 });
+      w = await window.documentPictureInPicture.requestWindow({ width: 340, height: 400 });
     } else {
       // Firefox e outros: janelinha separada (o Windows pode deixá-la por cima: veja a dica no rodapé dela)
       w = window.open('', 'cotacaoJanelaQtd', 'popup=yes,width=350,height=400');
@@ -8287,6 +8287,32 @@ function pendentesPip(c, lista) {
   return lista.filter(i => !LJ.some(lj => c.qtds?.[i]?.[lj.id] != null));
 }
 
+/** Situação do item na janela flutuante (cor do cartão): dúvida, quantidade informada, marca diferente ou falta. */
+function estadoPip(c, l) {
+  const st = l.vencedor >= 0 ? l.marcas[l.vencedor] : null;
+  if (l.duvida) return ['duvida', '❓ em dúvida · fora do pedido'];
+  if (!pendentesPip(c, [l.i]).length) return ['ok', '✓ informado'];
+  if (st === 'errada' || l.recusadaGanhou) return ['marca', '✗ marca diferente'];
+  if (st === 'duvida' || st === 'sem') return ['marca', '? conferir marca'];
+  return ['falta', 'falta quantidade'];
+}
+
+/** Estoque do ganhador (Kaizen) ao lado das quantidades: fica vermelho quando a soma das lojas passa dele. */
+function estoquePip(c, l) {
+  if (l.estoque == null) return '';
+  const soma = lojas().reduce((t, lj) => t + qtdLoja(c, l.i, lj.id), 0);
+  const passou = soma > l.estoque;
+  return `<div class="pip-estoque${passou ? ' passou' : soma === l.estoque ? ' no-limite' : ''}" title="Estoque informado por ${esc(c.fornecedores[l.vencedor]?.nome || '')}${soma ? ` · pedido: ${fmtNum(soma)}` : ''}"><span>📦 estoque</span><b>${fmtNum(l.estoque)}</b>${soma ? `<small>${passou ? `passou ${fmtNum(soma - l.estoque)}` : `restam ${fmtNum(l.estoque - soma)}`}</small>` : ''}</div>`;
+}
+
+/** Marca pedida × marca do ganhador, lado a lado. */
+function marcasPip(l, marcaVenc) {
+  const st = l.marcas[l.vencedor];
+  const [cls, ic, tit] = st === 'errada' ? ['errada', '✗', 'marca diferente da pedida'] : st === 'duvida' ? ['conferir', '?', 'abreviação: confira']
+    : st === 'sem' ? ['conferir', '?', 'não informou a marca'] : st === 'ok' || st === 'abrev' ? ['ok', '✓', 'marca pedida'] : ['', '', 'sem exigência de marca'];
+  return `<div class="pip-marcas" title="${tit}"><span class="pip-marca-pedida"><small>pedida</small><b>${esc(l.it.marca || 'qualquer')}</b></span><span class="pip-seta">→</span><span class="pip-marca ${cls}">${esc(marcaVenc || 'sem marca')}${ic ? ` <i>${ic}</i>` : ''}</span></div>`;
+}
+
 /** "Todos os itens de X já têm quantidade informada" (ou quantos faltam). */
 function avisoConcluidoPip(c, lista) {
   if (!lista.length) return '';
@@ -8300,7 +8326,12 @@ function avisoConcluidoPip(c, lista) {
       : `<br><button type="button" class="sm primary pip-exportar" data-pip="exportar" data-f="${fi}" title="Exportar o pedido de ${esc(f.nome)} (com o checklist) sem sair desta janela">⬇ Exportar pedido de ${esc(f.nome)}</button>`;
     return `<div class="pip-concluido" role="status">✓ Todos os itens ${fi >= 0 ? `de <b>${esc(de)}</b>` : esc(de)} já têm a quantidade informada.${exp}</div>`;
   }
-  return `<div class="pip-faltam"><label class="pip-sofaltam" title="Enter e as setas passam só pelos itens ainda sem quantidade"><input type="checkbox" data-pip-sofaltam ${pip.soFaltam ? 'checked' : ''}> só os que faltam</label><span>faltam <b>${falta}</b> de ${lista.length}</span></div>`;
+  const feitos = lista.length - falta;
+  return `<div class="pip-faltam">
+    <div class="pip-prog" role="progressbar" aria-valuemin="0" aria-valuemax="${lista.length}" aria-valuenow="${feitos}" title="${feitos} de ${lista.length} itens com quantidade"><span style="width:${Math.round((feitos / lista.length) * 100)}%"></span></div>
+    <span class="pip-prog-txt">faltam <b>${falta}</b> de ${lista.length}</span>
+    <label class="pip-sofaltam" title="Enter e as setas passam só pelos itens ainda sem quantidade"><input type="checkbox" data-pip-sofaltam ${pip.soFaltam ? 'checked' : ''}> só faltam</label>
+  </div>`;
 }
 
 function irPip(delta) {
@@ -8441,6 +8472,7 @@ function desenharPip(focar) {
   const f = l.vencedor >= 0 ? c.fornecedores[l.vencedor] : null;
   const marcaVenc = f?.respostas?.[l.i]?.marca;
   const LJ = lojas();
+  const [estado, rotEstado] = estadoPip(c, l);
   raiz.innerHTML = `
     <div class="pip-barra">
       <select id="pipForn" title="Mostrar só os itens que este fornecedor ganhou">${opcoesVencedor(c, comp)}</select>
@@ -8448,45 +8480,50 @@ function desenharPip(focar) {
       <span class="pip-pos" title="Item da cotação · posição na lista">#${l.i + 1} <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
       <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>
     </div>
-    <div id="pipPresenca" class="presenca" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div>
     <div id="pipAviso">${avisoConcluidoPip(c, lista)}</div>
-    <button type="button" class="pip-cod" data-pip="copiar" title="Clique para copiar o código (e colar no DataCar)"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉</span></button>
-    <div class="pip-desc" title="${esc([l.it.descricao, l.it.marca && 'marca pedida: ' + l.it.marca].filter(Boolean).join(' · '))}">${esc(l.it.descricao || '')}${l.it.marca ? ` · <span class="pip-pedida">pedida <b>${esc(l.it.marca)}</b></span>` : ''}</div>
-    ${l.duvida ? '<div class="pip-linha-duv"><span class="chip-duvida">❓ em dúvida · fora do pedido</span></div>' : ''}
-    ${f ? (() => {
-      // ganhador em destaque: preço grande com a marca dele ao lado; o fornecedor embaixo
-      const st = l.marcas[l.vencedor];
-      const clsMarca = st === 'errada' ? ' errada' : st === 'duvida' ? ' conferir' : '';
-      const tags = [
-        l.recusadaGanhou ? '<span class="pip-tag recusada">⚠ marca recusada</span>' : '',
-        l.manual ? '<span class="pip-tag">escolhido por você</span>' : '',
-        l.preferencia ? `<span class="pip-tag regra">⭐ regra 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',
-        entregaDemorada(f, f.respostas?.[l.i]) ? '<span class="pip-tag">🐢 GO demora</span>' : '',
-        l.estoque != null ? `<span class="pip-tag estoque">📦 estoque ${fmtNum(l.estoque)}</span>` : '',
-      ].filter(Boolean).join('');
-      // alternativa: o 2º lugar; se você escolheu outro (ou vale a regra dos 5%), o mais barato
-      const trocou = (l.manual || l.preferencia) && l.minIdx >= 0 && l.minIdx !== l.vencedor;
-      const alvo = trocou ? l.minIdx : l.segundoIdx;
-      let seg = '';
-      if (alvo >= 0 && alvo !== l.vencedor) {
-        const fa = c.fornecedores[alvo];
-        const pa = l.precos[alvo];
-        const dif = trocou ? l.preco / l.min - 1 : l.difSegundo;
-        const txtDif = dif == null ? '' : trocou ? `escolhido +${fmtPct(dif)}` : `+${fmtPct(dif)} que o 1º`;
-        seg = `<button type="button" class="pip-segundo${dif > LIMITE_DIF_SUSPEITA ? ' suspeita' : ''}" data-pip="escolher" data-f="${alvo}" title="${trocou ? 'Menor preço' : '2º lugar'}: clique para comprar de ${esc(fa.nome)} por ${fmtMoeda(pa)}${trocou ? ` (o escolhido está +${fmtPct(dif)} mais caro)` : dif != null ? ` (+${fmtPct(dif)} mais caro que o 1º)` : ''}">
-          <span class="pip-seg-info"><span class="pip-seg-rot">${trocou ? '1º · menor preço' : '2º lugar'}</span><span class="pip-seg-preco">${fmtMoeda(pa)}</span>${marcaAlternativa(c, l, alvo).replace('<br>', '')}<span class="pip-seg-forn">${esc(fa.nome)}</span>${txtDif ? `<span class="pip-seg-dif">${txtDif}</span>` : ''}</span><span class="pip-seg-acao">Escolher ›</span>
-        </button>`;
-      }
-      return `<div class="pip-ganhador">
-        <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span>${marcaVenc ? `<span class="pip-marca${clsMarca}" title="Marca de ${esc(f.nome)}">${esc(marcaVenc)}</span>` : ''}<button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja)">❓</button></div>
-        <div class="pip-forn">🏆 ${esc(f.nome)}${tags}</div>
-      </div>${seg}`;
-    })() : `<div class="pip-ganhador vazio">${l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>`}
-    <div class="pip-qtds">${LJ.map(lj => {
-      const v = c.qtds?.[l.i]?.[lj.id];
-      return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
-    }).join('')}</div>
-    <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
+    <div id="pipPresenca" class="presenca" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div>
+    <div class="pip-grade">
+      <div class="pip-item estado-${estado}" id="pipItem">
+        <div class="pip-cab">
+          <button type="button" class="pip-cod" data-pip="copiar" title="Clique (ou C) para copiar o código e colar no DataCar"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉</span></button>
+        </div>
+        <div class="pip-linha-desc"><span class="pip-desc" title="${esc(l.it.descricao || '')}">${esc(l.it.descricao || '')}</span><span class="pip-estado" id="pipEstado">${rotEstado}</span></div>
+        ${f ? (() => {
+          const tags = [
+            l.recusadaGanhou ? '<span class="pip-tag recusada">⚠ marca recusada</span>' : '',
+            l.manual ? '<span class="pip-tag">escolhido por você</span>' : '',
+            l.preferencia ? `<span class="pip-tag regra">⭐ regra 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',
+            entregaDemorada(f, f.respostas?.[l.i]) ? '<span class="pip-tag">🐢 GO demora</span>' : '',
+          ].filter(Boolean).join('');
+          // alternativa: o 2º lugar; se você escolheu outro (ou vale a regra dos 5%), o mais barato
+          const trocou = (l.manual || l.preferencia) && l.minIdx >= 0 && l.minIdx !== l.vencedor;
+          const alvo = trocou ? l.minIdx : l.segundoIdx;
+          let seg = '';
+          if (alvo >= 0 && alvo !== l.vencedor) {
+            const fa = c.fornecedores[alvo];
+            const pa = l.precos[alvo];
+            const dif = trocou ? l.preco / l.min - 1 : l.difSegundo;
+            const txtDif = dif == null ? '' : trocou ? `escolhido +${fmtPct(dif)}` : `+${fmtPct(dif)} que o 1º`;
+            seg = `<button type="button" class="pip-segundo${dif > LIMITE_DIF_SUSPEITA ? ' suspeita' : ''}" data-pip="escolher" data-f="${alvo}" title="${trocou ? 'Menor preço' : '2º lugar'}: clique (ou S) para comprar de ${esc(fa.nome)} por ${fmtMoeda(pa)}${trocou ? ` (o escolhido está +${fmtPct(dif)} mais caro)` : dif != null ? ` (+${fmtPct(dif)} mais caro que o 1º)` : ''}">
+              <span class="pip-seg-info"><span class="pip-seg-rot">${trocou ? '1º · menor preço' : '2º lugar'}</span><span class="pip-seg-preco">${fmtMoeda(pa)}</span>${marcaAlternativa(c, l, alvo).replace('<br>', '')}<span class="pip-seg-forn">${esc(fa.nome)}</span>${txtDif ? `<span class="pip-seg-dif">${txtDif}</span>` : ''}</span><span class="pip-seg-acao">Escolher ›</span>
+            </button>`;
+          }
+          return `<div class="pip-ganhador">
+            <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span><span class="pip-forn">🏆 ${esc(f.nome)}</span><button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja) · tecla D">❓</button></div>
+            ${marcasPip(l, marcaVenc)}
+            ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
+          </div>${seg}`;
+        })() : `<div class="pip-ganhador vazio">${l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>`}
+      </div>
+      <div class="pip-col-qtd">
+        <div class="pip-qtds">${LJ.map(lj => {
+          const v = c.qtds?.[l.i]?.[lj.id];
+          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
+        }).join('')}</div>
+        <div id="pipEstoque">${estoquePip(c, l)}</div>
+        <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
+      </div>
+    </div>
     <p class="pip-ajuda" title="Atalhos de uma tecla">C copia · D dúvida · S 2º lugar · / buscar${pip.flutuante ? '' : ' · sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)'}</p>`;
   const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
   if (sel) {
@@ -8514,8 +8551,17 @@ function espelharQtd(t, c, i) {
   }
   if (pip.win && pip.cotId === c.id) {
     if (pip.i === i) {
-      const tot = pip.win.document.getElementById('pipTotal');
-      if (tot) tot.innerHTML = celTotal(comparar(c).linhas[i]);
+      const pd = pip.win.document;
+      const lin = comparar(c).linhas[i];
+      const tot = pd.getElementById('pipTotal');
+      if (tot) tot.innerHTML = celTotal(lin);
+      const est = pd.getElementById('pipEstoque');
+      if (est) est.innerHTML = estoquePip(c, lin);
+      const [estado, rot] = estadoPip(c, lin);
+      const cartao = pd.getElementById('pipItem');
+      if (cartao) cartao.className = `pip-item estado-${estado}`;
+      const rotulo = pd.getElementById('pipEstado');
+      if (rotulo) rotulo.textContent = rot;
     }
     const av = pip.win.document.getElementById('pipAviso');
     if (av) av.innerHTML = avisoConcluidoPip(c, itensPip(c));
