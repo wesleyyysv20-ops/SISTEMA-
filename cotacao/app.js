@@ -8151,12 +8151,10 @@ function desenharPip(focar) {
       if (alvo >= 0 && alvo !== l.vencedor) {
         const fa = c.fornecedores[alvo];
         const pa = l.precos[alvo];
-        const ma = fa.respostas?.[l.i]?.marca;
-        const sta = l.marcas[alvo];
         const dif = trocou ? l.preco / l.min - 1 : l.difSegundo;
         const txtDif = dif == null ? '' : trocou ? `escolhido +${fmtPct(dif)}` : `+${fmtPct(dif)} que o 1º`;
         seg = `<button type="button" class="pip-segundo${dif > LIMITE_DIF_SUSPEITA ? ' suspeita' : ''}" data-pip="escolher" data-f="${alvo}" title="${trocou ? 'Menor preço' : '2º lugar'}: clique para comprar de ${esc(fa.nome)} por ${fmtMoeda(pa)}${trocou ? ` (o escolhido está +${fmtPct(dif)} mais caro)` : dif != null ? ` (+${fmtPct(dif)} mais caro que o 1º)` : ''}">
-          <span class="pip-seg-info"><span class="pip-seg-rot">${trocou ? '1º · menor preço' : '2º lugar'}</span><span class="pip-seg-preco">${fmtMoeda(pa)}</span>${ma ? `<span class="pip-seg-marca${sta === 'errada' ? ' errada' : sta === 'duvida' ? ' conferir' : ''}">${esc(ma)}</span>` : ''}<span class="pip-seg-forn">${esc(fa.nome)}</span>${txtDif ? `<span class="pip-seg-dif">${txtDif}</span>` : ''}</span><span class="pip-seg-acao">Escolher ›</span>
+          <span class="pip-seg-info"><span class="pip-seg-rot">${trocou ? '1º · menor preço' : '2º lugar'}</span><span class="pip-seg-preco">${fmtMoeda(pa)}</span>${marcaAlternativa(c, l, alvo).replace('<br>', '')}<span class="pip-seg-forn">${esc(fa.nome)}</span>${txtDif ? `<span class="pip-seg-dif">${txtDif}</span>` : ''}</span><span class="pip-seg-acao">Escolher ›</span>
         </button>`;
       }
       return `<div class="pip-ganhador">

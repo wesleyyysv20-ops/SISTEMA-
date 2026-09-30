@@ -188,6 +188,11 @@ test('janela flutuante: 2º lugar com marca e % mais caro; clicar escolhe ele (c
   const seg = j.locator('.pip-segundo');
   assert.match(n(await seg.innerText()), /2º lugar\s*R\$ 117,50\s*MAGNETI MARELLI\s*KAIZEN\s*\+17,5% que o 1º\s*Escolher ›/);
   assert.match(await seg.getAttribute('title'), /\+17,5% mais caro que o 1º/);
+  assert.match(await seg.locator('.marca-alt').getAttribute('class'), /marca-alt/);
+  // sem marca informada: aparece "sem marca" (não fica em branco)
+  await page.evaluate(() => { delete db.cotacoes[0].fornecedores[1].respostas[0].marca; salvar(); render(); });
+  assert.match(n(await seg.innerText()), /2º lugar\s*R\$ 117,50\s*sem marca\s*KAIZEN/);
+  await page.evaluate(() => { db.cotacoes[0].fornecedores[1].respostas[0].marca = 'MAGNETI MARELLI'; salvar(); render(); });
   // clicar: pergunta na própria janela; Cancelar não muda
   await seg.click();
   assert.match(await j.locator('.dlg').innerText(), /Comprar este item de KAIZEN por R\$\s117,50/);
