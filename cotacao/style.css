@@ -1557,3 +1557,17 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .pip-linha-desc .pip-desc { flex: 1; min-width: 0; margin: 0; }
 .pip-total .acima-estoque, .pip-total .acima-estoque + br { display: none; }
 @media (max-height: 320px) { .pip-linha-desc { display: none; } }
+/* janela flutuante: pedido do fornecedor e próximos itens */
+.pip-pedido { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 0 0 6px; padding: 5px 9px; border-radius: 10px; font-size: 12px; background: color-mix(in srgb, var(--primary-2) 8%, var(--card)); border: 1px solid color-mix(in srgb, var(--primary-2) 28%, var(--line)); }
+.pip-ped-nome { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+.pip-ped-total { font-size: 16px; font-variant-numeric: tabular-nums; }
+.pip-ped-itens { color: var(--muted); }
+.pip-ped-min { flex-basis: 100%; font-size: 11px; font-weight: 700; color: var(--laranja-texto, #a15c00); }
+.pip-pedido.abaixo { border-color: color-mix(in srgb, var(--laranja, #d97706) 55%, var(--line)); }
+.pip-proximos { display: flex; align-items: center; gap: 5px; margin-top: 7px; min-width: 0; overflow: hidden; }
+.pip-prox-rot { flex: none; font-size: 10.5px; color: var(--muted); }
+.pip-prox { flex: 0 1 auto; min-width: 0; padding: 2px 8px; border-radius: 999px; font-family: var(--fonte-cod); font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--card-2); border: 1px solid var(--line); color: var(--text); }
+.pip-prox:hover { border-color: var(--primary-2); }
+.pip-prox.feito { color: var(--muted); font-weight: 500; }
+.pip-prox.feito::after { content: ' ✓'; color: var(--ok); }
+@media (max-height: 320px) { .pip-proximos { display: none; } }

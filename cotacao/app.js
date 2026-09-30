@@ -8205,6 +8205,7 @@ async function abrirPip() {
     else if (acao === 'duvida') duvidaPip();
     else if (acao === 'escolher') escolherPip(+b.dataset.f);
     else if (acao === 'exportar') exportarPip(+b.dataset.f);
+    else if (acao === 'ir') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) irParaItemPip(cot, +b.dataset.i); }
   });
   d.addEventListener('keydown', marcarTecla, true);
   d.addEventListener('input', marcarTecla, true);
@@ -8334,21 +8335,72 @@ function avisoConcluidoPip(c, lista) {
   </div>`;
 }
 
+/** Item seguinte (delta 1) ou anterior (-1) a partir de `atual`, respeitando o "só os que faltam". */
+function vizinhoPip(c, lista, atual, delta) {
+  const pos = lista.indexOf(atual);
+  let novo = lista[pos < 0 ? 0 : pos + delta];
+  if (pip.soFaltam) {
+    // só os que faltam: pula os itens que já têm quantidade
+    const pend = pendentesPip(c, lista).filter(i => i !== atual);
+    const ordem = i => lista.indexOf(i);
+    novo = delta > 0 ? pend.find(i => ordem(i) > pos) : [...pend].reverse().find(i => ordem(i) < pos);
+  }
+  return novo;
+}
+
+/** Os próximos itens (os que o Enter vai mostrar), para adiantar a busca no DataCar. */
+function proximosPip(c, lista, n = 3) {
+  const r = [];
+  let at = pip.i;
+  while (r.length < n) {
+    const x = vizinhoPip(c, lista, at, 1);
+    if (x == null || r.includes(x)) break;
+    r.push(x);
+    at = x;
+  }
+  return r;
+}
+
+function htmlProximosPip(c, lista) {
+  const prox = proximosPip(c, lista);
+  if (!prox.length) return '';
+  return `<div class="pip-proximos"><span class="pip-prox-rot">próximos</span>${prox.map(i => {
+    const it = c.itens[i];
+    const feito = !pendentesPip(c, [i]).length;
+    return `<button type="button" class="pip-prox${feito ? ' feito' : ''}" data-pip="ir" data-i="${i}" title="#${i + 1} · ${esc(it.descricao || '')}${feito ? ' · já tem quantidade' : ''}">${esc(it.codigo || '#' + (i + 1))}</button>`;
+  }).join('')}</div>`;
+}
+
+/** Pedido do fornecedor escolhido na janela: valor, itens e o pedido mínimo do cadastro. */
+function htmlPedidoPip(c) {
+  const valor = filtroVencedor(c);
+  if (!valor || valor === '__sem') return '';
+  const fi = c.fornecedores.findIndex(f => f.fornecedorId === valor);
+  if (fi < 0) return '';
+  const f = c.fornecedores[fi];
+  const ped = pedidosPorFornecedor(c).find(x => x.fi === fi);
+  const total = ped?.total || 0;
+  const n = ped?.itens.length || 0;
+  const min = Number(db.fornecedores.find(x => x.id === f.fornecedorId)?.pedidoMinimo) || 0;
+  const falta = min && total < min ? min - total : 0;
+  return `<div class="pip-pedido${falta ? ' abaixo' : ''}" title="Pedido de ${esc(f.nome)} até agora (itens com quantidade, sem os que estão em Dúvidas)${min ? ` · pedido mínimo ${fmtMoeda(min)}` : ''}">
+    <span class="pip-ped-nome">🧾 ${esc(f.nome)}</span><b class="pip-ped-total">${fmtMoeda(total)}</b><span class="pip-ped-itens">${n} ${n === 1 ? 'item' : 'itens'}</span>${falta ? `<span class="pip-ped-min">faltam ${fmtMoeda(falta)} p/ o mínimo</span>` : ''}
+  </div>`;
+}
+
 function irPip(delta) {
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   if (!c) return;
   const lista = itensPip(c);
-  const pos = lista.indexOf(pip.i);
-  let novo = lista[pos < 0 ? 0 : pos + delta];
-  if (pip.soFaltam) {
-    // só os que faltam: pula os itens que já têm quantidade
-    const pend = pendentesPip(c, lista).filter(i => i !== pip.i);
-    const ordem = i => lista.indexOf(i);
-    novo = delta > 0 ? pend.find(i => ordem(i) > pos) : [...pend].reverse().find(i => ordem(i) < pos);
-  }
+  let novo = vizinhoPip(c, lista, pip.i, delta);
   // Enter no último item: volta para o primeiro que ainda está sem quantidade
   if (novo == null && delta > 0) novo = pendentesPip(c, lista).find(i => i !== pip.i);
   if (novo == null) { desenharPip(true); return; } // já é o primeiro/último
+  irParaItemPip(c, novo);
+}
+
+/** Mostra o item i na janela; o comparativo acompanha (sem tirar o cursor de lá). */
+function irParaItemPip(c, novo) {
   pip.i = novo;
   // o comparativo acompanha (sem tirar o cursor de lá)
   if (cotAtual() === c) {
@@ -8480,6 +8532,7 @@ function desenharPip(focar) {
       <span class="pip-pos" title="Item da cotação · posição na lista">#${l.i + 1} <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
       <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>
     </div>
+    <div id="pipPedido">${htmlPedidoPip(c)}</div>
     <div id="pipAviso">${avisoConcluidoPip(c, lista)}</div>
     <div id="pipPresenca" class="presenca" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div>
     <div class="pip-grade">
@@ -8524,6 +8577,7 @@ function desenharPip(focar) {
         <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
       </div>
     </div>
+    <div id="pipProximos">${htmlProximosPip(c, lista)}</div>
     <p class="pip-ajuda" title="Atalhos de uma tecla">C copia · D dúvida · S 2º lugar · / buscar${pip.flutuante ? '' : ' · sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)'}</p>`;
   const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
   if (sel) {
@@ -8563,8 +8617,13 @@ function espelharQtd(t, c, i) {
       const rotulo = pd.getElementById('pipEstado');
       if (rotulo) rotulo.textContent = rot;
     }
+    const lista = itensPip(c);
     const av = pip.win.document.getElementById('pipAviso');
-    if (av) av.innerHTML = avisoConcluidoPip(c, itensPip(c));
+    if (av) av.innerHTML = avisoConcluidoPip(c, lista);
+    const ped = pip.win.document.getElementById('pipPedido');
+    if (ped) ped.innerHTML = htmlPedidoPip(c);
+    const px = pip.win.document.getElementById('pipProximos');
+    if (px) px.innerHTML = htmlProximosPip(c, lista);
   }
 }
 
