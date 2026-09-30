@@ -60,3 +60,24 @@ test('dúvidas: itens iguais numa linha só ("2 DPR e 5 DSS") e filtro por forne
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('dúvidas: "Limpar" com um fornecedor escolhido tira só as dele; em Todos, a fila inteira', async () => {
+  const s = await abrir(base({ duvidas: fila }));
+  const { page } = s;
+  await irPara(page, 'duvidas');
+  // o menu conta itens (DPR + DSS do mesmo item = 1), como a fila
+  assert.match(await page.locator('#nav a[data-route=duvidas]').innerText(), /Dúvidas\s*4/);
+  await page.click('.filtro-duv button[data-forn="ENVIA PEÇAS"]');
+  assert.equal(await page.locator('[data-act=limparDuvidas]').innerText(), 'Limpar as de ENVIA PEÇAS');
+  await page.click('[data-act=limparDuvidas]');
+  assert.match(n(await page.locator('.dlg').innerText()), /Remover os 2 item\(ns\) em dúvida de ENVIA PEÇAS\?[\s\S]*outros fornecedores continuam/);
+  await page.click('.dlg button.primary');
+  assert.deepEqual(await page.evaluate(() => db.duvidas.map(d => d.id).sort()), ['c1', 'm1'], 'ficaram as da KAIZEN e a digitada à mão');
+  // voltou para "Todos" (o fornecedor não tem mais dúvidas): limpa o resto
+  assert.equal(await page.locator('[data-act=limparDuvidas]').innerText(), 'Limpar tudo');
+  await page.click('[data-act=limparDuvidas]');
+  await page.click('.dlg button.primary');
+  assert.equal(await page.evaluate(() => db.duvidas.length), 0);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

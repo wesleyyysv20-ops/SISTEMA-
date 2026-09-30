@@ -80,7 +80,7 @@ test('dúvidas: do comparativo para a fila, texto no formato do WhatsApp', async
   await page.click('[data-route=cotacao][data-id=c1]');
   await page.click('[data-act=duvidaItem][data-i="0"]');
   await page.click('.dlg-duvida button.primary'); // as duas lojas já vêm marcadas com a quantidade da cotação
-  assert.match(await page.locator('#nav a[data-route=duvidas]').innerText(), /Dúvidas\s*2/);
+  assert.match(await page.locator('#nav a[data-route=duvidas]').innerText(), /Dúvidas\s*1/); // um item (DPR + DSS) conta 1, como na fila
   await irPara(page, 'duvidas');
   // as duas lojas do mesmo item ficam numa linha só
   assert.equal(await page.locator('[data-act=editarDuvida]').count(), 1);

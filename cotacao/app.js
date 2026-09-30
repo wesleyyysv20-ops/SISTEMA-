@@ -5633,7 +5633,7 @@ function pendencias() {
     if (divergencia.length) add('urgente', `${nome}: nota(s) com divergência${cobrar ? ` — cobrar ${fmtMoeda(cobrar)}` : ''}`, divergencia.join(', '), 'cotacao', c.id, 'Ver notas');
     if (aguardando.length) add('info', `${nome}: aguardando nota fiscal`, aguardando.join(', '), 'cotacao', c.id, 'Conferir NF-e');
   }
-  const duvPend = duvidasPendentes().length;
+  const duvPend = gruposDuvidas(duvidasPendentes()).length;
   if (duvPend) add('aviso', `${duvPend} item(ns) em dúvida esperando a resposta da loja`, 'Copie o texto e mande no WhatsApp.', 'duvidas', null, 'Abrir Dúvidas');
   const ordem = { urgente: 0, aviso: 1, info: 2 };
   return lista.sort((a, b) => ordem[a.nivel] - ordem[b.nivel]);
@@ -5657,7 +5657,7 @@ function renderInicio() {
     <div class="stats">
       <div class="stat"><span class="muted small">Itens no banco</span><b>${db.produtos.length.toLocaleString('pt-BR')}</b></div>
       <div class="stat"><span class="muted small">Cotações abertas</span><b>${ativas.length}</b></div>
-      <div class="stat"><span class="muted small">Itens em dúvida</span><b>${duvidasPendentes().length}</b></div>
+      <div class="stat"><span class="muted small">Itens em dúvida</span><b>${gruposDuvidas(duvidasPendentes()).length}</b></div>
       <div class="stat${pend.some(p => p.nivel === 'urgente') ? ' stat-ruim' : ''}"><span class="muted small">Pendências</span><b>${pend.length}</b></div>
     </div>
   </section>
@@ -5974,7 +5974,7 @@ function renderDuvidas() {
   </section>
   <div class="duvidas-grid">
     <section class="card">
-      <div class="row-between"><h3>Fila de dúvidas</h3>${db.duvidas.length ? '<button class="sm danger" data-act="limparDuvidas">Limpar tudo</button>' : ''}</div>
+      <div class="row-between"><h3>Fila de dúvidas</h3>${duvidasFiltradas().length ? `<button class="sm danger" data-act="limparDuvidas">${ui.duvForn ? `Limpar as de ${esc(ui.duvForn)}` : 'Limpar tudo'}</button>` : ''}</div>
       ${db.duvidas.length > duvidasPendentes().length ? `<p class="small muted" style="margin:0 0 8px">${ui.verDuvFinal ? 'Mostrando também' : 'Ocultas:'} ${db.duvidas.length - duvidasPendentes().length} dúvida(s) de cotações finalizadas. <button type="button" class="link" data-act="alternarDuvFinal">${ui.verDuvFinal ? 'Ocultar' : 'Mostrar'}</button></p>` : ''}
       ${fornsNaFila.length ? `<div class="filtro-duv" role="group" aria-label="Fornecedor">
         <button type="button" data-act="filtroDuvForn" data-forn="" class="${ui.duvForn ? '' : 'ativo'}">Todos <span class="badge">${todosGrupos.length}</span></button>
@@ -6265,7 +6265,7 @@ function render() {
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
   const navDuv = $('#nav a[data-route="duvidas"]');
-  const nDuv = duvidasPendentes().length;
+  const nDuv = gruposDuvidas(duvidasPendentes()).length;
   if (navDuv) navDuv.innerHTML = `Dúvidas${nDuv ? ` <span class="nav-alerta nav-info">${nDuv}</span>` : ''}`;
   const navCot = $('#nav a[data-route="cotacoes"]');
   if (navCot) {
@@ -6905,9 +6905,16 @@ const acoes = {
     render();
   },
   limparDuvidas: async () => {
-    if (!(await confirmar(`Remover os ${db.duvidas.length} itens em dúvida?`, 'Remover'))) return;
-    db.duvidas = [];
+    // só o que está na tela: com um fornecedor escolhido, só as dúvidas dele
+    const alvo = duvidasFiltradas();
+    if (!alvo.length) return;
+    const itens = gruposDuvidas(alvo).length;
+    const de = ui.duvForn ? ` de ${ui.duvForn}` : '';
+    if (!(await confirmar(`Remover os ${itens} item(ns) em dúvida${de}?${ui.duvForn ? '\n\nAs dúvidas dos outros fornecedores continuam na fila.' : ''}`, 'Remover'))) return;
+    const ids = new Set(alvo.map(x => x.id));
+    db.duvidas = db.duvidas.filter(x => !ids.has(x.id));
     ui.editDuvida = null;
+    toast(`${itens} item(ns) em dúvida${de} removido(s).`);
     salvar();
     render();
   },
