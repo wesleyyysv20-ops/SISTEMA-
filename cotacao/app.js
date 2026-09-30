@@ -3947,12 +3947,38 @@ function itemNaBusca(x, p, termo, pals = palavrasBusca(termo)) {
   return casaBusca(pals, texto, cod);
 }
 
+/** Filtros rápidos da lista de itens da nova cotação. */
+const TIPOS_ITENS = [
+  ['semMarca', '⚠ Sem marca', 'Itens sem marca pedida'],
+  ['repetido', '🔁 Repetidos', 'Mesmo código em mais de uma linha'],
+  ['dss', '📍 São Sebastião', 'XX na OBS do DataCar: para a loja de São Sebastião'],
+  ['novo', '🆕 Novos no cadastro', 'Cadastrados agora pelo arquivo do DataCar'],
+];
+function itemNoTipo(ctx, x, i, tipo = ui.tipoItens) {
+  if (!tipo || !x) return true;
+  const p = ctx.prod[x.produtoId];
+  if (tipo === 'semMarca') return !(x.marca || p?.marca);
+  if (tipo === 'repetido') return ctx.repetido(x, i);
+  if (tipo === 'dss') return !!lojaPelaObs(x.obsArquivo || []);
+  if (tipo === 'novo') return !!x.novoCadastro;
+  return true;
+}
+function htmlTiposItens(ctx) {
+  const r = ctx.r;
+  const conta = Object.fromEntries(TIPOS_ITENS.map(([k]) => [k, r.itens.filter((x, i) => itemNoTipo(ctx, x, i, k)).length]));
+  if (ui.tipoItens && !conta[ui.tipoItens]) ui.tipoItens = '';
+  const chips = TIPOS_ITENS.filter(([k]) => conta[k]).map(([k, rot, tit]) => `<button type="button" class="chip-tipo${ui.tipoItens === k ? ' ativo' : ''}${k === 'semMarca' || k === 'repetido' ? ' atencao' : ''}" data-act="tipoItens" data-tipo="${k}" title="${esc(tit)} — clique para ver só esses">${rot} <b>${conta[k]}</b></button>`);
+  if (!chips.length) return '';
+  return `<button type="button" class="chip-tipo${ui.tipoItens ? '' : ' ativo'}" data-act="tipoItens" data-tipo="">Todos <b>${r.itens.length}</b></button>${chips.join('')}`;
+}
+
 function contaFiltroItens() {
   const r = rascunho();
-  if (!ui.filtroItens.trim()) return '';
+  if (!ui.filtroItens.trim() && !ui.tipoItens) return '';
   const prod = prodPorId();
   const pals = palavrasBusca(ui.filtroItens);
-  const n = r.itens.filter(x => itemNaBusca(x, prod[x.produtoId], null, pals)).length;
+  const ctx = ui.tipoItens ? contextoNova() : null;
+  const n = r.itens.filter((x, i) => itemNaBusca(x, prod[x.produtoId], null, pals) && (!ctx || itemNoTipo(ctx, x, i))).length;
   return n ? `${n} de ${r.itens.length} itens` : 'Nenhum item encontrado';
 }
 
@@ -4139,12 +4165,12 @@ function linhaItemNova(ctx, x, i) {
     const obs = daPlanilha.map(o => o || 'sem OBS');
     const origemObs = daPlanilha.length ? 'OBS na planilha' : p.obs ? 'OBS no cadastro' : '';
     const textoObs = daPlanilha.length ? obs : p.obs ? [p.obs] : [];
-    return `<tr data-item-linha="${i}" ${itemNaBusca(x, p, ui.filtroItens) ? '' : 'hidden'} class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
+    return `<tr data-item-linha="${i}" ${itemNaBusca(x, p, ui.filtroItens) && itemNoTipo(ctx, x, i) ? '' : 'hidden'} class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
       <td class="c">${i + 1}</td>
       <td>${codigoSoNaCotacao(p)
         ? `<input class="cod-item ${x.codigoArquivo && x.codigoArquivo !== p.codigo ? 'so-cotacao' : ''}" data-codigo-item="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código só desta cotação: o cadastro continua ${esc(p.codigo)}." aria-label="Código de ${esc(p.descricao)} nesta cotação">`
         : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${tagLojaObs(lojaPelaObs(x.obsArquivo || [])) ? ' ' + tagLojaObs(lojaPelaObs(x.obsArquivo || [])) : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
-        ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}">${origemObs}: <b>${textoObs.map(esc).join(' · ')}</b></span>`
+        ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}" title="${origemObs}">OBS <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
       <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação (Enter duas vezes grava como padrão no cadastro).` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
@@ -4210,11 +4236,12 @@ function renderNova() {
 
   <section class="card">
     <h3>1. Itens da cotação (${r.itens.length})</h3>
-    <div class="datacar-box">
-      <label class="btn btn-primary" style="margin:0">📂 Abrir arquivo do DataCar<input type="file" class="hidden" accept=".xlsx,.xls,.csv,.txt,.htm,.html" data-import-datacar></label>
-      <span class="small muted">Escolha o arquivo gerado pelo DataCar e marque os itens que vão para a cotação. Os itens são reconhecidos pelo <b>código</b>; a <b>OBS</b> serve para ordenar e agrupar.</span>
+    <div class="datacar-box${r.itens.length ? ' compacta' : ''}">
+      <label class="btn ${r.itens.length ? '' : 'btn-primary'}" style="margin:0">📂 ${r.itens.length ? 'Abrir outro arquivo do DataCar' : 'Abrir arquivo do DataCar'}<input type="file" class="hidden" accept=".xlsx,.xls,.csv,.txt,.htm,.html" data-import-datacar></label>
+      <span class="small muted">${r.itens.length ? 'Os itens de outro arquivo são somados à lista.' : 'Escolha o arquivo gerado pelo DataCar e marque os itens que vão para a cotação. Os itens são reconhecidos pelo <b>código</b>; a <b>OBS</b> serve para ordenar e agrupar.'}</span>
     </div>
     ${painelRep}
+    ${r.itens.length ? `<div class="tipos-itens" id="tiposItens">${htmlTiposItens(ctx)}</div>` : ''}
     <div class="busca-itens"><input id="filtroItens" value="${esc(ui.filtroItens)}" placeholder="🔎 Procurar na lista ou no cadastro: código, similar, marca ou descrição" autocomplete="off" aria-label="Procurar nos itens da cotação e no cadastro"><span id="contaFiltroItens" class="small muted">${contaFiltroItens()}</span></div>
     <div id="avisoNovosCad">${htmlAvisoNovosCad()}</div>
     <div id="foraDaLista" class="fora-lista">${htmlForaDaLista()}</div>
@@ -7691,6 +7718,12 @@ const acoes = {
   },
   sairSupabase: () => sairSupabase(),
   abrirBusca: () => abrirBusca(),
+  tipoItens: el => {
+    ui.tipoItens = el.dataset.tipo || '';
+    const t = document.getElementById('tiposItens');
+    if (t) t.innerHTML = htmlTiposItens(contextoNova());
+    aplicarFiltroItens();
+  },
   alternarCompacto: () => {
     try { localStorage.setItem(CHAVE_COMPACTO, modoCompacto() ? '0' : '1'); } catch (e) { /* sem acesso */ }
     render();
@@ -8467,9 +8500,11 @@ function aplicarFiltroItens() {
   const r = rascunho();
   const prod = prodPorId();
   const pals = palavrasBusca(ui.filtroItens);
+  const ctx = ui.tipoItens ? contextoNova() : null;
   document.querySelectorAll('[data-item-linha]').forEach(tr => {
-    const x = r.itens[+tr.dataset.itemLinha];
-    const esconder = !itemNaBusca(x, x && prod[x.produtoId], null, pals);
+    const i = +tr.dataset.itemLinha;
+    const x = r.itens[i];
+    const esconder = !itemNaBusca(x, x && prod[x.produtoId], null, pals) || (ctx && !itemNoTipo(ctx, x, i));
     if (tr.hidden !== esconder) tr.hidden = esconder;
   });
   const c = $('#contaFiltroItens');

@@ -44,3 +44,25 @@ test('XX na OBS: "01" e "01 XX" no mesmo grupo; o item leva a etiqueta DSS até 
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('nova cotação: filtros rápidos da lista (sem marca, São Sebastião)', async () => {
+  const s = await abrir(base({
+    config: { loja: 'DISPPAR', lojas: [{ id: 'paranoa', nome: 'Paranoá', sigla: 'DPR' }, { id: 'sao-sebastiao', nome: 'São Sebastião', sigla: 'DSS' }] },
+    produtos: [{ id: 'p1', codigo: 'A1', descricao: 'SENSOR', marca: 'BOSCH' }, { id: 'p2', codigo: 'B1', descricao: 'BOMBA', marca: '' }, { id: 'p3', codigo: 'C1', descricao: 'CILINDRO', marca: 'TRW' }],
+    rascunho: { titulo: 'X', prazoResposta: '', obs: '', fornecedorIds: [], itens: [{ produtoId: 'p1', obsArquivo: ['01'] }, { produtoId: 'p2', obsArquivo: ['02'] }, { produtoId: 'p3', obsArquivo: ['08 XX'] }] },
+  }));
+  const { page } = s;
+  await page.click('nav [data-route=nova]');
+  const vis = () => page.locator('[data-item-linha]:not([hidden])').count();
+  assert.match(await page.locator('#tiposItens').innerText(), /Todos\s*3[\s\S]*Sem marca\s*1[\s\S]*São Sebastião\s*1/);
+  await page.click('[data-act=tipoItens][data-tipo=semMarca]');
+  assert.equal(await vis(), 1);
+  assert.equal(await page.locator('#contaFiltroItens').innerText(), '1 de 3 itens');
+  await page.click('[data-act=tipoItens][data-tipo=dss]');
+  assert.equal(await vis(), 1);
+  assert.match(await page.locator('[data-item-linha]:not([hidden])').innerText(), /C1/);
+  await page.click('[data-act=tipoItens][data-tipo=""]');
+  assert.equal(await vis(), 3);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
