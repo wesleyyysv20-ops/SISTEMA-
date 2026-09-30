@@ -1627,3 +1627,44 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .tab-comp td.col-dif > .small.muted[title] { display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .tab-comp td.col-dif > .marca-alt { margin-left: 3px; }
 .tab-comp td.col-dif { max-width: 230px; }
+
+/* ===== comparativo em tela estreita ===== */
+.seg-mini { display: none; }
+.tab-comp.estreita .seg-mini { display: block; margin: 3px 0 0 auto; max-width: 170px; padding: 1px 6px; border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--card); border: 1px dashed var(--line); color: var(--muted); cursor: pointer; }
+.tab-comp.estreita .seg-mini:hover { border-style: solid; border-color: var(--primary-2); color: var(--text); }
+.tab-comp.estreita .seg-mini.suspeita { border-color: var(--danger); color: var(--danger); }
+.tab-comp.estreita .col-dif { display: none; }
+.tab-comp.estreita > * > tr > :nth-child(2) { min-width: 180px; max-width: 220px; }
+.tab-comp.estreita td.r, .tab-comp.estreita th.r { min-width: 96px; }
+.tab-comp.estreita > * > tr > .col-escolhido { min-width: 118px; }
+.tab-comp.estreita > * > tr > .col-qtd { min-width: 0; width: 58px; padding-left: 4px; padding-right: 4px; font-size: 11px; }
+.tab-comp.estreita .col-qtd input.qtd-loja { width: 50px; }
+.tab-comp.estreita > * > tr > th.fd:last-child, .tab-comp.estreita > * > tr > td.fd:last-child { min-width: 86px; }
+
+/* marca pedida numa linha só */
+.prod-tags .marca-pedida { max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.chip-marca.neutra { background: color-mix(in srgb, var(--muted) 12%, transparent); color: var(--muted); }
+.chip-marca.recusada { max-width: 150px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+
+/* cotação finalizada: só leitura */
+.aviso-travada { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 12px; border-radius: 12px; font-size: 13px; background: color-mix(in srgb, var(--muted) 10%, var(--card)); border: 1px solid var(--line); }
+.aviso-travada.aberta { background: color-mix(in srgb, var(--laranja) 10%, var(--card)); border-color: color-mix(in srgb, var(--laranja) 45%, var(--line)); }
+.painel-comp.travada td.escolhivel, .painel-comp.travada td.escolhe-dif, .painel-comp.travada .seg-mini, .painel-comp.travada .chip-marca[data-act] { cursor: default; }
+.painel-comp.travada td.escolhe-dif:hover { background: inherit; box-shadow: none; }
+.painel-comp.travada .rm-preco, .painel-comp.travada .btn-duvida { display: none; }
+.painel-comp.travada input.qtd-loja { background: transparent; border-style: dashed; cursor: default; }
+
+/* busca do comparativo */
+.busca-comp-caixa { display: inline-flex; align-items: center; gap: 6px; }
+.busca-comp { width: 220px; height: 32px; padding: 4px 10px; border-radius: 9px; font-size: 13px; }
+/* tela estreita: preço escolhido mais justo (nome e 2º lugar cortados com …) */
+.tab-comp.estreita > * > tr > .col-escolhido { max-width: 150px; }
+.tab-comp.estreita .col-escolhido .nome-venc { display: inline-block; max-width: 132px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.tab-comp.estreita .seg-mini { max-width: 136px; }
+.tab-comp.estreita > * > tr > :nth-child(2) { max-width: 200px; }
+.tab-comp .chip-marca { max-width: 160px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.prod-comp { overflow: hidden; }
+.prod-comp > .prod-tags { min-width: 0; max-width: 100%; overflow: hidden; flex-wrap: nowrap; }
+.prod-tags .marca-pedida { max-width: 100%; flex: 0 1 auto; min-width: 0; }
+.tab-comp.estreita > * > tr > .col-qtd { width: 66px; }
+.tab-comp.estreita tr.total .col-qtd { font-size: 10.5px; white-space: nowrap; }

@@ -26,7 +26,8 @@ test('marca recusada sem outro preço: o mais barato ganha assim mesmo, com a ma
 
   await recusar(page);
   const txt = n(await linha(page, 0).innerText());
-  assert.match(txt, /✗ SUN ELETRI\/318 — marca recusada/);
+  assert.match(txt, /✗ SUN ELETRI\/318/);
+  assert.match(await linha(page, 0).locator('.chip-marca.recusada').getAttribute('title'), /Marca recusada/);
   assert.match(txt, /⚠ marca recusada · não é a pedida/);
   assert.doesNotMatch(txt, /aguardando outro preço/);
   assert.match(await linha(page, 0).getAttribute('class'), /\blinha-aguardando\b.*\bsit-aguardando\b/, 'linha vermelha em destaque');

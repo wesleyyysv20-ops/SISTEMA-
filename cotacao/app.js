@@ -1508,13 +1508,13 @@ function chipMarca(l, j, o) {
   const st = l.marcas[j];
   const m = o?.marca || '';
   const at = `data-act="marcaResposta" data-i="${l.i}" data-f="${j}"`;
-  if (l.recusas?.[j]) return `<span class="chip-marca recusada" ${at} title="Você recusou esta marca (pedida: ${esc(l.it.marca)}). Este preço não entra. Clique para desfazer.">✗ ${esc(m)} — marca recusada</span>`;
+  if (l.recusas?.[j]) return `<span class="chip-marca recusada" ${at} title="Marca recusada por você (pedida: ${esc(l.it.marca)}). Este preço não entra. Clique para desfazer.">✗ ${esc(m)}</span>`;
   if (st === 'errada') return `<span class="chip-marca errada" ${at} title="Pedida: ${esc(l.it.marca)}. Clique para confirmar ou corrigir.">⚠ ${esc(m)} ≠ ${esc(l.it.marca)}</span>`;
   if (st === 'duvida') return `<span class="chip-marca duvida" ${at} title="Pode ser abreviação de ${esc(l.it.marca)}. Clique para confirmar.">? ${esc(m)} — confira</span>`;
   if (st === 'abrev') return `<span class="chip-marca ok" ${at} title="Reconhecida como ${esc(l.it.marca)}">✓ ${esc(m)}</span>`;
   if (st === 'ok') return `<span class="chip-marca ok" title="Marca pedida">✓ ${esc(m)}</span>`;
   if (st === 'sem') return `<span class="chip-marca sem" title="O fornecedor não informou a marca (pedida: ${esc(l.it.marca)})">sem marca</span>`;
-  return `<span class="small muted">Marca: ${esc(m)}</span>`;
+  return `<span class="chip-marca neutra" title="Marca respondida (esta cotação aceita qualquer marca)">${esc(m)}</span>`;
 }
 
 /** Guarda a decisão sobre uma marca respondida: 'igual' ou 'diferente'. */
@@ -4345,13 +4345,30 @@ function filtroAviso(c) {
 }
 
 /** Mostra só as linhas do fornecedor escolhido e do aviso escolhido (sem redesenhar a tabela). */
+/** Busca do comparativo (código, descrição, similar ou marca pedida). */
+function buscaComp(c) {
+  return ui.buscaComp?.cotId === c.id ? ui.buscaComp.q : '';
+}
+function itemNaBuscaComp(it, q) {
+  if (!q) return true;
+  const t = semAcento(q);
+  const k = normCod(q);
+  return semAcento([it.codigo, it.descricao, it.similar, it.marca].filter(Boolean).join(' ')).includes(t)
+    || (k.length >= 2 && (normCod(it.codigo).includes(k) || normCod(it.similar).includes(k)));
+}
+
 function aplicarFiltrosComp(c) {
   const fa = filtroAviso(c);
   const comp = comparar(c);
+  const q = buscaComp(c);
+  let vis = 0;
   for (const l of comp.linhas) {
     const tr = document.querySelector(`[data-comp-linha="${l.i}"]`);
-    if (tr) tr.hidden = !(linhaNoFiltroVenc(c, l) && (!fa || tr.dataset.avisos.split(' ').includes(fa)));
+    if (tr) tr.hidden = !(linhaNoFiltroVenc(c, l) && (!fa || tr.dataset.avisos.split(' ').includes(fa)) && itemNaBuscaComp(l.it, q));
+    if (tr && !tr.hidden) vis++;
   }
+  const cont = document.getElementById('buscaCompCont');
+  if (cont) cont.textContent = q ? (vis ? `${vis} item(ns)` : 'nenhum item') : '';
   const barra = $('.avisos-comp');
   if (barra) {
     barra.dataset.filtro = fa;
@@ -4832,6 +4849,15 @@ function botaoExportarForn(f, fi, n) {
     ? `<button class="sm primary" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido: só os itens que ${esc(f.nome)} ganhou (planilhas por loja ou somada) e marcar a cotação dele como concluída">⬇ Exportar (${n})</button>`
     : `<span class="btn-desligado" title="${f.respondidoEm ? `${esc(f.nome)} não ganhou nenhum item (com quantidade) no comparativo` : `${esc(f.nome)} ainda não respondeu: quando responder e ganhar itens, dá para exportar o pedido`}"><button class="sm" disabled>⬇ Exportar (0)</button></span>`}</span>`;
 }
+/** Cotação finalizada fica só para consulta (até você destravar nesta tela). */
+function cotTravada(c) {
+  return !!c && c.status === 'finalizada' && !ui.destravadas?.has(c.id);
+}
+const ACOES_TRAVADAS = new Set(['escolherVencedor', 'duvidaItem', 'marcaResposta', 'removerPreco', 'limparEscolhas', 'conferirPreco', 'conferirDif']);
+function avisarTravada() {
+  toast('🔒 Cotação finalizada: só para consulta. Para mudar algo, clique em "Editar mesmo assim" no comparativo.');
+}
+
 /** Números da cotação para o cabeçalho: pedido, economia, pedidos exportados, quantidades e dúvidas. */
 function htmlResumoCot(c, comp = comparar(c)) {
   if (!comp.itensCotados) return '';
@@ -4905,24 +4931,38 @@ function atualizarBotoesExportar(c) {
 function ajustarColunasFixas() {
   const tab = document.querySelector('.tab-comp');
   if (!tab) return;
-  const ths = [...tab.querySelectorAll(':scope > thead > tr > th.fd')];
-  const temForn = tab.querySelectorAll(':scope > thead > tr > th').length - ths.length > 2;
-  const larg = ths.map(th => th.getBoundingClientRect().width);
-  const soma = larg.reduce((a, b) => a + b, 0);
-  const esq = [...tab.querySelectorAll(':scope > thead > tr > th')].slice(0, 2).reduce((a, th) => a + th.getBoundingClientRect().width, 0);
-  const cabe = temForn && ths.length && esq + soma + 110 <= (tab.parentElement?.clientWidth || 0);
-  tab.classList.toggle('fixa-dir', !!cabe);
-  if (!cabe) return;
+  const wrapW = tab.parentElement?.clientWidth || 0;
+  const todos = () => [...tab.querySelectorAll(':scope > thead > tr > th')];
+  const medir = () => {
+    const ths = todos().filter(th => th.classList.contains('fd') && th.offsetWidth > 0);
+    const larg = ths.map(th => th.getBoundingClientRect().width);
+    const esq = todos().slice(0, 2).reduce((a2, th) => a2 + th.getBoundingClientRect().width, 0);
+    const temForn = todos().length - todos().filter(th => th.classList.contains('fd')).length > 2;
+    return { ths, larg, cabe: temForn && ths.length > 0 && esq + larg.reduce((x, y) => x + y, 0) + 100 <= wrapW };
+  };
+  // 1º tenta com todas as colunas; não cabendo, a versão estreita (a Dif. vai para dentro do preço escolhido)
+  tab.classList.remove('estreita');
+  let m = medir();
+  if (!m.cabe) {
+    tab.classList.add('estreita');
+    m = medir();
+    if (!m.cabe) tab.classList.remove('estreita');
+  }
+  tab.classList.toggle('fixa-dir', m.cabe);
+  if (!m.cabe) return;
   let acc = 0;
-  for (let k = ths.length - 1; k >= 0; k--) {
-    tab.style.setProperty(`--fd${ths.length - 1 - k}`, acc + 'px');
-    acc += larg[k];
+  for (let k = m.ths.length - 1; k >= 0; k--) {
+    tab.style.setProperty(`--fd${m.ths.length - 1 - k}`, acc + 'px');
+    acc += m.larg[k];
   }
-  // cada célula fixa sabe a sua posição a partir da direita
-  for (const tr of tab.querySelectorAll(':scope > * > tr')) {
-    const fds = tr.querySelectorAll(':scope > .fd');
-    fds.forEach((td, k) => { td.dataset.fd = fds.length - 1 - k; });
-  }
+  for (const tr of tab.querySelectorAll(':scope > * > tr')) numerarFd(tr);
+}
+
+/** Posição de cada célula presa à direita (0 = a última); na versão estreita a Dif. some e não conta. */
+function numerarFd(tr) {
+  const estreita = tr.closest('table')?.classList.contains('estreita');
+  const fds = [...tr.querySelectorAll(':scope > .fd')].filter(td => !(estreita && td.classList.contains('col-dif')));
+  fds.forEach((td, k) => { td.dataset.fd = fds.length - 1 - k; });
 }
 let timerColFixas = null;
 window.addEventListener('resize', () => { clearTimeout(timerColFixas); timerColFixas = setTimeout(ajustarColunasFixas, 150); });
@@ -4940,8 +4980,7 @@ function atualizarTotaisComp(c, i = null) {
   if (tot) {
     tot.outerHTML = linhaTotalComp(c, comp);
     const novo = $('#totalComp');
-    const fds = novo ? novo.querySelectorAll(':scope > .fd') : [];
-    fds.forEach((td, k) => { td.dataset.fd = fds.length - 1 - k; });
+    if (novo) numerarFd(novo);
   }
   // a seção de pedidos é pesada: atualiza quando a pessoa para de digitar
   clearTimeout(ui.timerPedidos);
@@ -5071,7 +5110,7 @@ function renderCotacao(id) {
   const ordemForn = fornecedoresVisiveisComp(c); // colunas de fornecedores em ordem alfabética (sem quem não respondeu)
   const escondidos = c.fornecedores.length - ordemForn.length;
   const tabelaComp = `
-    <div class="table-wrap painel-comp"><table class="tab-comp${modoCompacto() ? ' compacto' : ''}">
+    <div class="table-wrap painel-comp${cotTravada(c) ? ' travada' : ''}"><table class="tab-comp${modoCompacto() ? ' compacto' : ''}">
       <thead><tr>
         <th class="c">#</th><th>Produto</th>${temResposta ? '' : '<th class="r">Qtd.</th>'}
         ${ordemForn.map(j => `<th class="r">${esc(c.fornecedores[j].nome)}</th>`).join('')}
@@ -5108,11 +5147,11 @@ function renderCotacao(id) {
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
           const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
-          return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
+          return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
           <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
             <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
-            <span class="prod-tags">${l.it.marca ? `<span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
+            <span class="prod-tags">${l.it.marca ? `<span class="marca-pedida" title="Marca pedida: ${esc(l.it.marca)}">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `${(() => {
@@ -5125,7 +5164,12 @@ function renderCotacao(id) {
               l.preferencia ? `<span class="chip-regra" title="O menor preço é ${fmtMoeda(l.min)} (${esc(c.fornecedores[l.minIdx].nome)})">pela regra dos 5% (+${fmtPct(l.preco / l.min - 1)} do 1º)</span>` : '',
               l.manual ? `<span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '',
             ].filter(Boolean).join('<br>');
-            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>`;
+            // 2º lugar (ou o mais barato, se você escolheu outro) numa linha: aparece no lugar da coluna Dif. em tela estreita
+            const alvoS = (l.manual || l.preferencia) && l.minIdx >= 0 ? l.minIdx : l.segundoIdx;
+            const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
+            const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
+              ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${alvoS === l.minIdx && alvoS !== l.segundoIdx ? '1º' : '2º'} ${esc(c.fornecedores[alvoS].nome)} ${fmtMoeda(l.precos[alvoS])}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}</td>`;
           })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
@@ -5133,7 +5177,7 @@ function renderCotacao(id) {
               const acao = alvo >= 0 && alvo !== l.vencedor ? ` class="r fd col-dif escolhe-dif" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvo}" title="Clique para comprar de ${esc(c.fornecedores[alvo].nome)} (${fmtMoeda(l.precos[alvo])})"` : ' class="r fd col-dif"';
               return `<td${acao}>${celulaDifSegundo(c, l)}</td>`;
             })() : ''}
-            ${LJ.map(lj => `<td class="c col-qtd fd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}" title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
+            ${LJ.map(lj => `<td class="c col-qtd fd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}"${cotTravada(c) ? ' readonly' : ''} title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r fd" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
         }).join('')}
@@ -5199,7 +5243,7 @@ function renderCotacao(id) {
   <section class="card">
     <div class="row-between">
       <h3>${temResposta ? 'Comparativo de preços' : 'Itens da cotação'}</h3>
-      ${temResposta ? `<div class="row">${seletorVencedor(c, comp)}<button type="button" class="sm btn-compacto${modoCompacto() ? ' ativo' : ''}" data-act="alternarCompacto" aria-pressed="${modoCompacto()}" title="${modoCompacto() ? 'Mostrar as colunas de todos os fornecedores' : 'Esconder as colunas de cada fornecedor: fica só o preço escolhido, o 2º lugar e as quantidades (bom para meia tela)'}">${modoCompacto() ? '▦ Compacto' : '▤ Compacto'}</button><button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button></div>` : ''}
+      ${temResposta ? `<div class="row"><span class="busca-comp-caixa"><input type="search" id="buscaComp" class="busca-comp" placeholder="🔎 Buscar código ou descrição" value="${esc(buscaComp(c))}" autocomplete="off" aria-label="Buscar item no comparativo" title="Filtra as linhas enquanto você digita (Esc limpa)"><span id="buscaCompCont" class="small muted"></span></span>${seletorVencedor(c, comp)}<button type="button" class="sm btn-compacto${modoCompacto() ? ' ativo' : ''}" data-act="alternarCompacto" aria-pressed="${modoCompacto()}" title="${modoCompacto() ? 'Mostrar as colunas de todos os fornecedores' : 'Esconder as colunas de cada fornecedor: fica só o preço escolhido, o 2º lugar e as quantidades (bom para meia tela)'}">${modoCompacto() ? '▦ Compacto' : '▤ Compacto'}</button><button class="sm" data-act="exportarComparativo">⬇ Exportar comparativo (Excel)</button></div>` : ''}
     </div>
     ${!temResposta ? '<div class="tip">⏳ <b>Aguardando as respostas dos fornecedores.</b> Assim que o primeiro responder (Importar ou Digitar, no quadro Fornecedores), aparecem aqui o <b>comparativo de preços</b>, as <b>quantidades das lojas</b>, o filtro <b>Mostrar itens de</b> e o botão <b>🗗 Janela flutuante</b>.</div>' : ''}
     ${temResposta ? `<div class="barra-comp small">
@@ -5210,6 +5254,9 @@ function renderCotacao(id) {
         <p>📦 <b>Quantidades:</b> digite quantas unidades cada loja vai comprar nas colunas ${LJ.map(l => '<b>' + esc(l.nome) + '</b>').join(' e ')} (Enter ou ↓ vai para o item de baixo). Use <b>Mostrar itens de</b> para ver só os itens de um fornecedor. ${comp.porLoja ? '' : 'Enquanto nenhuma quantidade for digitada, os totais usam 1 unidade de cada item.'}</p>
       </details>
     </div>` : ''}
+    ${temResposta && c.status === 'finalizada' ? (cotTravada(c)
+      ? '<div class="aviso-travada">🔒 <b>Cotação finalizada:</b> o comparativo está só para consulta (escolhas, dúvidas e quantidades não mudam por acidente). <button type="button" class="sm" data-act="destravarCot">🔓 Editar mesmo assim</button></div>'
+      : '<div class="aviso-travada aberta">🔓 <b>Edição liberada</b> nesta cotação finalizada. <button type="button" class="sm" data-act="travarCot">🔒 Travar de novo</button></div>') : ''}
     ${(() => {
       // avisos do comparativo em etiquetas curtas, lado a lado (o texto completo aparece ao passar o mouse)
       const nAg = comp.linhas.filter(l => l.aguardando || l.recusadaGanhou).length;
@@ -7354,6 +7401,19 @@ const acoes = {
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
   analiseForn: el => abrirAnaliseFornecedor(el.dataset.id),
+  destravarCot: el => {
+    const c = cotAtual();
+    if (!c) return;
+    ui.destravadas = new Set([...(ui.destravadas || []), c.id]);
+    render();
+    toast('🔓 Edição liberada nesta tela. A cotação continua finalizada.');
+  },
+  travarCot: () => {
+    const c = cotAtual();
+    if (!c) return;
+    ui.destravadas?.delete(c.id);
+    render();
+  },
   filtrarFornComp: el => {
     // chip "falta exportar": mostra no comparativo só os itens desse fornecedor
     const c = cotAtual();
@@ -7847,6 +7907,12 @@ function abrirAtalhos() {
 }
 
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && e.target.id === 'buscaComp' && e.target.value) {
+    e.preventDefault();
+    e.target.value = '';
+    e.target.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') {
     e.preventDefault();
     if (!document.querySelector('.dlg-fundo:not(#buscaRapida)')) abrirBusca();
@@ -7889,6 +7955,7 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
   if (!el || !acoes[el.dataset.act]) return;
   e.preventDefault();
+  if (ACOES_TRAVADAS.has(el.dataset.act) && el.closest('#app') && cotTravada(cotAtual())) { avisarTravada(); return; }
   Promise.resolve(acoes[el.dataset.act](el, e)).catch(err => {
     console.error(err);
     avisar('Ocorreu um erro: ' + err.message);
@@ -7907,6 +7974,13 @@ document.addEventListener('input', e => {
   if (t.id === 'filtroItens') {
     ui.filtroItens = t.value;
     aplicarFiltroItens();
+    return;
+  }
+  if (t.id === 'buscaComp') {
+    const c = cotAtual();
+    if (!c) return;
+    ui.buscaComp = { cotId: c.id, q: t.value.trim() };
+    aplicarFiltrosComp(c);
     return;
   }
   if (t.dataset.marcaItem != null) {
@@ -8192,6 +8266,7 @@ document.addEventListener('mouseout', e => {
 function aplicarQtdLoja(t, c) {
   if (!c) return;
   const i = +t.dataset.i;
+  if (cotTravada(c)) { t.value = c.qtds?.[i]?.[t.dataset.qtdLoja] ?? ''; avisarTravada(); return; }
   let v = Math.max(0, parseNum(t.value) || 0);
   t.classList.toggle('preenchida', v > 0);
   t.classList.toggle('zerada', t.value.trim() !== '' && v === 0);
@@ -8550,6 +8625,7 @@ function irParaItemPip(c, novo) {
 
 /** Clicar no 2º lugar (ou no mais barato) da janela flutuante: vira o escolhido, com confirmação ali mesmo. */
 async function escolherPip(fi) {
+  if (cotTravada(db.cotacoes.find(x => x.id === pip.cotId))) { avisarTravada(); return; }
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   if (!c || !pip.win) return;
   const antes = pip.i;
@@ -8612,6 +8688,7 @@ async function buscarPip() {
 
 /** ❓ na janela flutuante: a janela de perguntar à loja abre nela mesma (fica por cima do DataCar). */
 async function duvidaPip() {
+  if (cotTravada(db.cotacoes.find(x => x.id === pip.cotId))) { avisarTravada(); return; }
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   if (!c || !pip.win) return;
   const n = await duvidasDoItem(c, pip.i, null, '', pip.win.document);
@@ -8707,7 +8784,7 @@ function desenharPip(focar) {
       <div class="pip-col-qtd">
         <div class="pip-qtds">${LJ.map(lj => {
           const v = c.qtds?.[l.i]?.[lj.id];
-          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}" placeholder="0"></label>`;
+          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder="0"></label>`;
         }).join('')}</div>
         <div id="pipEstoque">${estoquePip(c, l)}</div>
         <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
