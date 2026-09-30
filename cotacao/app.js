@@ -8074,9 +8074,22 @@ function irPip(delta) {
 async function escolherPip(fi) {
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   if (!c || !pip.win) return;
-  const mudou = await escolherVencedorItem(c, pip.i, fi, pip.win.document);
+  const antes = pip.i;
+  const mudou = await escolherVencedorItem(c, antes, fi, pip.win.document);
+  if (!mudou) { desenharPip(true); return; }
+  // escolhido: segue para o próximo item sem quantidade (a partir de onde estava), sem voltar ao começo
+  const lista = itensPip(c);
+  const pend = pendentesPip(c, lista).filter(i => i !== antes);
+  const prox = pend.find(i => i > antes) ?? pend[0] ?? lista.find(i => i > antes) ?? lista.find(i => i !== antes) ?? antes;
+  pip.i = prox;
+  if (cotAtual() === c) {
+    ui.linhaComp = { cotId: c.id, i: prox };
+    const tr = document.querySelector(`.tab-comp tr[data-comp-linha="${prox}"]`);
+    document.querySelectorAll('tr.linha-atual').forEach(x => { if (x !== tr) x.classList.remove('linha-atual'); });
+    if (tr) { tr.classList.add('linha-atual'); tr.scrollIntoView({ block: 'center' }); }
+  }
   desenharPip(true);
-  if (mudou) toast(`Item ${c.itens[pip.i]?.codigo || ''}: comprando de ${c.fornecedores[comparar(c).linhas[pip.i].vencedor]?.nome || ''}.`);
+  toast(`Item ${c.itens[antes]?.codigo || ''}: comprando de ${c.fornecedores[comparar(c).linhas[antes].vencedor]?.nome || ''}.${prox !== antes ? ` Próximo: ${c.itens[prox]?.codigo || ''}.` : ''}`);
 }
 
 /** ❓ na janela flutuante: a janela de perguntar à loja abre nela mesma (fica por cima do DataCar). */

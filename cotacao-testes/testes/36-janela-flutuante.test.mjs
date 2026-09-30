@@ -216,3 +216,38 @@ test('janela flutuante: 2º lugar com marca e % mais caro; clicar escolhe ele (c
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('janela flutuante: escolher o 2º lugar vai para o próximo item sem quantidade (não volta ao começo)', async () => {
+  const cods = ['A', 'B', 'C', 'D', 'E'];
+  const s = await abrir(base({
+    config: { loja: 'DISPPAR', lojas: [{ id: 'paranoa', nome: 'Paranoá', sigla: 'DPR' }, { id: 'sao-sebastiao', nome: 'São Sebastião', sigla: 'DSS' }] },
+    cotacoes: [cotacao('c1', '0036', '2026-09-29', 'aberta', cods.map(x => item('P' + x, 'PECA ' + x, 'NGK', { codigo: 'COD-' + x })), [
+      forn('f1', 'KAIZEN', Object.fromEntries(cods.map((_, i) => [i, { preco: 10, marca: 'NGK' }]))),
+      forn('f2', 'VIA PEÇAS', Object.fromEntries(cods.map((_, i) => [i, { preco: 11, marca: 'NGK' }]))),
+    ], { qtds: { 0: { paranoa: 1 }, 3: { paranoa: 2 } } })],
+  }));
+  const { page } = s;
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'documentPictureInPicture', { configurable: true, value: { requestWindow: async () => {
+      const f = document.createElement('iframe'); f.id = 'janelaTeste'; f.style.cssText = 'position:fixed;right:0;bottom:0;width:420px;height:560px;z-index:99999;background:#fff'; document.body.appendChild(f);
+      const w = f.contentWindow; w.document.open(); w.document.write('<!doctype html><html><head></head><body></body></html>'); w.document.close(); return w;
+    } } });
+  });
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  await page.click('[data-act=abrirPip]');
+  const j = page.frameLocator('#janelaTeste');
+  await j.locator('#pipForn').selectOption({ label: 'KAIZEN (5)' });
+  // vai para o item 3 (COD-C)
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  assert.match(n(await j.locator('.pip-barra').innerText()), /#3 · 3 de 5/);
+  // escolhe o 2º lugar (VIA PEÇAS): o item sai da lista da KAIZEN; vai para o próximo sem quantidade (#5; o #4 já tem)
+  await j.locator('.pip-segundo').click();
+  await j.locator('.dlg button.primary').click();
+  assert.equal(await page.evaluate(() => comparar(db.cotacoes[0]).linhas[2].vencedor), 1);
+  assert.match(n(await j.locator('.pip-barra').innerText()), /#5 · 4 de 4/, 'não voltou para o começo');
+  assert.equal(await j.locator('input:focus').getAttribute('data-i'), '4', 'cursor na quantidade do próximo item');
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
