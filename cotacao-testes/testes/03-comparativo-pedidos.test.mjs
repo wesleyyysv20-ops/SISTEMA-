@@ -40,20 +40,26 @@ test('menor preço ganha, diferença 1º × 2º e avisos de preço fora do norma
   await s.fechar();
 });
 
+/** Clica no valor (canto de cima à direita da célula), não no aviso de preço nem no ✕. */
+async function clicarPreco(page, sel) {
+  const caixa = await page.locator(sel).boundingBox();
+  await page.locator(sel).click({ position: { x: caixa.width - 14, y: 12 } });
+}
+
 test('escolher outro fornecedor na mão muda os pedidos; clicar de novo desfaz', async () => {
   const s = await abrirCotacao();
   const { page } = s;
   assert.match((await pedidos(page))[0], /Auto Mix[\s\S]*1 item[\s\S]*R\$ 48,00/);
   // clique acidental: a janela pergunta, e Cancelar não muda nada
-  await page.click('td[data-i="0"][data-f="0"]');
+  await clicarPreco(page, 'td[data-dica="0:0"]');
   assert.match(n(await page.locator('.dlg').innerText()), /Comprar este item de Auto Mix por R\$ 150,00\?[\s\S]*Hoje: Via Peças por R\$ 140,00/);
   await page.click('.dlg button:text("Cancelar")');
   assert.equal(await page.locator('td.escolhido').count(), 0);
-  await page.click('td[data-i="0"][data-f="0"]');
+  await clicarPreco(page, 'td[data-dica="0:0"]');
   await page.click('.dlg button.primary'); // confirma a escolha
   assert.match((await pedidos(page))[0], /Auto Mix[\s\S]*2 item[\s\S]*R\$ 348,00/);
   assert.equal(await page.locator('td.escolhido').count(), 1);
-  await page.click('td[data-i="0"][data-f="0"]');
+  await clicarPreco(page, 'td[data-dica="0:0"]');
   await page.click('.dlg button.primary'); // confirma a escolha
   assert.match((await pedidos(page))[0], /Auto Mix[\s\S]*1 item/);
   assert.equal(await page.locator('td.escolhido').count(), 0);

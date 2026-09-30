@@ -24,7 +24,7 @@ test('Kaizen: "NGK/685" = marca NGK e estoque 685 (só para a Kaizen)', async ()
   assert.deepEqual(r, [[['NGK', 685], ['SUN ELETRI', 318]], [['NGK/10', null]]], 'outro fornecedor não muda');
   const linha0 = n(await page.locator('.tab-comp tbody tr').first().innerText());
   assert.match(linha0, /✓ NGK\s+estoque 685/);
-  assert.match(linha0, /KAIZEN\s+estoque 685/, 'coluna Fornecedor mostra o estoque do vencedor');
+  assert.match(linha0, /KAIZEN[\s\S]*estoque 685/, 'o preço escolhido mostra o estoque do vencedor');
   // a marca recusada antes continua recusada
   assert.equal(await page.locator('.tab-comp tbody tr').nth(1).locator('.chip-marca.recusada').count(), 1);
   assert.deepEqual(s.erros, []);
@@ -77,7 +77,7 @@ test('Rio Juntas: itens com marca GO ficam destacados (demoram mais para chegar)
   const linhas = page.locator('.tab-comp tbody tr[data-comp-linha]');
   // item 1: Rio Juntas GO ganha → destaque no preço e na coluna Fornecedor; o GO da Via Peças não conta
   assert.equal(await linhas.nth(0).locator('td.demora').count(), 1);
-  assert.equal(await linhas.nth(0).locator('.chip-demora').count(), 2, 'no preço e na coluna Fornecedor');
+  assert.equal(await linhas.nth(0).locator('.chip-demora').count(), 2, 'no preço dele e no preço escolhido');
   // item 2: "SABO GO" da Rio Juntas também conta; "GOLD" não; quem ganha é a Via Peças (sem destaque na coluna Fornecedor)
   assert.equal(await linhas.nth(1).locator('td.demora').count(), 1);
   assert.equal(await linhas.nth(1).locator('.chip-demora').count(), 1);
@@ -96,7 +96,7 @@ test('Comando: ganha até 5% acima do 1º lugar, com o detalhe; clicar no mais b
   assert.deepEqual(r, [[1, true], [0, false]], 'até 5% a Comando ganha; acima de 5% não');
   const linha = page.locator('.tab-comp tbody tr[data-comp-linha]').first();
   assert.match(n(await linha.innerText()), /⭐ regra Comando · \+4,9% do 1º/);
-  assert.match(n(await linha.innerText()), /COMANDO\s+pela regra dos 5% \(\+4,9% do 1º\)/);
+  assert.match(n(await linha.innerText()), /COMANDO[\s\S]*pela regra dos 5% \(\+4,9% do 1º\)/);
   assert.match(n(await linha.innerText()), /\+4,9%[\s\S]*1º KAIZEN R\$ 100,00/, 'a Dif. mostra o mais barato de verdade');
   assert.match(await page.locator('.pill-aviso.regra').innerText(), /⭐ 1 regra Comando/);
   // escolher o mais barato (Kaizen) desfaz a regra neste item

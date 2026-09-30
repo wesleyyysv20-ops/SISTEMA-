@@ -16,7 +16,7 @@ test('cotação: quadro Fornecedores recolhível (começa fechado, abre e fecha 
   await page.evaluate(() => { localStorage.removeItem('cotacao.fornAberto'); render(); });
   const titulo = page.locator('h3.recolhe');
   const corpo = page.locator('.corpo-recolhe');
-  assert.match(n(await titulo.innerText()), /▸\s+Fornecedores\s+2 fornecedor\(es\) · 1 responderam · 1 enviadas/);
+  assert.match(n(await titulo.innerText()), /▸\s+Fornecedores\s+2 fornecedor\(es\) · 1 de 2 responderam/);
   assert.equal(await corpo.isVisible(), false);
 
   await titulo.click();

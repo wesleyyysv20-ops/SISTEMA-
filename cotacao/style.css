@@ -1571,3 +1571,59 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .pip-prox.feito { color: var(--muted); font-weight: 500; }
 .pip-prox.feito::after { content: ' ✓'; color: var(--ok); }
 @media (max-height: 320px) { .pip-proximos { display: none; } }
+
+/* ===== cotação: resumo no cabeçalho ===== */
+.resumo-cot { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
+.rc-kpi { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card-2); min-width: 0; }
+.rc-kpi b { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-rot { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.rc-sub { font-size: 11.5px; color: var(--muted); }
+.rc-kpi.bom b { color: var(--ok); }
+.rc-kpi.atencao { border-color: color-mix(in srgb, var(--roxo-forte) 40%, var(--line)); }
+.rc-kpi.atencao b { color: var(--roxo-forte); }
+.rc-kpi.clicavel { cursor: pointer; }
+.rc-kpi.clicavel:hover { background: color-mix(in srgb, var(--roxo-forte) 8%, var(--card)); }
+.rc-barra { display: block; height: 5px; margin-top: 4px; border-radius: 5px; background: color-mix(in srgb, var(--muted) 20%, transparent); overflow: hidden; }
+.rc-barra > span { display: block; height: 100%; border-radius: 5px; background: var(--ok); }
+
+/* quadro Fornecedores: quem falta exportar */
+.forn-pend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.chip-forn-pend { padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; background: color-mix(in srgb, var(--laranja) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--laranja) 45%, var(--line)); color: var(--text); }
+.chip-forn-pend:hover { border-color: var(--primary-2); background: color-mix(in srgb, var(--primary-2) 8%, var(--card)); }
+
+/* ===== comparativo: decisão presa à direita ===== */
+.tab-comp.fixa-dir > * > tr > .fd { position: sticky; z-index: 1; background-clip: padding-box; }
+.tab-comp.fixa-dir > * > tr > td.fd { background-color: var(--card); }
+.tab-comp.fixa-dir > tbody > tr:nth-child(even) > td.fd { background-color: var(--card-2); }
+.tab-comp.fixa-dir > tbody > tr > td.fd.best, .tab-comp.fixa-dir > tbody > tr > td.col-escolhido { background-color: color-mix(in srgb, var(--ok-bg) 70%, var(--card)); }
+.tab-comp.fixa-dir > tbody > tr:hover > td.fd { background-color: color-mix(in srgb, var(--primary-2) 8%, var(--card)); }
+.tab-comp.fixa-dir > thead > tr > th.fd { z-index: 3; }
+.tab-comp.fixa-dir > * > tr > [data-fd="0"] { right: var(--fd0, 0); }
+.tab-comp.fixa-dir > * > tr > [data-fd="1"] { right: var(--fd1, 0); }
+.tab-comp.fixa-dir > * > tr > [data-fd="2"] { right: var(--fd2, 0); }
+.tab-comp.fixa-dir > * > tr > [data-fd="3"] { right: var(--fd3, 0); }
+.tab-comp.fixa-dir > * > tr > [data-fd="4"] { right: var(--fd4, 0); }
+.tab-comp.fixa-dir > * > tr > [data-fd="5"] { right: var(--fd5, 0); }
+.tab-comp.fixa-dir > * > tr > [data-fd="6"] { right: var(--fd6, 0); }
+.tab-comp.fixa-dir > * > tr > .col-escolhido { box-shadow: -6px 0 6px -6px rgba(0, 0, 0, .25); }
+.tab-comp .esc-linha { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.tab-comp .esc-linha .btn-duvida { padding: 0 3px; }
+.tab-comp .col-escolhido .nome-venc { font-weight: 700; }
+.tab-comp .col-escolhido .marca-venc { display: inline-block; }
+.tab-comp th.col-dif, .tab-comp td.col-dif { min-width: 104px; }
+
+/* ===== comparativo: linhas mais baixas ===== */
+.tab-comp td { padding-top: 5px; padding-bottom: 5px; }
+.prod-comp { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "cod tags" "desc desc"; align-items: center; column-gap: 6px; }
+.prod-comp > .cod-comp, .prod-comp > .badge.kit { grid-area: cod; }
+.prod-comp > .badge.kit + .cod-comp { margin-left: 34px; }
+.prod-comp > .desc-comp { grid-area: desc; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prod-comp > .prod-tags { grid-area: tags; display: flex; flex-wrap: wrap; gap: 4px; justify-self: start; }
+.tab-comp > * > tr > :nth-child(2) { min-width: 210px; max-width: 300px; }
+.tab-comp .col-escolhido .nome-venc { text-transform: none; }
+/* coluna Dif. mais baixa: % em cima, 2º lugar (nome · preço · marca) numa linha só */
+.tab-comp td.col-dif .dif-seg + .small.muted { display: none; }
+.tab-comp td.col-dif br:has(+ .marca-alt) { display: none; }
+.tab-comp td.col-dif > .small.muted[title] { display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.tab-comp td.col-dif > .marca-alt { margin-left: 3px; }
+.tab-comp td.col-dif { max-width: 230px; }

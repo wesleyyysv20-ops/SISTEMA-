@@ -4650,9 +4650,9 @@ function linhaTotalComp(c, comp) {
   return `<tr class="total" id="totalComp">
     <td></td><td>Total dos itens cotados${comp.porLoja ? '<br><span class="small muted">com as quantidades das lojas</span>' : '<br><span class="small muted">1 unidade de cada</span>'}</td>
     ${fornecedoresVisiveisComp(c).map(j => comp.totais[j]).map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
-    <td></td>${nf > 1 ? '<td></td>' : ''}<td>${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td>
-    ${LJ.map(lj => `<td class="c col-qtd">${qtdL(lj) ? `${fmtNum(qtdL(lj))} un.<br><span class="small">${fmtMoeda(comp.porLojaTotal[lj.id])}</span>` : '<span class="muted">—</span>'}</td>`).join('')}
-    <td class="r">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
+    <td class="fd">${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td>${nf > 1 ? '<td class="fd"></td>' : ''}
+    ${LJ.map(lj => `<td class="c col-qtd fd">${qtdL(lj) ? `${fmtNum(qtdL(lj))} un.<br><span class="small">${fmtMoeda(comp.porLojaTotal[lj.id])}</span>` : '<span class="muted">—</span>'}</td>`).join('')}
+    <td class="r fd">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
   </tr>`;
 }
 
@@ -4832,6 +4832,61 @@ function botaoExportarForn(f, fi, n) {
     ? `<button class="sm primary" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido: só os itens que ${esc(f.nome)} ganhou (planilhas por loja ou somada) e marcar a cotação dele como concluída">⬇ Exportar (${n})</button>`
     : `<span class="btn-desligado" title="${f.respondidoEm ? `${esc(f.nome)} não ganhou nenhum item (com quantidade) no comparativo` : `${esc(f.nome)} ainda não respondeu: quando responder e ganhar itens, dá para exportar o pedido`}"><button class="sm" disabled>⬇ Exportar (0)</button></span>`}</span>`;
 }
+/** Números da cotação para o cabeçalho: pedido, economia, pedidos exportados, quantidades e dúvidas. */
+function htmlResumoCot(c, comp = comparar(c)) {
+  if (!comp.itensCotados) return '';
+  const peds = pedidosPorFornecedor(c);
+  const total = peds.reduce((t, p) => t + p.total, 0);
+  let media = 0, base = 0;
+  for (const l of comp.linhas) {
+    if (l.preco == null || !l.q) continue;
+    const validos = l.precos.filter(p => p != null);
+    if (validos.length < 2) continue;
+    media += (validos.reduce((a, b) => a + b, 0) / validos.length - l.preco) * l.q;
+    base += l.preco * l.q;
+  }
+  const comPed = new Set([...peds.map(p => p.fi), ...c.fornecedores.map((f, fi) => (f.concluidoEm ? fi : -1)).filter(fi => fi >= 0)]);
+  const exp = [...comPed].filter(fi => c.fornecedores[fi].concluidoEm).length;
+  const itensVenc = comp.linhas.filter(l => l.vencedor >= 0 && !l.duvida);
+  const comQtd = itensVenc.length - pendentesPip(c, itensVenc.map(l => l.i)).length;
+  const nDuv = comp.linhas.filter(l => l.duvida).length;
+  const fin = c.status === 'finalizada';
+  const kpi = (rot, val, sub = '', cls = '', extra = '') => `<div class="rc-kpi ${cls}"${extra}><span class="rc-rot">${rot}</span><b>${val}</b>${sub ? `<span class="rc-sub">${sub}</span>` : ''}</div>`;
+  return `<div class="resumo-cot">
+    ${kpi('💰 Total do pedido', fmtMoeda(total), `${peds.reduce((t, p) => t + p.itens.length, 0)} itens · sem os em dúvida`)}
+    ${kpi('📉 Economia vs média', media > 0 ? fmtMoeda(media) : '—', media > 0 && base ? `${fmtPct(media / (base + media))} a menos` : 'onde houve 2+ preços', media > 0 ? 'bom' : '')}
+    ${kpi('📦 Pedidos exportados', comPed.size ? `${exp} de ${comPed.size}` : '—', comPed.size ? (exp === comPed.size ? '✓ todos' : `faltam ${comPed.size - exp}`) : 'ninguém com quantidade', comPed.size && exp === comPed.size ? 'bom' : '')}
+    ${kpi('✏️ Itens com quantidade', `${comQtd} de ${itensVenc.length}`, itensVenc.length ? `<span class="rc-barra"><span style="width:${Math.round((comQtd / itensVenc.length) * 100)}%"></span></span>` : '', !fin && comQtd < itensVenc.length ? '' : 'bom')}
+    ${kpi('❓ Dúvidas abertas', String(nDuv), nDuv ? 'clique para ver os itens' : 'nenhuma', nDuv ? 'atencao clicavel' : '', nDuv ? ' data-act="filtroAviso" data-tipo="duvida" role="button" tabindex="0" title="Mostrar só os itens em dúvida"' : '')}
+  </div>`;
+}
+
+/** Resumo do quadro "Fornecedores" (fechado): respostas, pedidos exportados e quem falta exportar. */
+function htmlResumoFornCot(c) {
+  const nf = c.fornecedores.length;
+  const resp = c.fornecedores.filter(respondeu).length;
+  const peds = pedidosPorFornecedor(c);
+  const comPed = new Set([...peds.map(p => p.fi), ...c.fornecedores.map((f, fi) => (f.concluidoEm ? fi : -1)).filter(fi => fi >= 0)]);
+  const exp = [...comPed].filter(fi => c.fornecedores[fi].concluidoEm).length;
+  const fin = c.status === 'finalizada';
+  const pend = fin ? [] : peds.filter(p => !p.f.concluidoEm);
+  const partes = [`${nf} fornecedor(es)`, `${resp} de ${nf} responderam`];
+  if (comPed.size) partes.push(`${exp} de ${comPed.size} pedidos exportados`);
+  if (pend.length) partes.push(`faltam ${pend.length}`);
+  else if (comPed.size && exp === comPed.size) partes.push('✓ todos exportados');
+  return { texto: partes.join(' · '), chips: pend.length ? `<div class="forn-pend"><span class="small muted">Falta exportar:</span>${pend.map(p => `<button type="button" class="chip-forn-pend" data-act="filtrarFornComp" data-id="${esc(p.f.fornecedorId)}" title="Mostrar no comparativo só os itens de ${esc(p.f.nome)}">${esc(p.f.nome)} <b>${p.itens.length}</b> · ${fmtMoeda(p.total)}</button>`).join('')}</div>` : '' };
+}
+
+function atualizarResumosCot(c) {
+  const r = document.getElementById('resumoCot');
+  if (r) { const novo = htmlResumoCot(c); if (r.innerHTML !== novo) r.innerHTML = novo; }
+  const rf = htmlResumoFornCot(c);
+  const t = document.querySelector('.resumo-recolhe');
+  if (t && t.textContent !== rf.texto) t.textContent = rf.texto;
+  const ch = document.getElementById('fornPendCot');
+  if (ch && ch.innerHTML !== rf.chips) ch.innerHTML = rf.chips;
+}
+
 function atualizarBotoesExportar(c) {
   const qtd = Object.fromEntries(pedidosPorFornecedor(c).map(p => [p.fi, p.itens.length]));
   for (const el of document.querySelectorAll('.exp-forn[data-exp-f]')) {
@@ -4843,6 +4898,35 @@ function atualizarBotoesExportar(c) {
   }
 }
 
+/**
+ * Comparativo: preço escolhido, dif., quantidades e total ficam presos à direita (como o produto à esquerda);
+ * só as colunas dos fornecedores rolam no meio. Sem espaço para isso (tela estreita), a tabela rola inteira.
+ */
+function ajustarColunasFixas() {
+  const tab = document.querySelector('.tab-comp');
+  if (!tab) return;
+  const ths = [...tab.querySelectorAll(':scope > thead > tr > th.fd')];
+  const temForn = tab.querySelectorAll(':scope > thead > tr > th').length - ths.length > 2;
+  const larg = ths.map(th => th.getBoundingClientRect().width);
+  const soma = larg.reduce((a, b) => a + b, 0);
+  const esq = [...tab.querySelectorAll(':scope > thead > tr > th')].slice(0, 2).reduce((a, th) => a + th.getBoundingClientRect().width, 0);
+  const cabe = temForn && ths.length && esq + soma + 110 <= (tab.parentElement?.clientWidth || 0);
+  tab.classList.toggle('fixa-dir', !!cabe);
+  if (!cabe) return;
+  let acc = 0;
+  for (let k = ths.length - 1; k >= 0; k--) {
+    tab.style.setProperty(`--fd${ths.length - 1 - k}`, acc + 'px');
+    acc += larg[k];
+  }
+  // cada célula fixa sabe a sua posição a partir da direita
+  for (const tr of tab.querySelectorAll(':scope > * > tr')) {
+    const fds = tr.querySelectorAll(':scope > .fd');
+    fds.forEach((td, k) => { td.dataset.fd = fds.length - 1 - k; });
+  }
+}
+let timerColFixas = null;
+window.addEventListener('resize', () => { clearTimeout(timerColFixas); timerColFixas = setTimeout(ajustarColunasFixas, 150); });
+
 function atualizarTotaisComp(c, i = null) {
   const comp = comparar(c);
   // quando as quantidades passam a valer (1ª digitada) todos os totais mudam; senão, só o da linha digitada
@@ -4853,7 +4937,12 @@ function atualizarTotaisComp(c, i = null) {
     if (td) td.innerHTML = celTotal(l);
   }
   const tot = $('#totalComp');
-  if (tot) tot.outerHTML = linhaTotalComp(c, comp);
+  if (tot) {
+    tot.outerHTML = linhaTotalComp(c, comp);
+    const novo = $('#totalComp');
+    const fds = novo ? novo.querySelectorAll(':scope > .fd') : [];
+    fds.forEach((td, k) => { td.dataset.fd = fds.length - 1 - k; });
+  }
   // a seção de pedidos é pesada: atualiza quando a pessoa para de digitar
   clearTimeout(ui.timerPedidos);
   ui.timerPedidos = setTimeout(() => {
@@ -4861,6 +4950,7 @@ function atualizarTotaisComp(c, i = null) {
     const atual = cotAtual();
     if (sec && atual === c) sec.outerHTML = secaoPedidos(c, comparar(c));
     if (atual === c) atualizarBotoesExportar(c); // "Exportar (N)" acende assim que o fornecedor tem itens com quantidade
+    if (atual === c) atualizarResumosCot(c);
   }, 350);
 }
 
@@ -4985,8 +5075,8 @@ function renderCotacao(id) {
       <thead><tr>
         <th class="c">#</th><th>Produto</th>${temResposta ? '' : '<th class="r">Qtd.</th>'}
         ${ordemForn.map(j => `<th class="r">${esc(c.fornecedores[j].nome)}</th>`).join('')}
-        ${temResposta ? `<th class="r col-escolhido">Preço escolhido</th>${nf > 1 ? '<th class="r" title="Quanto o 2º melhor preço é mais caro que o melhor">Dif. 1º × 2º</th>' : ''}<th>Fornecedor</th>
-          ${LJ.map(lj => `<th class="c col-qtd" title="Quantidade para ${esc(lj.nome)}">Qtd.<br>${esc(lj.nome)}</th>`).join('')}<th class="r">Total</th>` : ''}
+        ${temResposta ? `<th class="r col-escolhido fd">Preço escolhido</th>${nf > 1 ? '<th class="r fd col-dif" title="Quanto o 2º melhor preço é mais caro que o melhor">Dif. 1º × 2º</th>' : ''}
+          ${LJ.map(lj => `<th class="c col-qtd fd" title="Quantidade para ${esc(lj.nome)}">Qtd.<br>${esc(lj.nome)}</th>`).join('')}<th class="r fd">Total</th>` : ''}
       </tr></thead>
       <tbody>
         ${comp.linhas.map(l => {
@@ -5020,26 +5110,38 @@ function renderCotacao(id) {
           const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
           return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
-          <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span><br><span class="small muted">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}${l.it.marca ? ` <span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}</td>
+          <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
+            <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
+            <span class="prod-tags">${l.it.marca ? `<span class="marca-pedida" title="Marca pedida">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
-          ${temResposta ? `<td class="r col-escolhido"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando">⏳</span>' : '—'}</b>${l.vencedor >= 0 ? `<br><span class="nome-venc">${esc(c.fornecedores[l.vencedor].nome)}</span>` : ''}${l.vencedor >= 0 && c.fornecedores[l.vencedor].respostas?.[l.i]?.marca ? `<br><span class="marca-venc" title="Marca de ${esc(c.fornecedores[l.vencedor].nome)}">${esc(c.fornecedores[l.vencedor].respostas[l.i].marca)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>
+          ${temResposta ? `${(() => {
+            // preço escolhido + quem ganhou (antes numa coluna "Fornecedor" separada)
+            const fv = l.vencedor >= 0 ? c.fornecedores[l.vencedor] : null;
+            const marcaV = fv?.respostas?.[l.i]?.marca;
+            const extras = !fv ? '' : [
+              l.estoque != null ? `<span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : '',
+              entregaDemorada(fv, fv.respostas?.[l.i]) ? chipDemora : '',
+              l.preferencia ? `<span class="chip-regra" title="O menor preço é ${fmtMoeda(l.min)} (${esc(c.fornecedores[l.minIdx].nome)})">pela regra dos 5% (+${fmtPct(l.preco / l.min - 1)} do 1º)</span>` : '',
+              l.manual ? `<span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '',
+            ].filter(Boolean).join('<br>');
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}</td>`;
+          })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
               const alvo = (l.manual || l.preferencia) && l.minIdx >= 0 ? l.minIdx : l.segundoIdx;
-              const acao = alvo >= 0 && alvo !== l.vencedor ? ` class="r escolhe-dif" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvo}" title="Clique para comprar de ${esc(c.fornecedores[alvo].nome)} (${fmtMoeda(l.precos[alvo])})"` : ' class="r"';
+              const acao = alvo >= 0 && alvo !== l.vencedor ? ` class="r fd col-dif escolhe-dif" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvo}" title="Clique para comprar de ${esc(c.fornecedores[alvo].nome)} (${fmtMoeda(l.precos[alvo])})"` : ' class="r fd col-dif"';
               return `<td${acao}>${celulaDifSegundo(c, l)}</td>`;
             })() : ''}
-            <td>${l.vencedor >= 0 ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button> ` : ''}${l.vencedor >= 0 ? esc(c.fornecedores[l.vencedor].nome) + (l.estoque != null ? `<br><span class="estoque">estoque ${fmtNum(l.estoque)}</span>` : '') + (entregaDemorada(c.fornecedores[l.vencedor], c.fornecedores[l.vencedor].respostas?.[l.i]) ? '<br>' + chipDemora : '') + (l.preferencia ? `<br><span class="chip-regra" title="O menor preço é ${fmtMoeda(l.min)} (${esc(c.fornecedores[l.minIdx].nome)})">pela regra dos 5% (+${fmtPct(l.preco / l.min - 1)} do 1º)</span>` : '') + (l.manual ? `<br><span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '') : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</td>
-            ${LJ.map(lj => `<td class="c col-qtd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}" title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
-            <td class="r" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
+            ${LJ.map(lj => `<td class="c col-qtd fd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}" title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
+            <td class="r fd" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
         }).join('')}
         ${temResposta ? linhaTotalComp(c, comp) : ''}
         ${temResposta && ordemForn.length ? COND_CAMPOS.map(([k, label]) => ordemForn.some(j => c.fornecedores[j].cond?.[k]) ? `<tr>
           <td></td><td class="small muted">${label}</td>
           ${ordemForn.map(j => `<td class="r small">${esc(c.fornecedores[j].cond?.[k] || '—')}</td>`).join('')}
-          <td colspan="${(nf > 1 ? 4 : 3) + LJ.length}"></td></tr>` : '').join('') : ''}
+          <td colspan="${(nf > 1 ? 3 : 2) + LJ.length}"></td></tr>` : '').join('') : ''}
       </tbody>
     </table></div>`;
 
@@ -5056,18 +5158,20 @@ function renderCotacao(id) {
         </select>
       </div>
     </div>
-    <p class="muted" style="margin:0">Criada em ${fmtData(c.data)} · <label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"><input type="time" data-change="prazoHoraCot" value="${esc(c.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></label> · ${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
+    <p class="muted" style="margin:0">Criada em ${fmtData(c.data)} · ${c.status === 'finalizada' ? '' : `<label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"><input type="time" data-change="prazoHoraCot" value="${esc(c.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></label> · `}${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
     ${prazo ? `<p class="aviso-prazo ${prazo.dias < 0 ? 'vencido' : ''}">⏰ O prazo de resposta ${textoPrazo(prazo.dias, c.prazoHora)} (${textoDataPrazo(c)}) e ${prazo.pendentes.length === 1 ? 'falta 1 fornecedor responder' : `faltam ${prazo.pendentes.length} fornecedores responderem`}: <b>${prazo.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</b>.
       <button class="sm" data-act="cobrarPendentes">📣 Cobrar quem falta</button></p>` : ''}
     <p class="titulo-cot" style="margin:6px 0 0">${c.titulo ? `<b>${esc(c.titulo)}</b>` : '<span class="muted">Sem título</span>'} <button type="button" class="link editar-titulo" data-act="editarTituloCot" data-id="${esc(c.id)}" title="Editar o título da cotação">✎ ${c.titulo ? 'Editar título' : 'Dar um título'}</button></p>
     ${c.obs ? `<p class="small" style="margin:6px 0 0;white-space:pre-wrap">${esc(c.obs)}</p>` : ''}
+    <div id="resumoCot">${temResposta ? htmlResumoCot(c, comp) : ''}</div>
   </section>
 
   <section class="card">
     <h3 class="recolhe" data-act="recolherFornCot" role="button" tabindex="0" aria-expanded="${fornCotAberto() ? 'true' : 'false'}" title="Clique para ${fornCotAberto() ? 'fechar' : 'abrir'}">
       <span class="seta-recolhe">${fornCotAberto() ? '▾' : '▸'}</span> Fornecedores
-      <span class="small muted resumo-recolhe">${nf} fornecedor(es) · ${c.fornecedores.filter(f => f.respondidoEm).length} responderam · ${c.fornecedores.filter(f => f.enviadoEm).length} enviadas</span>
+      <span class="small muted resumo-recolhe">${htmlResumoFornCot(c).texto}</span>
     </h3>
+    <div id="fornPendCot">${temResposta ? htmlResumoFornCot(c).chips : ''}</div>
     <div class="corpo-recolhe" ${fornCotAberto() ? '' : 'hidden'}>
     ${nf ? `<div class="table-wrap"><table>
       <thead><tr><th class="c"><input type="checkbox" class="sel-forn" data-sel-todos ${nf && ui.sel.ids.size === nf ? 'checked' : ''} title="Marcar todos" aria-label="Marcar todos"></th><th>Fornecedor</th><th>E-mail</th><th>Envio</th><th>Resposta</th><th class="r">Total</th><th>Ações</th></tr></thead>
@@ -6457,6 +6561,7 @@ function render() {
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
+  if (nome === 'cotacao') ajustarColunasFixas();
   anunciarPresenca();
   anotarUltimoLugar();
   const cotTela = nome === 'cotacao' ? db.cotacoes.find(x => x.id === id) : null;
@@ -7249,6 +7354,13 @@ const acoes = {
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
   analiseForn: el => abrirAnaliseFornecedor(el.dataset.id),
+  filtrarFornComp: el => {
+    // chip "falta exportar": mostra no comparativo só os itens desse fornecedor
+    const c = cotAtual();
+    if (!c) return;
+    definirFiltroVencedor(c, el.dataset.id);
+    $('.painel-comp')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  },
   analiseCot: el => {
     ui.notaCot = el.dataset.id;
     ir('relatorios');

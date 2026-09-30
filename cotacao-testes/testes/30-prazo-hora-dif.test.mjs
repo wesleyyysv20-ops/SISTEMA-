@@ -53,13 +53,13 @@ test('Dif. 1º × 2º: escolhido o mais barato mostra o 2º; escolhido outro mos
   await page.click('nav [data-route=cotacoes]');
   await page.click('[data-route=cotacao][data-id=c1]');
   const dif = () => page.locator('.tab-comp tbody tr').first().locator('.dif-seg').locator('xpath=..').innerText().then(n);
-  assert.match(await dif(), /\+21,5%\s+o 2º é mais caro\s+2º KAIZEN R\$ 13,78\s+NGK/);
+  assert.match(await dif(), /\+21,5%\s+2º KAIZEN R\$ 13,78\s*NGK/);
   // a marca do 2º aparece com a cor da conferência (NGK é a pedida)
   assert.match(await page.locator('.tab-comp tbody tr').first().locator('.marca-alt').getAttribute('class'), /\bok\b/);
   // escolhe a Kaizen (2º lugar): mostra quem tem o menor preço
   await page.locator('.tab-comp tbody tr').first().locator('td.escolhivel', { hasText: '13,78' }).click();
   await page.click('.dlg button.primary'); // confirma a escolha
-  assert.match(await dif(), /\+21,5%\s+1º RMP R\$ 11,34\s+NGK/);
+  assert.match(await dif(), /\+21,5%\s+1º RMP R\$ 11,34\s*NGK/);
   assert.match(await page.locator('.tab-comp tbody tr').first().locator('.marca-alt').getAttribute('class'), /ok/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
