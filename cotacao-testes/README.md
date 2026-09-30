@@ -56,6 +56,7 @@ os arquivos gerados (planilhas, pedidos, .zip, backup) são abertos e checados c
 | `49-inicio` | início: andamento de cada cotação aberta (respostas, quantidades, pedidos), prazo com cobrar, continuar de onde parei, quem está trabalhando; cotação finalizada sem pendências em nenhuma tela |
 | `50-status-salvando` | indicador de salvamento: salvar rápido não pisca "Salvando…"; só aparece se demorar |
 | `51-nota-por-cotacao` | nota dos fornecedores: análise geral e por cotação (seletor em Relatórios e botão na cotação) |
+| `52-temas` | temas: automático, claro, suave, escuro e grafite (Configurações e botão 🎨), guardado no computador; todas as telas em cada tema |
 
 ## Rodar
 

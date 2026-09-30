@@ -2262,7 +2262,6 @@ const colLetra = n => { let s = ''; for (; n > 0; n = Math.floor((n - 1) / 26)) 
  */
 function abaPedido(wb, c, ped, nomeAba, loja = null, { somada = false } = {}) {
   // formato combinado com a loja: título, tabela direto (sem bloco de dados), itens em ordem de descrição
-  const { f } = ped;
   const itens = [...ped.itens].sort((a, b) => COLLATOR.compare(a.it.descricao || '', b.it.descricao || ''));
   const LJ = lojas();
   const colunasLoja = !loja && ped.porLoja;
@@ -2969,8 +2968,6 @@ function ehKit(codigo, descricao) {
   return /\bKIT\b/i.test(semAcento(descricao || '').toUpperCase()) || /[-\/\s]KIT[A-Z0-9 ]*$/i.test(String(codigo || '').trim());
 }
 
-const ORDEM_DC = { chave: 'OBS', arquivo: 'No arquivo', produto: 'Produto cadastrado', marca: 'Marca' };
-
 function chaveOrdemDataCar(l, campo) {
   const d = ui.datacar;
   const txt = c => (c >= 0 ? l.cels[c] : '');
@@ -3138,11 +3135,6 @@ function moverGrupoDataCar(i) {
   const n = gruposDataCar().length;
   d.gcur = Math.max(0, Math.min(n, i));
   desenharConferencia();
-}
-
-function marcaAtualDataCar(l, p) {
-  const d = ui.datacar;
-  return l.marca ?? (p ? p.marca : (d.colMarca >= 0 ? l.cels[d.colMarca] : '')) ?? '';
 }
 
 function editarMarcaDataCar(textoInicial) {
@@ -4157,7 +4149,6 @@ function painelEnvioPedidos(c) {
   const atual = peds.find(p => !p.f.pedidoEnviadoEm && p.f.email);
   const feitos = peds.filter(p => p.f.pedidoEnviadoEm).length;
   const semEmail = peds.filter(p => !p.f.email);
-  const pasta = !nuvem.downloads && typeof window.showDirectoryPicker === 'function';
   return `
   <section class="card envio" id="painelLote">
     <div class="row-between">
@@ -6070,6 +6061,11 @@ function renderConfig() {
   const c = db.config;
   return `
   <section class="card">
+    <h2>Aparência</h2>
+    <p class="muted small" style="margin-top:0">Escolha o tema deste computador (cada pessoa escolhe o seu). Também dá para trocar pelo botão 🎨 no topo.</p>
+    ${htmlTemas()}
+  </section>
+  <section class="card">
     <h2>Dados da loja</h2>
     <p class="muted small">Esses dados aparecem no cabeçalho da planilha enviada aos fornecedores e no e-mail.</p>
     <form data-form="config">
@@ -6998,6 +6994,8 @@ const acoes = {
   },
   sairSupabase: () => sairSupabase(),
   abrirBusca: () => abrirBusca(),
+  abrirTemas: () => abrirTemas(),
+  escolherTema: el => aplicarTema(el.dataset.tema),
   analiseCot: el => {
     ui.notaCot = el.dataset.id;
     ir('relatorios');
@@ -7310,6 +7308,43 @@ document.addEventListener('mouseover', e => {
   const l = c && comparar(c).linhas[i];
   if (l) alvo.title = dicaPrecoComp(c, l, j);
 });
+
+/* ---------------- temas (cada computador escolhe o seu) ---------------- */
+
+const TEMAS = [
+  ['auto', 'Automático', 'Segue o Windows: claro de dia, escuro se o Windows estiver no modo escuro', ['#ffffff', '#f4f6fa', '#ffffff', '#253d83']],
+  ['claro', 'Claro', 'O padrão, com o azul da DISPPAR', ['#ffffff', '#f4f6fa', '#ffffff', '#253d83']],
+  ['suave', 'Suave', 'Claro em tons quentes, cansa menos a vista', ['#fffdf9', '#f4f1eb', '#fffdf9', '#2e4a7d']],
+  ['escuro', 'Escuro', 'Fundo azul-escuro, bom para pouca luz', ['#151c30', '#0d1222', '#1a2238', '#7b95e3']],
+  ['grafite', 'Grafite', 'Escuro neutro, minimalista', ['#19191c', '#111113', '#212125', '#8ab4ff']],
+];
+const CHAVE_TEMA = 'cotacao.tema';
+function temaAtual() {
+  try { return localStorage.getItem(CHAVE_TEMA) || 'auto'; } catch (e) { return 'auto'; }
+}
+function aplicarTema(t) {
+  if (!TEMAS.some(([k]) => k === t)) t = 'auto';
+  try { localStorage.setItem(CHAVE_TEMA, t); } catch (e) { /* sem acesso */ }
+  for (const d of [document, pip.win && !pip.win.closed ? pip.win.document : null].filter(Boolean)) {
+    if (t === 'auto') delete d.documentElement.dataset.theme; else d.documentElement.dataset.theme = t;
+  }
+  document.querySelectorAll('.tema-opcao').forEach(b => b.classList.toggle('ativo', b.dataset.tema === t));
+}
+function htmlTemas() {
+  const atual = temaAtual();
+  return `<div class="temas">${TEMAS.map(([k, nome, desc, [bar, bg, card, pri]]) => `<button type="button" class="tema-opcao${k === atual ? ' ativo' : ''}" data-act="escolherTema" data-tema="${k}" aria-pressed="${k === atual}">
+    <span class="tema-previa" style="--p-bar:${bar};--p-bg:${bg};--p-card:${card};--p-primary:${pri}">${k === 'auto' ? '<span></span><span style="background:linear-gradient(135deg,#f4f6fa 50%,#0d1222 50%)"><i></i><i></i></span>' : '<span></span><span><i></i><i></i></span>'}</span>
+    <span class="tema-nome">${nome}</span><span class="tema-desc">${desc}</span>
+  </button>`).join('')}</div>`;
+}
+function abrirTemas() {
+  abrirDialogo('', [{ txt: 'Fechar', valor: null, cls: 'primary' }]);
+  const dlg = [...document.querySelectorAll('.dlg')].at(-1);
+  dlg.classList.add('dlg-temas');
+  dlg.querySelector('p').outerHTML = `<h3 style="margin:0 0 4px">🎨 Tema</h3><p class="small muted" style="margin:0 0 12px">Vale só para este computador: cada pessoa escolhe o seu.</p>${htmlTemas()}`;
+  // a janela não repassa os cliques para o resto do sistema: escolhe o tema aqui mesmo
+  dlg.addEventListener('click', e => { const b = e.target.closest('.tema-opcao'); if (b) aplicarTema(b.dataset.tema); });
+}
 
 /* ---------------- busca rápida (Ctrl+K) e atalhos (?) ---------------- */
 
