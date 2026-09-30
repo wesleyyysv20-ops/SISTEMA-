@@ -1713,3 +1713,21 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .prod-comp { display: flex; flex-wrap: wrap; align-items: center; gap: 1px 6px; overflow: hidden; }
 .prod-comp > .desc-comp { order: 3; flex-basis: 100%; min-width: 0; }
 .prod-comp > .prod-tags { order: 2; flex: 0 1 auto; max-width: 100%; min-width: 0; }
+
+/* ===== nova cotação ===== */
+.nova-cab { padding-top: 14px; padding-bottom: 12px; }
+.nova-cab-linha { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 14px; }
+.nova-cab-linha h2 { margin: 0 8px 6px 0; white-space: nowrap; }
+.nova-cab-linha label { margin: 0; font-size: 12.5px; }
+.nc-titulo { flex: 1 1 260px; }
+.nc-prazo { flex: 0 1 auto; }
+.nc-obs { margin-top: 8px; }
+.nc-obs > summary { cursor: pointer; font-size: 13px; font-weight: 600; list-style-position: inside; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nc-obs[open] .nc-obs-resumo { display: none; }
+.nc-obs textarea { margin-top: 6px; min-height: 52px; }
+.forn-atalhos { display: flex; flex-wrap: wrap; gap: 6px; }
+.barra-criar { position: sticky; bottom: 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 12px -4px 0; padding: 10px 14px; border-radius: 14px 14px 0 0; background: var(--card); border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -6px 18px rgba(10, 18, 40, .10); }
+.barra-criar-resumo { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 13.5px; }
+.barra-criar-alerta { padding: 2px 10px; border-radius: 999px; font-weight: 700; color: var(--warn); background: var(--warn-bg); cursor: help; }
+.barra-criar-ok { color: var(--ok); font-weight: 700; }
+.barra-criar-acoes { display: flex; gap: 8px; align-items: center; }

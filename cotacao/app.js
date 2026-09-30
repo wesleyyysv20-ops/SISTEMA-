@@ -1436,8 +1436,90 @@ function statusBadge(s) {
 /* ---------------- regras de negócio ---------------- */
 
 function rascunho() {
-  if (!db.rascunho) db.rascunho = { titulo: '', prazoResposta: '', obs: '', itens: [], fornecedorIds: [] };
+  if (!db.rascunho) db.rascunho = novoRascunho();
   return db.rascunho;
+}
+
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+/** Última cotação criada (para repetir observações, horário do prazo e fornecedores). */
+function ultimaCotacao() {
+  return [...db.cotacoes].filter(c => c.status !== 'cancelada')
+    .sort((a, b) => (b.criadoEm || b.data || '').localeCompare(a.criadoEm || a.data || ''))[0] || null;
+}
+
+/** Nova cotação já vem com título do dia, prazo no próximo dia útil e as observações da última. */
+function novoRascunho() {
+  const hoje = new Date();
+  const d = new Date(hoje);
+  do d.setDate(d.getDate() + 1); while (d.getDay() === 0 || d.getDay() === 6);
+  const ult = ultimaCotacao();
+  return {
+    titulo: `COTAÇÃO ${hoje.getDate()} DE ${MESES[hoje.getMonth()].toUpperCase()}`,
+    prazoResposta: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    prazoHora: ult?.prazoHora || '09:00',
+    obs: ult?.obs || '',
+    itens: [],
+    fornecedorIds: [],
+  };
+}
+
+/** Fornecedores da última cotação que ainda estão no cadastro ("os de sempre"). */
+function fornecedoresDeSempre() {
+  const ult = ultimaCotacao();
+  const cad = new Set(db.fornecedores.map(f => f.id));
+  return ult ? ult.fornecedores.map(f => f.fornecedorId).filter(id => cad.has(id)) : [];
+}
+
+/** O que conferir antes de criar a cotação (vai para os fornecedores: melhor pegar antes). */
+function checklistNova(r = rascunho()) {
+  const prod = prodPorId();
+  const itens = r.itens.filter(x => prod[x.produtoId]);
+  const itensLista = xs => xs.slice(0, 6).join(', ') + (xs.length > 6 ? ` e mais ${xs.length - 6}` : '');
+  const cod = x => x.codigoArquivo || prod[x.produtoId].codigo;
+  const res = [];
+  const semMarca = itens.filter(x => !(x.marca || prod[x.produtoId].marca));
+  if (semMarca.length) res.push({ tipo: 'marca', txt: `${semMarca.length} item(ns) sem marca pedida: ${itensLista(semMarca.map(cod))}` });
+  const vistos = new Map();
+  for (const x of itens) { const k = normCod(cod(x)); vistos.set(k, (vistos.get(k) || 0) + 1); }
+  const rep = [...vistos].filter(([, n]) => n > 1);
+  if (rep.length) res.push({ tipo: 'repetido', txt: `${rep.length} código(s) repetido(s) na lista: ${itensLista(itens.filter((x, k, a) => vistos.get(normCod(cod(x))) > 1 && a.findIndex(y => normCod(cod(y)) === normCod(cod(x))) === k).map(cod))}` });
+  const abertas = db.cotacoes.filter(c => c.status === 'aberta' && !c.arquivada);
+  const emAberta = [];
+  for (const x of itens) {
+    const c = abertas.find(cc => cc.itens.some(it => it.produtoId === x.produtoId));
+    if (c) emAberta.push(`${cod(x)} (nº ${c.numero})`);
+  }
+  if (emAberta.length) res.push({ tipo: 'aberta', txt: `${emAberta.length} item(ns) já estão numa cotação aberta: ${itensLista(emAberta)}` });
+  if (!r.prazoResposta) res.push({ tipo: 'prazo', txt: 'Sem prazo de resposta' });
+  else if (new Date(`${r.prazoResposta}T${r.prazoHora || '23:59'}`) < new Date()) res.push({ tipo: 'prazo', txt: `O prazo (${fmtData(r.prazoResposta)}${r.prazoHora ? ' ' + r.prazoHora : ''}) já passou` });
+  const forn = byId(db.fornecedores);
+  const semEmail = r.fornecedorIds.map(id => forn[id]).filter(f => f && !f.email);
+  if (semEmail.length) res.push({ tipo: 'email', txt: `${semEmail.length} fornecedor(es) sem e-mail: ${itensLista(semEmail.map(f => f.nome))}` });
+  return res;
+}
+
+/** Faixa fixa no rodapé da Nova cotação: resumo e o botão de criar. */
+function htmlBarraCriar(r = rascunho()) {
+  const prod = prodPorId();
+  const n = r.itens.filter(x => prod[x.produtoId]).length;
+  const nf = r.fornecedorIds.length;
+  const ck = n ? checklistNova(r) : [];
+  const prazo = r.prazoResposta ? `${fmtData(r.prazoResposta).slice(0, 5)}${r.prazoHora ? ' ' + r.prazoHora : ''}` : 'sem prazo';
+  return `<div class="barra-criar-resumo">
+      <span title="Itens na cotação">📦 <b>${n}</b> ${n === 1 ? 'item' : 'itens'}</span>
+      <span title="Fornecedores que vão receber">🏪 <b>${nf}</b> fornecedor(es)</span>
+      <span title="Responder até">⏰ ${esc(prazo)}</span>
+      ${ck.length ? `<span class="barra-criar-alerta" title="${esc(ck.map(x => '• ' + x.txt).join('\n'))}">⚠ ${ck.length} ponto(s) a conferir</span>` : n ? '<span class="barra-criar-ok">✓ tudo certo</span>' : ''}
+    </div>
+    <div class="barra-criar-acoes">
+      <button type="button" class="sm" data-act="limparRascunho">Limpar tudo</button>
+      <button type="button" class="primary" data-act="criarCotacao" title="Cria a cotação e salva a planilha em Excel" ${n ? '' : 'disabled'}>Criar cotação e salvar planilha →</button>
+    </div>`;
+}
+function atualizarBarraCriar() {
+  const b = document.getElementById('barraCriar');
+  if (b) b.innerHTML = htmlBarraCriar();
 }
 
 function novoFornCot(f) {
@@ -3925,6 +4007,7 @@ function linhaItemNova(ctx, x, i) {
 function atualizarLinhaItem(i) {
   const tr = document.querySelector(`#tabItens [data-item-linha="${i}"]`);
   const x = rascunho().itens[i];
+  atualizarBarraCriar(); // "pontos a conferir" (item sem marca) acompanha
   if (!tr || !x) return render();
   const ctx = contextoNova();
   const tpl = document.createElement('template');
@@ -3960,13 +4043,16 @@ function renderNova() {
     : '<p class="muted">Nenhum fornecedor cadastrado ainda.</p>';
 
   return `
-  <section class="card">
-    <h2>Nova cotação</h2>
-    <div class="grid">
-      <label>Título / referência (opcional)<input data-draft="titulo" value="${esc(r.titulo)}" placeholder="Ex.: Reposição mensal"></label>
-      <label>Responder até<span class="prazo-campos"><input type="date" data-draft="prazoResposta" value="${esc(r.prazoResposta)}"><input type="time" data-draft="prazoHora" value="${esc(r.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></span></label>
+  <section class="card nova-cab">
+    <div class="nova-cab-linha">
+      <h2>Nova cotação</h2>
+      <label class="nc-titulo">Título<input data-draft="titulo" value="${esc(r.titulo)}" placeholder="Ex.: COTAÇÃO 30 DE SETEMBRO"></label>
+      <label class="nc-prazo">Responder até<span class="prazo-campos"><input type="date" data-draft="prazoResposta" value="${esc(r.prazoResposta)}"><input type="time" data-draft="prazoHora" value="${esc(r.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></span></label>
     </div>
-    <label>Observações para o fornecedor (vai na planilha)<textarea data-draft="obs" placeholder="Ex.: Entrega na loja, informar prazo e forma de pagamento.">${esc(r.obs)}</textarea></label>
+    <details class="nc-obs"${r.obs ? '' : ' open'}>
+      <summary>📝 Observações para o fornecedor <span class="small muted nc-obs-resumo">${r.obs ? '· ' + esc(r.obs.replace(/\s+/g, ' ').slice(0, 90)) + (r.obs.length > 90 ? '…' : '') : '(vai na planilha)'}</span></summary>
+      <textarea data-draft="obs" rows="2" placeholder="Ex.: Entrega na loja, informar prazo e forma de pagamento.">${esc(r.obs)}</textarea>
+    </details>
   </section>
 
   <section class="card">
@@ -3986,7 +4072,10 @@ function renderNova() {
   </section>
 
   <section class="card">
-    <h3>2. Fornecedores que vão receber (${r.fornecedorIds.length})</h3>
+    <div class="row-between">
+      <h3>2. Fornecedores que vão receber (${r.fornecedorIds.length})</h3>
+      ${db.fornecedores.length ? `<div class="forn-atalhos">${fornecedoresDeSempre().length ? `<button type="button" class="sm primary" data-act="fornDeSempre" title="Os mesmos fornecedores da última cotação">⭐ Os de sempre (${fornecedoresDeSempre().length})</button>` : ''}<button type="button" class="sm" data-act="fornTodos">Todos</button><button type="button" class="sm" data-act="fornNenhum">Nenhum</button></div>` : ''}
+    </div>
     <p class="small muted" style="margin:-6px 0 10px">Opcional. Você pode criar a cotação sem fornecedor e enviar a planilha para quem quiser; ao importar a resposta, o fornecedor é identificado pelo nome escrito na planilha.</p>
     ${fornList}
     <details>
@@ -4000,10 +4089,7 @@ function renderNova() {
     </details>
   </section>
 
-  <div class="actions">
-    <button data-act="limparRascunho">Limpar tudo</button>
-    <button class="primary" data-act="criarCotacao" title="Cria a cotação e salva a planilha em Excel">Criar cotação e salvar planilha →</button>
-  </div>
+  <div class="barra-criar" id="barraCriar">${htmlBarraCriar(r)}</div>
   ${renderDataCar()}`;
 }
 
@@ -6946,6 +7032,22 @@ const acoes = {
   },
   cadastrarDaBusca: () => cadastrarEIncluir(codigoParaCadastrar(ui.filtroItens)),
 
+  fornDeSempre: () => {
+    const r = rascunho();
+    r.fornecedorIds = [...new Set([...r.fornecedorIds, ...fornecedoresDeSempre()])];
+    salvar();
+    render();
+  },
+  fornTodos: () => {
+    rascunho().fornecedorIds = db.fornecedores.map(f => f.id);
+    salvar();
+    render();
+  },
+  fornNenhum: () => {
+    rascunho().fornecedorIds = [];
+    salvar();
+    render();
+  },
   limparRascunho: async () => {
     if (!(await confirmar('Limpar todos os itens e fornecedores desta nova cotação?'))) return;
     db.rascunho = null;
@@ -6961,6 +7063,8 @@ const acoes = {
     ordenarItensRascunho({ itens }, prod);
     if (!itens.length) return avisar('Adicione pelo menos um item.');
     const fornecedores = r.fornecedorIds.map(id => forn[id]).filter(Boolean);
+    const ck = checklistNova(r);
+    if (ck.length && !(await confirmar(`Antes de criar, confira:\n\n${ck.map(x => '⚠ ' + x.txt).join('\n')}\n\nCriar a cotação mesmo assim?`, 'Criar mesmo assim'))) return;
 
     const cfg = db.config;
     const numero = String(cfg.proxNumero).padStart(4, '0');
@@ -8056,6 +8160,7 @@ document.addEventListener('input', e => {
   if (t.dataset.draft) {
     rascunho()[t.dataset.draft] = t.value;
     salvar();
+    atualizarBarraCriar();
   } else if (t.dataset.qtd != null) {
     rascunho().itens[+t.dataset.qtd].quantidade = parseNum(t.value);
     salvar();
@@ -9114,6 +9219,7 @@ async function aoMudarCampo(e) {
     atualizarLinhaItem(+t.dataset.marcaItem); // a marca não muda a ordem da lista
     const av = document.getElementById('avisoNovosCad');
     if (av) av.innerHTML = htmlAvisoNovosCad();
+    atualizarBarraCriar();
   } else if (t.id === 'dcColCod' || t.id === 'dcCol') {
     if (t.id === 'dcColCod') ui.datacar.colCod = +t.value; else ui.datacar.col = +t.value;
     casarLinhasDataCar();
