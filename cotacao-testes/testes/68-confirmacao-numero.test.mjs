@@ -60,3 +60,24 @@ test('número da cotação não repete; a repetida (mais nova) pode trocar de n�
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('caixinha "Confirmou" marca com um clique só, mesmo com a tela sendo redesenhada no meio do clique', async () => {
+  const s = await abrir(dados());
+  const { page } = s;
+  await page.click('nav [data-route=cotacoes]');
+  await page.click('[data-route=cotacao][data-id=c1]');
+  await page.evaluate(() => { localStorage.setItem('cotacao.fornAberto', '1'); render(); });
+  // um colega muda algo enquanto o cursor está num campo: a tela redesenha quando o cursor sair dele
+  await page.focus('[data-change=prazoCot]');
+  await page.evaluate(() => { db.cotacoes[0].titulo = 'MUDOU'; renderSeguro(['cotacoes/c1']); });
+  await page.click('[data-confirmar-forn="1"]');
+  await page.waitForTimeout(400);
+  assert.ok(await page.evaluate(() => db.cotacoes[0].fornecedores[1].confirmadoEm), 'marcou com 1 clique');
+  assert.equal(await page.isChecked('[data-confirmar-forn="1"]'), true);
+  // clique de novo desmarca (também com um clique)
+  await page.click('[data-confirmar-forn="1"]');
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => db.cotacoes[0].fornecedores[1].confirmadoEm), null);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

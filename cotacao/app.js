@@ -546,6 +546,11 @@ document.addEventListener('drop', async e => {
 });
 
 let ponteiroApertado = false;
+/** Roda fn depois que o mouse for solto (redesenhar no meio de um clique faz o clique se perder). */
+function quandoSoltar(fn) {
+  if (!ponteiroApertado && Date.now() - ultimoClique > 250) { setTimeout(fn, 0); return; }
+  setTimeout(() => quandoSoltar(fn), 120);
+}
 let ultimoClique = 0;
 document.addEventListener('pointerdown', () => { ponteiroApertado = true; ultimoClique = Date.now(); }, true);
 document.addEventListener('pointerup', () => { ponteiroApertado = false; ultimoClique = Date.now(); }, true);
@@ -608,7 +613,7 @@ function renderSeguro(caminhos = null) {
     return;
   }
   if (ativo && ativo.matches?.('input, textarea, select') && !ativo.closest('#telaLogin') && $('#app')?.contains(ativo)) {
-    ativo.addEventListener('blur', () => setTimeout(() => (document.hasFocus() ? render() : renderSeguro()), 0), { once: true });
+    ativo.addEventListener('blur', () => quandoSoltar(() => (document.hasFocus() ? render() : renderSeguro())), { once: true });
   } else if (!document.querySelector('.dlg-fundo')) render();
 }
 
@@ -8692,12 +8697,17 @@ document.addEventListener('keydown', e => {
  */
 let botaoApertado = null;
 function seletorDoBotao(b) {
-  return 'button' + Object.entries(b.dataset).filter(([k]) => k !== 'vigiado')
-    .map(([k, v]) => `[data-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}="${CSS.escape(v)}"]`).join('');
+  const attrs = Object.entries(b.dataset).filter(([k]) => k !== 'vigiado');
+  if (!attrs.length) return null; // sem como achar o substituto
+  return b.tagName.toLowerCase() + (b.type === 'checkbox' || b.type === 'radio' ? `[type="${b.type}"]` : '')
+    + attrs.map(([k, v]) => `[data-${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}="${CSS.escape(v)}"]`).join('');
 }
+/** Botão, caixinha de marcar (ou a etiqueta em volta dela) apertados: se forem trocados no meio do clique, o clique vai para o novo. */
 document.addEventListener('pointerdown', e => {
-  const b = e.button === 0 ? e.target.closest?.('button[data-act]') : null;
-  botaoApertado = b ? { b, sel: seletorDoBotao(b) } : null;
+  let b = e.button === 0 ? e.target.closest?.('button[data-act], input[type=checkbox], input[type=radio]') : null;
+  if (!b && e.button === 0) b = e.target.closest?.('label')?.querySelector('input[type=checkbox], input[type=radio]') || null;
+  const sel = b && seletorDoBotao(b);
+  botaoApertado = sel ? { b, sel } : null;
 }, true);
 document.addEventListener('pointerup', e => {
   const a = botaoApertado;
@@ -8705,7 +8715,7 @@ document.addEventListener('pointerup', e => {
   if (!a || a.b.isConnected) return; // o clique normal acontece
   const novo = document.querySelector(a.sel);
   const sob = document.elementFromPoint(e.clientX, e.clientY);
-  if (novo && sob && novo.contains(sob)) setTimeout(() => novo.click(), 0);
+  if (novo && sob && (novo.contains(sob) || sob.closest('label')?.contains(novo))) setTimeout(() => novo.click(), 0);
 }, true);
 
 document.addEventListener('click', e => {
