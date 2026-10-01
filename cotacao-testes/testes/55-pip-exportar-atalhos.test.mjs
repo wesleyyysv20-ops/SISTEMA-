@@ -50,7 +50,7 @@ test('janela flutuante: fornecedor completo → exportar o pedido sem sair da ja
   if (await j.locator('.dlg button.primary').count()) await j.locator('.dlg button.primary').click();
   await page.waitForFunction(() => db.cotacoes[0].fornecedores[0].concluidoEm);
   assert.ok(await page.evaluate(() => window.__pipSalvou) >= 1, '"Salvar como" aberto pela janela flutuante');
-  await j.locator('text=pedido já exportado').waitFor();
+  await j.locator('text=✓ pedido exportado').waitFor();
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

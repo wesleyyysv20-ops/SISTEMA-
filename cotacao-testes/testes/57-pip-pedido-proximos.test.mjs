@@ -27,8 +27,8 @@ test('janela flutuante: pedido do fornecedor no topo e os próximos itens clicá
   await page.click('[data-act=abrirPip]');
   const j = page.frameLocator('#janelaTeste');
   await j.locator('#pip .pip-cod').waitFor();
-  // sem fornecedor escolhido: sem quadro de pedido
-  assert.equal(await j.locator('.pip-pedido').count(), 0);
+  // sem fornecedor escolhido: total da cotação
+  assert.match(await j.locator('.pip-pedido').innerText(), /Total da cotação/);
   // próximos: B (já tem quantidade), C, D
   assert.deepEqual(await j.locator('.pip-prox').allInnerTexts(), ['COD-B', 'COD-C', 'COD-D']);
   assert.match(await j.locator('.pip-prox').first().getAttribute('class'), /feito/);
@@ -39,6 +39,9 @@ test('janela flutuante: pedido do fornecedor no topo e os próximos itens clicá
   await j.locator('input[data-qtd-loja=paranoa]').focus();
   await page.keyboard.type('9');
   assert.match(n(await j.locator('.pip-pedido').innerText()), /R\$ 110,00\s*2 itens/);
+  // valor de cada loja no pedido e valor do item embaixo da quantidade
+  assert.match(n(await j.locator('.pip-ped-lojas').innerText()), /DPR\s*R\$ 110,00\s*2 itens[\s\S]*DSS\s*R\$ 0,00\s*0 itens/);
+  assert.equal(await j.locator('[data-sub-loja=paranoa]').innerText(), 'R$ 90,00');
   assert.doesNotMatch(await j.locator('.pip-pedido').innerText(), /mínimo/);
 
   // "só os que faltam": os próximos pulam os que já têm quantidade

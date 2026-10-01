@@ -9569,7 +9569,7 @@ function avisoConcluidoPip(c, lista) {
   const fi = valor && valor !== '__sem' ? c.fornecedores.findIndex(f => f.fornecedorId === valor) : -1;
   if (!falta) {
     const f = c.fornecedores[fi];
-    const exp = !f ? '' : f.concluidoEm ? '<br><span class="small">✓ pedido já exportado</span>'
+    const exp = !f ? '' : f.concluidoEm ? ' <span class="pip-exportado">· ✓ pedido exportado</span>'
       : `<br><button type="button" class="sm primary pip-exportar" data-pip="exportar" data-f="${fi}" title="Exportar o pedido de ${esc(f.nome)} (com o checklist) sem sair desta janela">⬇ Exportar pedido de ${esc(f.nome)}</button>`;
     return `<div class="pip-concluido" role="status">✓ Todos os itens ${fi >= 0 ? `de <b>${esc(de)}</b>` : esc(de)} já têm a quantidade informada.${exp}</div>`;
   }
@@ -9618,20 +9618,42 @@ function htmlProximosPip(c, lista) {
 }
 
 /** Pedido do fornecedor escolhido na janela: valor, itens e o pedido mínimo do cadastro. */
+/**
+ * Quadro do pedido na janela flutuante: total (do fornecedor escolhido, ou da cotação inteira)
+ * e o valor de cada loja — a mesma conta do pedido exportado (itens em Dúvidas ficam fora).
+ */
 function htmlPedidoPip(c) {
   const valor = filtroVencedor(c);
-  if (!valor || valor === '__sem') return '';
-  const fi = c.fornecedores.findIndex(f => f.fornecedorId === valor);
-  if (fi < 0) return '';
-  const f = c.fornecedores[fi];
-  const ped = pedidosPorFornecedor(c).find(x => x.fi === fi);
-  const total = ped?.total || 0;
-  const n = ped?.itens.length || 0;
-  const min = Number(db.fornecedores.find(x => x.id === f.fornecedorId)?.pedidoMinimo) || 0;
-  const falta = min && total < min ? min - total : 0;
-  return `<div class="pip-pedido${falta ? ' abaixo' : ''}" title="Pedido de ${esc(f.nome)} até agora (itens com quantidade, sem os que estão em Dúvidas)${min ? ` · pedido mínimo ${fmtMoeda(min)}` : ''}">
-    <span class="pip-ped-nome">🧾 ${esc(f.nome)}</span><b class="pip-ped-total">${fmtMoeda(total)}</b><span class="pip-ped-itens">${n} ${n === 1 ? 'item' : 'itens'}</span>${falta ? `<span class="pip-ped-min">faltam ${fmtMoeda(falta)} p/ o mínimo</span>` : ''}
+  if (valor === '__sem') return '';
+  const LJ = lojas();
+  const porLoja = temQtdLojas(c) && LJ.length > 1;
+  const fi = valor ? c.fornecedores.findIndex(f => f.fornecedorId === valor) : -1;
+  if (valor && fi < 0) return '';
+  const somar = lojaId => {
+    const ps = pedidosPorFornecedor(c, lojaId).filter(p => fi < 0 || p.fi === fi);
+    return { total: ps.reduce((t, p) => t + p.total, 0), itens: ps.reduce((t, p) => t + p.itens.length, 0) };
+  };
+  const tudo = somar(null);
+  if (fi < 0 && !tudo.itens) return '';
+  const f = fi >= 0 ? c.fornecedores[fi] : null;
+  const min = f ? Number(db.fornecedores.find(x => x.id === f.fornecedorId)?.pedidoMinimo) || 0 : 0;
+  const falta = min && tudo.total < min ? min - tudo.total : 0;
+  const lojasHtml = porLoja ? LJ.map(lj => {
+    const r = somar(lj.id);
+    return `<span class="pip-ped-loja${r.itens ? '' : ' vazia'}" title="${esc(lj.nome)}: ${r.itens} item(ns) · ${fmtMoeda(r.total)}"><b>${esc(siglaLoja(lj))}</b> ${fmtMoeda(r.total)} <small>${r.itens} ${r.itens === 1 ? 'item' : 'itens'}</small></span>`;
+  }).join('') : '';
+  return `<div class="pip-pedido${falta ? ' abaixo' : ''}${f ? '' : ' geral'}" title="${f ? `Pedido de ${esc(f.nome)}` : 'Total da cotação'} até agora (itens com quantidade, sem os que estão em Dúvidas)${min ? ` · pedido mínimo ${fmtMoeda(min)}` : ''}">
+    <span class="pip-ped-nome">🧾 ${f ? esc(f.nome) : 'Total da cotação'}</span><b class="pip-ped-total">${fmtMoeda(tudo.total)}</b><span class="pip-ped-itens">${tudo.itens} ${tudo.itens === 1 ? 'item' : 'itens'}</span>${falta ? `<span class="pip-ped-min">faltam ${fmtMoeda(falta)} p/ o mínimo</span>` : ''}
+    ${lojasHtml ? `<span class="pip-ped-lojas">${lojasHtml}</span>` : ''}
   </div>`;
+}
+
+/** Valor do item em cada loja (preço × quantidade), embaixo do campo da quantidade. */
+function subLojaPip(c, l, lj) {
+  const q = qtdLoja(c, l.i, lj.id);
+  if (l.preco == null || !q) return '';
+  if (l.duvida?.has(lj.id)) return '<span class="pip-sub-duv">em dúvida</span>';
+  return fmtMoeda(l.preco * q);
 }
 
 function irPip(delta) {
@@ -9818,7 +9840,7 @@ function desenharPip(focar) {
       <div class="pip-col-qtd">
         <div class="pip-qtds">${LJ.map(lj => {
           const v = c.qtds?.[l.i]?.[lj.id];
-          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span class="pip-loja-nome">${esc(lj.nome)}</span><span class="pip-loja-sigla">${esc(siglaLoja(lj))}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder="0"></label>`;
+          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span class="pip-loja-nome">${esc(lj.nome)}</span><span class="pip-loja-sigla">${esc(siglaLoja(lj))}</span><span class="pip-campo-qtd"><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder="0"><small class="pip-sub" data-sub-loja="${esc(lj.id)}">${subLojaPip(c, l, lj)}</small></span></label>`;
         }).join('')}<div id="pipEstoque">${estoquePip(c, l)}</div></div>
         <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
       </div>
@@ -9857,6 +9879,7 @@ function espelharQtd(t, c, i) {
       if (tot) tot.innerHTML = celTotal(lin);
       const est = pd.getElementById('pipEstoque');
       if (est) est.innerHTML = estoquePip(c, lin);
+      for (const lj of lojas()) { const sub = pd.querySelector(`[data-sub-loja="${CSS.escape(lj.id)}"]`); if (sub) sub.innerHTML = subLojaPip(c, lin, lj); }
       const [estado, rot] = estadoPip(c, lin);
       const cartao = pd.getElementById('pipItem');
       if (cartao) cartao.className = `pip-item estado-${estado}`;
