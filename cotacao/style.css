@@ -1937,3 +1937,12 @@ a.stat-link:hover { border-color: var(--primary-2); transform: translateY(-1px);
 .pct-barra { display: inline-flex; align-items: center; gap: 6px; }
 .pct-barra .barra { display: inline-block; width: 60px; margin: 0; }
 .atalhos-rel { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+
+/* ===== Configurações em abas ===== */
+.abas-cfg { position: sticky; top: var(--altura-topo, 0px); z-index: 20; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; padding: 8px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(10, 18, 40, .05); }
+.aba-cfg { padding: 6px 12px; border-radius: 10px; font-size: 13.5px; font-weight: 600; background: transparent; border: 1px solid transparent; color: var(--muted); box-shadow: none; min-height: 0; height: auto; }
+.aba-cfg:hover { color: var(--text); background: var(--hover); }
+.aba-cfg.ativa { color: var(--primary); background: var(--blue-bg); border-color: color-mix(in srgb, var(--primary-2) 30%, var(--line)); }
+[data-aba-cfg][hidden], .barra-salvar-cfg[hidden] { display: none !important; }
+.form-cfg { margin: 0; }
+.barra-salvar-cfg { position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 10px 14px; border-radius: 14px 14px 0 0; background: var(--card); border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -6px 18px rgba(10, 18, 40, .08); }

@@ -31,7 +31,7 @@ test('Supabase: login, dados salvos na nuvem e sessão lembrada', async () => {
   assert.equal(await page.locator('#telaLogin:not([hidden])').count(), 0, 'sessão lembrada');
   assert.equal(await page.evaluate(() => db.produtos[0]?.codigo), 'GB48167');
   // conta em Configurações e sair
-  await page.evaluate(() => ir('config'));
+  await page.evaluate(() => { ui.abaConfig = 'conta'; ir('config'); });
   assert.match(await page.locator('#app').innerText(), /Conectado como wes@loja\.com/);
   await page.click('[data-act=sairSupabase]');
   await page.waitForSelector('#telaLogin:not([hidden]) form');

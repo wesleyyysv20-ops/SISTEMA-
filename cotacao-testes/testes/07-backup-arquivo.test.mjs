@@ -18,6 +18,7 @@ test('lembrete de backup: aparece, adia e some depois do backup', async () => {
   await page.click('[data-act=adiarBackup]');
   assert.equal(await page.locator('.aviso-backup').count(), 0);
   await page.click('nav [data-route=config]');
+  await page.click('[data-act=abaConfig][data-aba=backup]');
   const arq = await salvarDepois(s, () => page.click('[data-act=backup]'));
   assert.match(arq.nome, /^backup_cotacoes_\d{4}-\d{2}-\d{2}\.json$/);
   const copia = JSON.parse(arq.buffer.toString('utf8'));

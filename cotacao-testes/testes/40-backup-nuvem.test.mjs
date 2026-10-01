@@ -19,7 +19,7 @@ test('backup no Supabase: administrador faz cópia, baixa e restaura (guardando 
   await page.waitForFunction(() => nuvem.admin === true);
   // sem lembrete de backup em arquivo: no Supabase é automático
   assert.equal(await page.locator('.aviso-backup').count(), 0);
-  await page.evaluate(() => ir('config'));
+  await page.evaluate(() => { ui.abaConfig = 'backup'; ir('config'); });
   await page.waitForSelector('[data-act=backupNuvemAgora]');
   assert.match(n(await page.locator('#app').innerText()), /Cópias automáticas[\s\S]*duas vezes por dia[\s\S]*Nenhuma cópia ainda/);
 
@@ -61,7 +61,7 @@ test('backup no Supabase: quem não é administrador só vê o aviso', async () 
   await entrar(page, 'wes@loja.com', '123456');
   await page.waitForSelector('#telaLogin', { state: 'hidden' });
   await esperarSalvo(page);
-  await page.evaluate(() => ir('config'));
+  await page.evaluate(() => { ui.abaConfig = 'backup'; ir('config'); });
   assert.match(n(await page.locator('#app').innerText()), /Cópias automáticas[\s\S]*Um administrador pode baixar ou restaurar/);
   assert.equal(await page.locator('[data-act=backupNuvemAgora]').count(), 0);
   assert.deepEqual(erros, []);

@@ -16,7 +16,7 @@ test('usuários: administrador cadastra, troca a senha e tira o acesso; a pessoa
   const { page, context, erros } = await abrirSite(sb);
   await logado(page, 'wes@loja.com', '123456');
   await page.waitForFunction(() => nuvem.admin === true);
-  await page.evaluate(() => ir('config'));
+  await page.evaluate(() => { ui.abaConfig = 'conta'; ir('config'); });
   await page.waitForSelector('#cardConta table');
   assert.match(n(await page.locator('#cardConta').innerText()), /administrador[\s\S]*Vários computadores podem usar o sistema ao mesmo tempo/);
 
@@ -50,7 +50,7 @@ test('usuários: administrador cadastra, troca a senha e tira o acesso; a pessoa
   // a Maria entra (outro computador) com a senha nova e não vê a lista de usuários
   const b = await abrirSite(sb);
   await logado(b.page, 'maria@loja.com', 'nova4567');
-  await b.page.evaluate(() => ir('config'));
+  await b.page.evaluate(() => { ui.abaConfig = 'conta'; ir('config'); });
   await b.page.waitForTimeout(300);
   assert.equal(await b.page.evaluate(() => nuvem.admin), false);
   assert.equal(await b.page.locator('[data-form=usuario]').count(), 0);
@@ -81,7 +81,7 @@ test('usuários: quem não é administrador não vê o cadastro; outro computado
   const sb = supabaseFalso({ docs: new Map([['sistema/config', { loja: 'DISPPAR' }]]) });
   const { page, context, erros } = await abrirSite(sb);
   await logado(page, 'wes@loja.com', '123456');
-  await page.evaluate(() => ir('config'));
+  await page.evaluate(() => { ui.abaConfig = 'conta'; ir('config'); });
   assert.match(n(await page.locator('#cardConta').innerText()), /Trocar a minha senha/);
   assert.equal(await page.locator('[data-form=usuario]').count(), 0);
   // outro computador grava; este puxa (o aviso em tempo real chama o mesmo puxarNuvem)

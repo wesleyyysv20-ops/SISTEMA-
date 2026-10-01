@@ -576,6 +576,8 @@ function renderSeguro(caminhos = null) {
       return;
     }
   }
+  // editando as configurações sem salvar: não redesenha (apagaria o que foi digitado)
+  if (ui.cfgSujo && rota().nome === 'config' && document.querySelector('.form-cfg')) return;
   // a pessoa está clicando, com uma lista suspensa aberta ou com uma janela aberta: redesenha depois
   // (senão o que ela acabou de abrir pisca e fecha sozinho)
   if (ocupadoNaTela()) {
@@ -7116,18 +7118,31 @@ function renderMarcasCfg() {
   </section>`;
 }
 
+/** Abas das Configurações (uma de cada vez, em vez de uma página enorme). */
+const ABAS_CONFIG = [
+  ['aparencia', '🎨 Aparência'], ['loja', '🏪 Loja e planilha'], ['emails', '✉️ E-mails'], ['marcas', '🏷️ Marcas'], ['conta', '👥 Conta e usuários'], ['backup', '💾 Backup'],
+];
+function abaConfig() {
+  if (ui.abaConfig == null) { try { ui.abaConfig = localStorage.getItem('cotacao.abaConfig') || ''; } catch (e) { ui.abaConfig = ''; } }
+  const a = ui.abaConfig;
+  return ABAS_CONFIG.some(([k]) => k === a) ? a : 'aparencia';
+}
+
 function renderConfig() {
   const c = db.config;
+  const aba = abaConfig();
+  const ver = k => (aba === k ? '' : ' hidden');
   return `
-  <section class="card">
+  <nav class="abas-cfg" role="tablist" aria-label="Configurações">${ABAS_CONFIG.map(([k, rot]) => `<button type="button" role="tab" class="aba-cfg${aba === k ? ' ativa' : ''}" data-act="abaConfig" data-aba="${k}" aria-selected="${aba === k}">${rot}</button>`).join('')}</nav>
+  <section class="card" data-aba-cfg="aparencia"${ver('aparencia')}>
     <h2>Aparência</h2>
     <p class="muted small" style="margin-top:0">Escolha o tema deste computador (cada pessoa escolhe o seu). Também dá para trocar pelo botão 🎨 no topo.</p>
     ${htmlTemas()}
   </section>
-  <section class="card">
+  <form data-form="config" class="form-cfg">
+  <section class="card" data-aba-cfg="loja"${ver('loja')}>
     <h2>Dados da loja</h2>
     <p class="muted small">Esses dados aparecem no cabeçalho da planilha enviada aos fornecedores e no e-mail.</p>
-    <form data-form="config">
       <div class="grid">
         <label>Nome da loja<input name="loja" value="${esc(c.loja)}"></label>
         <label>CNPJ<input name="cnpj" value="${esc(c.cnpj)}"></label>
@@ -7147,14 +7162,18 @@ function renderConfig() {
         <tbody id="lojasCfg">${lojas().map(linhaLojaCfg).join('')}</tbody>
       </table></div>
       <button type="button" class="sm" data-act="addLojaCfg" style="margin-top:6px">+ Adicionar loja</button>
-      <h3 style="margin-top:16px">Marcas</h3>
+  </section>
+  <section class="card" data-aba-cfg="marcas"${ver('marcas')}>
+      <h2>Marcas</h2>
       <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" name="marcaErradaNaoGanha" ${c.marcaErradaNaoGanha !== false ? 'checked' : ''}>
         Preço com marca diferente da pedida não ganha automaticamente (você ainda pode escolher clicando no preço)</label>
-      <h3 style="margin-top:16px">Modelo do e-mail</h3>
+  </section>
+  <section class="card" data-aba-cfg="emails"${ver('emails')}>
+      <h2>Modelo do e-mail</h2>
       <p class="muted small">Você pode usar: {fornecedor} {numero} {loja} {comprador} {telefone} {email} {prazo} {titulo}</p>
       <label>Assunto<input name="assuntoEmail" value="${esc(c.assuntoEmail)}"></label>
       <label>Texto<textarea name="corpoEmail" rows="9">${esc(c.corpoEmail)}</textarea></label>
-      <h3 style="margin-top:16px">E-mail do pedido de compra</h3>
+      <h3 style="margin-top:18px">E-mail do pedido de compra</h3>
       <p class="muted small">Além dos campos acima: {totalPedido} {itensPedido} {entrega} (lojas e endereços de entrega) {pagamento}</p>
       <label>Assunto do pedido<input name="assuntoPedido" value="${esc(c.assuntoPedido)}"></label>
       <label>Texto do pedido<textarea name="corpoPedido" rows="9">${esc(c.corpoPedido)}</textarea></label>
@@ -7163,12 +7182,12 @@ function renderConfig() {
       <p class="muted small">Com 0, o aviso aparece só no dia do prazo e depois dele. O modelo do lembrete usa os mesmos campos acima.</p>
       <label>Assunto do lembrete<input name="assuntoCobranca" value="${esc(c.assuntoCobranca)}"></label>
       <label>Texto do lembrete<textarea name="corpoCobranca" rows="7">${esc(c.corpoCobranca)}</textarea></label>
-      <div class="actions"><button class="primary">Salvar configurações</button></div>
-    </form>
   </section>
-  ${renderConta()}
-  ${renderMarcasCfg()}
-  <section class="card">
+    <div class="barra-salvar-cfg"${['loja', 'emails', 'marcas'].includes(aba) ? '' : ' hidden'}><span class="small muted">As mudanças das abas Loja, E-mails e Marcas são salvas juntas.</span><button class="primary">Salvar configurações</button></div>
+  </form>
+  <div data-aba-cfg="conta"${ver('conta')}>${renderConta()}</div>
+  <div data-aba-cfg="marcas"${ver('marcas')}>${renderMarcasCfg()}</div>
+  <section class="card" data-aba-cfg="backup"${ver('backup')}>
     <h2>Backup dos dados</h2>
     <p class="muted small">${nuvem.db
       ? `Os dados ficam salvos <b>na nuvem${nuvem.supabase ? ' (Supabase)' : ', junto com esta página'}</b>, e aparecem em qualquer computador em que você ${nuvem.supabase ? 'entrar' : 'abrir o link'}. Mesmo assim, baixe um backup de vez em quando.`
@@ -7232,6 +7251,7 @@ function ir(nome, id = null) {
   navegacao.nome = nome;
   navegacao.id = id;
   ui.digitando = null;
+  ui.cfgSujo = false; // saiu da tela: o que não foi salvo ficou para trás
   ui.enviando = null;
   ui.lote = null;
   ui.conferindo = null;
@@ -8188,6 +8208,17 @@ const acoes = {
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
   analiseForn: el => abrirAnaliseFornecedor(el.dataset.id),
+  abaConfig: el => {
+    // troca de aba sem redesenhar: o que foi digitado e ainda não foi salvo continua nos campos
+    const aba = el.dataset.aba;
+    ui.abaConfig = aba;
+    try { localStorage.setItem('cotacao.abaConfig', aba); } catch (e) { /* sem acesso */ }
+    document.querySelectorAll('[data-aba-cfg]').forEach(x => { x.hidden = x.dataset.abaCfg !== aba; });
+    document.querySelectorAll('.aba-cfg').forEach(b => { const on = b.dataset.aba === aba; b.classList.toggle('ativa', on); b.setAttribute('aria-selected', String(on)); });
+    const barra = document.querySelector('.barra-salvar-cfg');
+    if (barra) barra.hidden = !['loja', 'emails', 'marcas'].includes(aba);
+    window.scrollTo(0, 0);
+  },
   exportarRelatorio: () => exportarRelatorio(),
   irSecaoRel: el => document.getElementById(el.dataset.alvo)?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
   ordemRelForn: el => {
@@ -8521,6 +8552,7 @@ const formularios = {
   },
 
   config: form => {
+    ui.cfgSujo = false;
     const d = formDados(form);
     for (const k of Object.keys(d)) if (k.startsWith('lj_')) delete d[k];
     const novasLojas = [...form.querySelectorAll('.loja-cfg')].map(tr => ({
@@ -8811,6 +8843,7 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.closest?.('.form-cfg')) ui.cfgSujo = true;
   if (t.id === 'filtroItens') {
     ui.filtroItens = t.value;
     aplicarFiltroItens();
