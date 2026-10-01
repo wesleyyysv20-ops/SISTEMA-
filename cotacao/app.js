@@ -6110,7 +6110,7 @@ async function fazerBackup() {
 
 /* ---------------- relatórios ---------------- */
 
-const PERIODOS = [['', 'Todo o período'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['365', 'Últimos 12 meses']];
+const PERIODOS = [['', 'Todo o período'], ['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['365', 'Últimos 12 meses']];
 
 /** Data inicial do período escolhido em Relatórios ('' = todo o período). */
 function inicioPeriodo() {
@@ -6147,7 +6147,7 @@ function dadosRelatorio() {
     }
     c.fornecedores.forEach((f, fi) => {
       const k = f.fornecedorId || f.nome;
-      const x = forn[k] ||= { nome: f.nome, participou: 0, respondeu: 0, cotados: 0, ganhos: 0, valor: 0, difs: [] };
+      const x = forn[k] ||= { id: k, nome: f.nome, participou: 0, respondeu: 0, cotados: 0, ganhos: 0, valor: 0, difs: [] };
       x.participou++;
       if (f.respondidoEm || comp.totais[fi].cotados) x.respondeu++;
       x.cotados += comp.totais[fi].cotados;
@@ -6168,47 +6168,109 @@ function dadosRelatorio() {
 
 const media = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
 
-function renderRelatorios() {
+const COLS_REL_FORN = [
+  ['nome', 'Fornecedor', ''], ['respondeu', 'Respondeu', 'c'], ['cotados', 'Itens cotados', 'r'],
+  ['ganhos', 'Itens ganhos', 'r'], ['pctGanhos', '% ganhos', 'r'], ['valor', 'Valor ganho', 'r'], ['vantagem', 'Vantagem média', 'r'],
+];
+function ordenarRelForn(lista) {
+  const o = ui.ordemRelForn;
+  if (!o) return lista;
+  const val = f => (o.campo === 'pctGanhos' ? (f.cotados ? f.ganhos / f.cotados : -1) : o.campo === 'vantagem' ? (media(f.difs) ?? -1) : f[o.campo]);
+  return [...lista].sort((a, b) => (o.campo === 'nome' ? COLLATOR.compare(a.nome, b.nome) : (val(a) - val(b))) * o.dir || COLLATOR.compare(a.nome, b.nome));
+}
+
+/** Relatório em Excel: resumo, fornecedores, por cotação e a nota dos fornecedores. */
+async function exportarRelatorio() {
   const { res, porCot, fornecedores } = dadosRelatorio();
+  const wb = await novoLivroExcel();
+  const per = PERIODOS.find(([v]) => v === (ui.periodoRel || ''))?.[1] || 'Todo o período';
+  const aba = (nome, cab, linhas, larg) => {
+    const ws = wb.addWorksheet(nome);
+    ws.addRow(cab).font = { bold: true };
+    linhas.forEach(l => ws.addRow(l));
+    ws.columns.forEach((col, i) => { col.width = larg[i] || 14; });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    return ws;
+  };
+  aba('Resumo', ['Indicador', 'Valor'], [
+    ['Período', per], ['Cotações com resposta', res.cotacoes], ['Itens comprados', res.itens], ['Total das compras (R$)', res.total],
+    ['Economia vs média dos preços (R$)', res.media], ['Economia vs preço mais caro (R$)', res.maior], ['Dif. média 1º × 2º', media(res.difs)],
+  ], [36, 20]);
+  aba('Fornecedores', ['Fornecedor', 'Cotações', 'Respondeu', 'Itens cotados', 'Itens ganhos', '% ganhos', 'Valor ganho (R$)', 'Vantagem média'],
+    fornecedores.map(f => [f.nome, f.participou, f.respondeu, f.cotados, f.ganhos, f.cotados ? f.ganhos / f.cotados : null, f.valor, media(f.difs)]), [26, 10, 11, 13, 13, 11, 16, 15]);
+  aba('Por cotação', ['Nº', 'Título', 'Data', 'Status', 'Itens', 'Total comprado (R$)', 'Economia vs média (R$)', 'Economia vs mais caro (R$)'],
+    porCot.map(r => [r.c.numero, r.c.titulo || '', r.c.data, STATUS[r.c.status]?.[0] || r.c.status, r.itens, r.total, r.media, r.maior]), [8, 34, 12, 11, 8, 18, 20, 22]);
+  const notas = desempenhoFornecedores(inicioPeriodo());
+  aba('Nota dos fornecedores', ['Fornecedor', 'Nota', 'Respondeu', 'No prazo', 'Itens cotados', 'Marca errada', 'Notas com divergência', 'Cobrado a mais (R$)'],
+    notas.map(x => [x.nome, x.nota, `${x.respondidas}/${x.recebidas}`, x.comPrazo ? `${x.noPrazo}/${x.comPrazo}` : '', `${x.itensCotados}/${x.itensPedidos}`, x.marcaErrada, x.notas ? `${x.notasDiv}/${x.notas}` : '', x.cobrado]), [26, 8, 11, 10, 13, 13, 20, 18]);
+  // formatos: colunas "(R$)" em dinheiro, "%"/"Vantagem" em porcentagem; no Resumo, pela linha
+  const formato = txt => (/\(R\$\)/.test(txt) ? '#,##0.00' : /%|Vantagem|Dif\. média/.test(txt) ? '0.0%' : null);
+  for (const ws of wb.worksheets) {
+    ws.eachRow((row, i) => {
+      if (i === 1) return;
+      row.eachCell(cell => {
+        if (typeof cell.value !== 'number') return;
+        const f = formato(String(ws.name === 'Resumo' ? row.getCell(1).value : ws.getRow(1).getCell(cell.col).value));
+        if (f) cell.numFmt = f;
+      });
+    });
+  }
+  await baixarWorkbook(wb, `Relatorio_${(per || '').replace(/\s+/g, '_')}_${hojeISO()}.xlsx`);
+}
+
+function renderRelatorios() {
+  const { res, porCot, fornecedores: fornBase } = dadosRelatorio();
+  const fornecedores = ordenarRelForn(fornBase);
   const pct = (v, base) => base > 0 ? fmtPct(v / base) : '—';
+  const top = fornBase[0];
+  const melhorCot = [...porCot].filter(r => r.comparaveis).sort((a, b) => b.media - a.media)[0];
+  const o = ui.ordemRelForn;
   return `
   <section class="card">
     <div class="row-between">
       <h2>Relatórios</h2>
-      <select id="periodoRel" style="width:auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${ui.periodoRel === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <div class="row">
+        <select id="periodoRel" style="width:auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${ui.periodoRel === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        ${res.cotacoes ? '<button type="button" class="sm" data-act="exportarRelatorio" title="Resumo, fornecedores, por cotação e a nota dos fornecedores numa planilha">⬇ Excel</button>' : ''}
+      </div>
     </div>
-    ${res.cotacoes ? `<div class="stats">
+    ${res.cotacoes ? `<div class="stats stats-rel">
       <div class="stat"><span class="muted small">Cotações com resposta</span><b>${res.cotacoes}</b></div>
       <div class="stat"><span class="muted small">Itens comprados</span><b>${res.itens}</b></div>
       <div class="stat"><span class="muted small">Total das compras</span><b>${fmtMoeda(res.total)}</b></div>
       <div class="stat" title="Diferença entre a média dos preços recebidos e o preço escolhido, nos itens com 2 ou mais preços"><span class="muted small">Economia vs média dos preços</span><b class="ok">${fmtMoeda(res.media)}</b><span class="small muted">${pct(res.media, res.total + res.media)} a menos</span></div>
       <div class="stat" title="Diferença entre o preço mais caro recebido e o preço escolhido"><span class="muted small">Economia vs preço mais caro</span><b class="ok">${fmtMoeda(res.maior)}</b><span class="small muted">${pct(res.maior, res.total + res.maior)} a menos</span></div>
       <div class="stat" title="Em média, quanto o 2º melhor preço é mais caro que o melhor"><span class="muted small">Dif. média 1º × 2º</span><b>${fmtPct(media(res.difs))}</b></div>
-    </div>` : '<p class="empty">Ainda não há cotações com preços neste período. Os relatórios aparecem assim que os fornecedores responderem (as cotações canceladas não entram).</p>'}
+    </div>
+    <ul class="destaques-rel">
+      ${top ? `<li>🏆 Quem mais ganhou: <button type="button" class="link" data-act="analiseForn" data-id="${esc(top.id)}"><b>${esc(top.nome)}</b></button> — ${top.ganhos} itens · ${fmtMoeda(top.valor)}</li>` : ''}
+      ${melhorCot ? `<li>💰 Maior economia: <a href="#" data-route="cotacao" data-id="${esc(melhorCot.c.id)}"><b>cotação nº ${esc(melhorCot.c.numero)}</b></a>${melhorCot.c.titulo ? ` (${esc(melhorCot.c.titulo)})` : ''} — ${fmtMoeda(melhorCot.media)} abaixo da média</li>` : ''}
+      <li>🧾 Média por cotação: ${fmtMoeda(res.total / res.cotacoes)} · ${Math.round(res.itens / res.cotacoes)} itens</li>
+    </ul>
+    <nav class="atalhos-rel small"><span class="muted">Ir para:</span><a href="#" data-act="irSecaoRel" data-alvo="relForn">Fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relCot">Por cotação</a><a href="#" data-act="irSecaoRel" data-alvo="notaFornecedores">Nota dos fornecedores</a></nav>` : '<p class="empty">Ainda não há cotações com preços neste período. Os relatórios aparecem assim que os fornecedores responderem (as cotações canceladas não entram).</p>'}
   </section>
-  ${fornecedores.length && res.cotacoes ? `<section class="card">
+  ${fornecedores.length && res.cotacoes ? `<section class="card" id="relForn">
     <h3>Fornecedores</h3>
-    <p class="muted small" style="margin-top:0">Quem ganha mais itens. "Vantagem média" é quanto, em média, o 2º colocado estava mais caro nos itens que o fornecedor ganhou pelo menor preço.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th><th class="c">Cotações</th><th class="c">Respondeu</th><th class="r">Itens cotados</th><th class="r">Itens ganhos</th><th class="r">% ganhos</th><th class="r">Valor ganho</th><th class="r">Vantagem média</th></tr></thead>
+    <p class="muted small" style="margin-top:0">Quem ganha mais itens. "Vantagem média" é quanto, em média, o 2º colocado estava mais caro nos itens que o fornecedor ganhou pelo menor preço. Clique no título de uma coluna para ordenar e no fornecedor para a análise detalhada.</p>
+    <div class="table-wrap"><table class="tab-rel">
+      <thead><tr>${COLS_REL_FORN.map(([k, rot, cls]) => `<th${cls ? ` class="${cls}"` : ''}><button type="button" class="th-ordem${o?.campo === k ? ' ativa' : ''}" data-act="ordemRelForn" data-campo="${k}" title="Ordenar por ${rot.toLowerCase()}">${rot}${o?.campo === k ? (o.dir > 0 ? ' ↑' : ' ↓') : ''}</button></th>`).join('')}</tr></thead>
       <tbody>${fornecedores.map(f => `<tr>
-        <td><b>${esc(f.nome)}</b></td>
-        <td class="c">${f.participou}</td>
-        <td class="c">${f.respondeu}/${f.participou}</td>
+        <td class="nome-rel"><button type="button" class="link nome-forn-analise" data-act="analiseForn" data-id="${esc(f.id)}"><b>${esc(f.nome)}</b></button></td>
+        <td class="c" title="Respondeu ${f.respondeu} das ${f.participou} cotações que recebeu">${f.respondeu}/${f.participou}</td>
         <td class="r">${f.cotados}</td>
         <td class="r">${f.ganhos}</td>
-        <td class="r"><div class="barra"><span style="width:${f.cotados ? Math.round(100 * f.ganhos / f.cotados) : 0}%"></span></div>${pct(f.ganhos, f.cotados)}</td>
+        <td class="r"><span class="pct-barra"><span class="barra"><span style="width:${f.cotados ? Math.round(100 * f.ganhos / f.cotados) : 0}%"></span></span>${pct(f.ganhos, f.cotados)}</span></td>
         <td class="r">${fmtMoeda(f.valor)}</td>
         <td class="r">${fmtPct(media(f.difs))}</td>
       </tr>`).join('')}</tbody>
     </table></div>
   </section>
-  <section class="card">
+  <section class="card" id="relCot">
     <h3>Por cotação</h3>
     <div class="table-wrap"><table>
       <thead><tr><th>Nº</th><th>Data</th><th class="r">Itens</th><th class="r">Total comprado</th><th class="r">Economia vs média</th><th class="r">Economia vs mais caro</th></tr></thead>
       <tbody>${porCot.map(r => `<tr>
-        <td><a href="#" data-route="cotacao" data-id="${r.c.id}"><b>${esc(r.c.numero)}</b></a> ${statusBadge(r.c.status)}</td>
+        <td><a href="#" data-route="cotacao" data-id="${r.c.id}"><b>${esc(r.c.numero)}</b></a> ${statusBadge(r.c.status)}${r.c.titulo ? `<br><span class="small muted">${esc(r.c.titulo)}</span>` : ''}</td>
         <td>${fmtData(r.c.data)}</td>
         <td class="r">${r.itens}</td>
         <td class="r">${fmtMoeda(r.total)}</td>
@@ -8126,6 +8188,17 @@ const acoes = {
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
   analiseForn: el => abrirAnaliseFornecedor(el.dataset.id),
+  exportarRelatorio: () => exportarRelatorio(),
+  irSecaoRel: el => document.getElementById(el.dataset.alvo)?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
+  ordemRelForn: el => {
+    const campo = el.dataset.campo;
+    const o = ui.ordemRelForn;
+    // 1º clique: maior primeiro (nome: A→Z); 2º: inverte; 3º: volta à ordem padrão
+    if (!o || o.campo !== campo) ui.ordemRelForn = { campo, dir: campo === 'nome' ? 1 : -1 };
+    else if (o.dir === (campo === 'nome' ? 1 : -1)) ui.ordemRelForn = { campo, dir: -o.dir };
+    else ui.ordemRelForn = null;
+    render();
+  },
   renumerarCot: async () => {
     const c = cotAtual();
     if (!c) return;
