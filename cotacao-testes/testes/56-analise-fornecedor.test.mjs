@@ -26,7 +26,9 @@ test('clicar no fornecedor da nota abre a análise detalhada', async () => {
   const dlg = page.locator('.dlg-analise-forn');
   await dlg.waitFor();
   const t = n(await dlg.innerText());
-  assert.match(t, /KAIZEN[\s\S]*João · 61 9999/);
+  assert.match(t, /KAIZEN[\s\S]*João · 📞 61 9999/);
+  assert.match(t, /Itens ganhos\s*2\s*67% dos cotados · média \d+%/);
+  assert.match(t, /Pedidos exportados\s*0\/1\s*falta exportar/, 'mesmo critério da seção Pedidos da cotação');
   assert.match(t, /Cotações respondidas\s*1\/2\s*50%/);
   assert.match(t, /Itens ganhos\s*2\s*67% dos cotados/); // vela e correia (o filtro WEGA é marca errada)
   assert.match(t, /Ficou em 2º\s*0/); // o filtro WEGA (marca errada) nem entra na disputa

@@ -6493,7 +6493,7 @@ function secaoNotaFornecedores() {
  */
 function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
   const cots = cotId ? db.cotacoes.filter(c => c.id === cotId) : db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde));
-  const r = { hist: [], cotados: 0, ganhos: 0, ganhosPreco: 0, segundo: 0, valorGanho: 0, acima: [], perdas: [], marcas: {}, erradas: [] };
+  const r = { hist: [], cotados: 0, ganhos: 0, ganhosPreco: 0, segundo: 0, valorGanho: 0, acima: [], perdas: [], marcas: {}, marcasGanhas: {}, erradas: [], recebidas: 0, confirmadas: 0, comPedido: 0, exportados: 0 };
   for (const c of [...cots].sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero))) {
     const j = c.fornecedores.findIndex(f => (f.fornecedorId || f.nome) === id);
     if (j < 0) continue;
@@ -6509,7 +6509,12 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
         const m = f.respostas?.[l.i]?.marca;
         if (m) { const k = String(m).trim().toUpperCase(); r.marcas[k] = (r.marcas[k] || 0) + 1; }
         if (l.marcas[j] === 'errada') r.erradas.push({ c, it: l.it, pedida: l.it.marca, mandou: m });
-        if (l.vencedor === j) { h.ganhos++; h.valor += p * l.q; if (l.minIdx === j) r.ganhosPreco++; }
+        if (l.vencedor === j) {
+          h.ganhos++;
+          h.valor += p * l.q;
+          if (l.minIdx === j) r.ganhosPreco++;
+          if (m) { const k = String(m).trim().toUpperCase(); r.marcasGanhas[k] = (r.marcasGanhas[k] || 0) + 1; }
+        }
         else if (l.segundoIdx === j) r.segundo++;
         if (l.min > 0 && l.minIdx !== j) {
           const dif = p / l.min - 1;
@@ -6520,6 +6525,11 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
     }
     r.cotados += h.cotados;
     r.ganhos += h.ganhos;
+    if (h.enviada) r.recebidas++;
+    if (f.confirmadoEm || resp) r.confirmadas++;
+    // pedido só existe com quantidade (o mesmo critério do quadro Fornecedores e da exportação)
+    h.temPedido = resp && pedidosPorFornecedor(c).some(pp => pp.fi === j);
+    if (h.temPedido || f.concluidoEm) { r.comPedido++; if (f.concluidoEm) r.exportados++; }
     r.valorGanho += h.valor;
     r.acima.push(...h.acima);
     h.mediaAcima = h.acima.length ? h.acima.reduce((a, b) => a + b, 0) / h.acima.length : null;
@@ -6534,13 +6544,23 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
 
 async function abrirAnaliseFornecedor(id) {
   const cot = ui.notaCot ? db.cotacoes.find(c => c.id === ui.notaCot) : null;
-  const x = desempenhoFornecedores(inicioPeriodo(), cot?.id || null).find(y => y.id === id);
+  const desemp = desempenhoFornecedores(inicioPeriodo(), cot?.id || null);
+  const x = desemp.find(y => y.id === id);
   if (!x) return;
   const a = analiseFornecedor(id, inicioPeriodo(), cot?.id || null);
   const cad = db.fornecedores.find(f => f.id === id);
   const pct = (v, d = 0) => fmtPct(v, d);
   const escopo = cot ? `cotação nº ${esc(cot.numero)}` : ui.periodoRel ? `últimos ${esc(ui.periodoRel)} dias` : 'todas as cotações';
-  const kpi = (rot, val, sub = '', cls = '') => `<div class="af-kpi ${cls}"><span class="af-rot">${rot}</span><b>${val}</b>${sub ? `<span class="af-sub">${sub}</span>` : ''}</div>`;
+  // comparação com os outros fornecedores do mesmo período
+  const outros = desemp.map(y => ({ id: y.id, nota: y.nota, a: y.id === id ? a : analiseFornecedor(y.id, inicioPeriodo(), cot?.id || null) }));
+  const posNota = [...outros].filter(o => o.nota != null).sort((p, q) => q.nota - p.nota).findIndex(o => o.id === id) + 1;
+  const posGanhos = [...outros].sort((p, q) => q.a.ganhos - p.a.ganhos).findIndex(o => o.id === id) + 1;
+  const taxa = o => (o.a.cotados ? o.a.ganhos / o.a.cotados : null);
+  const taxas = outros.map(taxa).filter(v => v != null);
+  const mediaTaxa = taxas.length ? taxas.reduce((p, q) => p + q, 0) / taxas.length : null;
+  const minhaTaxa = a.cotados ? a.ganhos / a.cotados : null;
+  const n = outros.length;
+  const linha = (rot, val, sub = '', cls = '') => `<div class="af-linha ${cls}"><span>${rot}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
   const barra = v => (v == null ? '<span class="muted small">sem dados</span>'
     : `<span class="af-barra"><span style="width:${Math.round(v * 100)}%" class="${v >= 0.8 ? 'ok' : v >= 0.6 ? 'warn' : 'danger'}"></span></span><b class="af-pct">${pct(v)}</b>`);
   // pontos fortes e de atenção, em frases
@@ -6551,31 +6571,51 @@ async function abrirAnaliseFornecedor(id) {
     if (v >= 0.9) fortes.push(`${rot}: ${pct(v)}`);
     else if (v < 0.7) atencao.push(`${rot}: só ${pct(v)}`);
   }
-  if (a.cotados && a.ganhos / a.cotados >= 0.4) fortes.push(`Ganha ${pct(a.ganhos / a.cotados)} dos itens que cota`);
+  if (minhaTaxa != null && mediaTaxa != null && n > 1) {
+    if (minhaTaxa >= mediaTaxa * 1.2) fortes.push(`Ganha mais que a média: ${pct(minhaTaxa)} dos itens que cota (média ${pct(mediaTaxa)})`);
+    else if (minhaTaxa <= mediaTaxa * 0.6) atencao.push(`Ganha pouco: ${pct(minhaTaxa)} dos itens que cota (média ${pct(mediaTaxa)})`);
+  }
   if (a.mediaAcima != null && a.mediaAcima <= 0.03) fortes.push(`Preço muito competitivo: em média ${pct(a.mediaAcima, 1)} acima do melhor`);
   if (a.mediaAcima != null && a.mediaAcima > 0.15) atencao.push(`Preço alto: em média ${pct(a.mediaAcima, 1)} acima do melhor preço`);
   if (a.perto) fortes.push(`${a.perto} item(ns) perdidos por até 5% — dá para negociar`);
   if (x.horasMedia != null && x.horasMedia > 48) atencao.push(`Demora para responder (${fmtHoras(x.horasMedia)} em média)`);
+  if (a.comPedido && a.exportados < a.comPedido) atencao.push(`${a.comPedido - a.exportados} pedido(s) ainda não exportado(s)`);
   if (x.cobrado) atencao.push(`Cobrou ${fmtMoeda(x.cobrado)} a mais nas notas fiscais`);
   if (x.faltas) atencao.push(`${x.faltas} item(ns) pedidos não vieram na nota`);
-  const marcas = Object.entries(a.marcas).sort((p, q) => q[1] - p[1]).slice(0, 10);
+  const top = (obj, k = 10) => Object.entries(obj).sort((p, q) => q[1] - p[1]).slice(0, k);
+  const marcas = top(a.marcas);
+  const marcasGanhas = top(a.marcasGanhas, 8);
   const statusResp = h => (!h.enviada ? '<span class="muted">não enviada</span>' : !h.resp ? '<span class="txt-ruim">não respondeu</span>'
     : h.noPrazo === false ? '<span class="txt-atencao">fora do prazo</span>' : h.noPrazo ? '<span class="txt-bom">no prazo</span>' : 'respondeu');
+  const maxGanhos = Math.max(1, ...a.hist.map(h => h.ganhos));
   const html = `<div class="af-topo">
-      <div><h3 style="margin:0">${esc(x.nome)}</h3>
-        <p class="small muted" style="margin:2px 0 0">Análise de ${escopo}${cad ? ` · ${[cad.contato, cad.telefone, cad.email].filter(Boolean).map(esc).join(' · ')}` : ''}</p></div>
-      <div class="af-nota">${badgeNota(x.nota, tituloNota(x))}<span class="small muted">nota</span></div>
+      <div class="af-ident"><h3 style="margin:0">${esc(x.nome)}</h3>
+        <p class="small muted" style="margin:2px 0 0">${cad ? [cad.contato && '👤 ' + esc(cad.contato), cad.substituto && `<span class="subst-forn">subst. ${esc(cad.substituto)}</span>`, cad.telefone && '📞 ' + esc(cad.telefone), cad.email && '✉ ' + esc(cad.email)].filter(Boolean).join(' · ') : ''}</p>
+        <p class="small muted" style="margin:2px 0 0">Análise de ${escopo}${n > 1 ? ` · comparado com ${n - 1} outro(s) fornecedor(es)` : ''}</p></div>
+      <div class="af-nota">${badgeNota(x.nota, tituloNota(x))}<span class="small muted">nota${posNota ? ` · ${posNota}º de ${outros.filter(o => o.nota != null).length}` : ''}</span></div>
+      <button type="button" class="af-fechar" title="Fechar (Esc)" aria-label="Fechar">✕</button>
     </div>
-    <div class="af-kpis">
-      ${kpi('Cotações respondidas', `${x.respondidas}/${x.recebidas}`, x.recebidas ? pct(x.respondidas / x.recebidas) : '')}
-      ${kpi('No prazo', x.comPrazo ? `${x.noPrazo}/${x.comPrazo}` : '—', x.comPrazo ? pct(x.noPrazo / x.comPrazo) : '')}
-      ${kpi('Tempo médio de resposta', fmtHoras(x.horasMedia))}
-      ${kpi('Itens cotados', `${x.itensCotados}/${x.itensPedidos}`, x.itensPedidos ? pct(x.itensCotados / x.itensPedidos) : '')}
-      ${kpi('Itens ganhos', `${a.ganhos}`, a.cotados ? `${pct(a.ganhos / a.cotados)} dos cotados` : '', 'destaque')}
-      ${kpi('Valor ganho', fmtMoeda(a.valorGanho), 'preço × quantidade')}
-      ${kpi('Menor preço', `${a.vezesMelhor}`, a.acima.length ? `em ${pct(a.vezesMelhor / a.acima.length)} dos itens` : '')}
-      ${kpi('Acima do melhor', a.mediaAcima == null ? '—' : pct(a.mediaAcima, 1), 'em média', a.mediaAcima > 0.15 ? 'ruim' : '')}
-      ${kpi('Ficou em 2º', `${a.segundo}`, 'item(ns)')}
+    <div class="af-grupos">
+      <section class="af-grupo"><h4>📨 Participação</h4>
+        ${linha('Recebeu', `${a.recebidas} cotação(ões)`)}
+        ${linha('Confirmou o recebimento', a.recebidas ? `${a.confirmadas}/${a.recebidas}` : '—')}
+        ${linha('Cotações respondidas', `${x.respondidas}/${x.recebidas}`, x.recebidas ? pct(x.respondidas / x.recebidas) : '')}
+        ${linha('No prazo', x.comPrazo ? `${x.noPrazo}/${x.comPrazo}` : '—', x.comPrazo ? `${pct(x.noPrazo / x.comPrazo)} · pela hora da importação` : 'sem prazo definido')}
+        ${linha('Tempo médio de resposta', fmtHoras(x.horasMedia), x.horasMedia == null ? 'marque o envio para medir' : '')}
+      </section>
+      <section class="af-grupo"><h4>🏷️ Competitividade</h4>
+        ${linha('Itens cotados', `${x.itensCotados}/${x.itensPedidos}`, x.itensPedidos ? pct(x.itensCotados / x.itensPedidos) : '')}
+        ${linha('Itens ganhos', `${a.ganhos}`, `${a.cotados ? pct(a.ganhos / a.cotados) + ' dos cotados' : ''}${mediaTaxa != null && n > 1 ? ` · média ${pct(mediaTaxa)}` : ''}`, 'destaque')}
+        ${linha('Menor preço', `${a.vezesMelhor}`, a.acima.length ? `em ${pct(a.vezesMelhor / a.acima.length)} dos itens` : '')}
+        ${linha('Ficou em 2º', `${a.segundo}`, 'item(ns)')}
+        ${linha('Acima do melhor', a.mediaAcima == null ? '—' : pct(a.mediaAcima, 1), 'em média', a.mediaAcima > 0.15 ? 'ruim' : '')}
+      </section>
+      <section class="af-grupo"><h4>🛒 Compras</h4>
+        ${linha('Valor ganho', fmtMoeda(a.valorGanho), 'preço × quantidade')}
+        ${linha('Ranking de itens ganhos', n > 1 ? `${posGanhos}º de ${n}` : '—')}
+        ${linha('Pedidos exportados', a.comPedido ? `${a.exportados}/${a.comPedido}` : '—', a.comPedido && a.exportados < a.comPedido ? 'falta exportar' : '')}
+        ${linha('Média por cotação', a.comPedido ? fmtMoeda(a.valorGanho / a.comPedido) : '—', 'nas que ganhou itens')}
+      </section>
     </div>
     <div class="af-cols">
       <section><h4>Composição da nota</h4>
@@ -6588,8 +6628,10 @@ async function abrirAnaliseFornecedor(id) {
       </section>
     </div>
     <div class="af-cols">
-      <section><h4>Marcas que mais manda</h4>
-        ${marcas.length ? `<p class="af-marcas">${marcas.map(([m, n]) => `<span class="af-chip">${esc(m)} <b>${n}</b></span>`).join('')}</p>` : '<p class="small muted">—</p>'}
+      <section><h4>Marcas em que mais ganha</h4>
+        ${marcasGanhas.length ? `<p class="af-marcas">${marcasGanhas.map(([m, q]) => `<span class="af-chip ganha">${esc(m)} <b>${q}</b></span>`).join('')}</p>` : '<p class="small muted">Ainda não ganhou itens.</p>'}
+        <h4 style="margin-top:12px">Marcas que mais manda</h4>
+        ${marcas.length ? `<p class="af-marcas">${marcas.map(([m, q]) => `<span class="af-chip">${esc(m)} <b>${q}</b></span>`).join('')}</p>` : '<p class="small muted">—</p>'}
         <p class="small">Marca errada: <b>${x.marcaErrada}</b>${x.comExigencia ? ` de ${x.comExigencia}` : ''} · sem marca: <b>${x.semMarca}</b></p>
         ${a.erradas.length ? `<details><summary class="small">ver itens com marca errada (${a.erradas.length})</summary><ul class="small af-mini">${a.erradas.slice(0, 15).map(e => `<li>nº ${esc(e.c.numero)} · <b>${esc(e.it.codigo || e.it.descricao)}</b>: pedida ${esc(e.pedida || '—')}, mandou ${esc(e.mandou || '—')}</li>`).join('')}</ul></details>` : ''}
       </section>
@@ -6599,21 +6641,22 @@ async function abrirAnaliseFornecedor(id) {
     </div>
     ${a.perdas.length ? `<section><h4>Onde ficou mais caro <span class="small muted">(para negociar)</span></h4>
       <div class="table-wrap af-rolar"><table class="af-tab"><thead><tr><th>Cotação</th><th>Item</th><th class="r">Preço dele</th><th class="r">Melhor</th><th class="r">Dif.</th><th>Quem ganhou</th></tr></thead>
-      <tbody>${a.perdas.slice(0, 12).map(p => `<tr><td>nº ${esc(p.c.numero)}</td><td><b>${esc(p.it.codigo || '')}</b> <span class="small muted">${esc(p.it.descricao || '')}</span></td><td class="r">${fmtMoeda(p.preco)}</td><td class="r">${fmtMoeda(p.min)}</td><td class="r ${p.dif > 0.15 ? 'txt-ruim' : ''}">+${pct(p.dif, 1)}</td><td>${esc(p.quem)}</td></tr>`).join('')}</tbody></table></div>
+      <tbody>${a.perdas.slice(0, 12).map(q => `<tr><td>nº ${esc(q.c.numero)}</td><td><b>${esc(q.it.codigo || '')}</b> <span class="small muted">${esc(q.it.descricao || '')}</span></td><td class="r">${fmtMoeda(q.preco)}</td><td class="r">${fmtMoeda(q.min)}</td><td class="r ${q.dif > 0.15 ? 'txt-ruim' : ''}">+${pct(q.dif, 1)}</td><td>${esc(q.quem)}</td></tr>`).join('')}</tbody></table></div>
     </section>` : ''}
     <section><h4>Histórico por cotação</h4>
-      <div class="table-wrap af-rolar"><table class="af-tab"><thead><tr><th>Cotação</th><th>Data</th><th>Resposta</th><th class="r">Cotou</th><th class="r">Ganhou</th><th class="r">Valor ganho</th><th class="r">Acima do melhor</th><th>Pedido</th></tr></thead>
+      <div class="table-wrap af-rolar"><table class="af-tab"><thead><tr><th>Cotação</th><th>Data</th><th>Resposta</th><th class="r">Cotou</th><th>Ganhou</th><th class="r">Valor ganho</th><th class="r">Acima do melhor</th><th>Pedido</th></tr></thead>
       <tbody>${a.hist.map(h => `<tr><td><a href="#" data-route="cotacao" data-id="${esc(h.c.id)}" class="af-abrir"><b>nº ${esc(h.c.numero)}</b></a></td><td>${fmtData(h.c.data)}</td><td>${statusResp(h)}</td>
-        <td class="r">${h.resp ? `${h.cotados}/${h.c.itens.length}` : '—'}</td><td class="r">${h.resp ? h.ganhos : '—'}</td><td class="r">${h.valor ? fmtMoeda(h.valor) : '—'}</td>
-        <td class="r">${h.mediaAcima == null ? '—' : pct(h.mediaAcima, 1)}</td><td>${h.f.concluidoEm ? '<span class="txt-bom">✓ exportado</span>' : h.ganhos ? '<span class="muted">pendente</span>' : '—'}</td></tr>`).join('')}</tbody></table></div>
+        <td class="r">${h.resp ? `${h.cotados}/${h.c.itens.length}` : '—'}</td><td>${h.resp ? `<span class="af-mini-barra" title="${h.ganhos} item(ns) ganhos"><span style="width:${Math.round((h.ganhos / maxGanhos) * 100)}%"></span></span> ${h.ganhos}` : '—'}</td><td class="r">${h.valor ? fmtMoeda(h.valor) : '—'}</td>
+        <td class="r">${h.mediaAcima == null ? '—' : pct(h.mediaAcima, 1)}</td><td>${h.f.concluidoEm ? '<span class="txt-bom">✓ exportado</span>' : h.temPedido ? '<span class="muted">pendente</span>' : '—'}</td></tr>`).join('')}</tbody></table></div>
     </section>`;
   const p = abrirDialogo('', [{ txt: 'Fechar', valor: null, cls: 'primary' }]);
   const dlg = [...document.querySelectorAll('.dlg')].at(-1);
   dlg.classList.add('dlg-analise-forn');
   dlg.setAttribute('aria-label', `Análise de ${x.nome}`);
   dlg.querySelector('p').outerHTML = `<div class="af-corpo">${html}</div>`;
-  // abrir uma cotação do histórico fecha a análise
   dlg.addEventListener('click', e => {
+    if (e.target.closest('.af-fechar')) { dlg.querySelector('.actions button').click(); return; }
+    // abrir uma cotação do histórico fecha a análise
     const lk = e.target.closest('.af-abrir');
     if (!lk) return;
     e.preventDefault();

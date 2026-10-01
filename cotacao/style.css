@@ -2037,3 +2037,22 @@ tr.linha-cot:hover td { background: var(--hover); }
   nav a { white-space: nowrap; padding: 5px 8px; font-size: 13.5px; }
   .status-nuvem { font-size: 11px; padding: 2px 8px; }
 }
+
+/* análise do fornecedor: grupos de números, ✕ no topo, marcas ganhas, barra no histórico */
+.af-topo { position: relative; align-items: flex-start; padding-right: 36px; }
+.af-ident { min-width: 0; }
+.af-fechar { position: absolute; right: -4px; top: -6px; width: 32px; height: 32px; padding: 0; border-radius: 50%; font-size: 15px; background: transparent; border: 1px solid transparent; color: var(--muted); box-shadow: none; }
+.af-fechar:hover { background: var(--hover); color: var(--text); }
+.af-grupos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 10px; margin-top: 14px; }
+.af-grupo { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card-2); }
+.af-grupo h4 { margin: 0 0 6px !important; }
+.af-linha { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 0 8px; padding: 4px 0; border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); font-size: 13px; }
+.af-linha:first-of-type { border-top: 0; }
+.af-linha > span { color: var(--muted); }
+.af-linha > b { font-size: 15px; font-variant-numeric: tabular-nums; text-align: right; }
+.af-linha > small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; text-align: right; margin-top: -2px; }
+.af-linha.destaque > b { color: var(--primary-2); font-size: 17px; }
+.af-linha.ruim > b { color: var(--danger); }
+.af-chip.ganha { background: var(--ok-bg); color: var(--ok); }
+.af-mini-barra { display: inline-block; width: 48px; height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; vertical-align: middle; }
+.af-mini-barra > span { display: block; height: 100%; background: var(--primary-2); border-radius: 4px; }
