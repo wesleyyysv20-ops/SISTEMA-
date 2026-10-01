@@ -39,10 +39,10 @@ test('nova cotação: "os de sempre", todos e nenhum; barra fixa com o resumo; c
   assert.equal(await page.evaluate(() => rascunho().fornecedorIds.length), 0);
   await page.click('[data-act=fornDeSempre]');
   const barra = n(await page.locator('#barraCriar').innerText());
-  assert.match(barra, /3 itens\s*🏪 2 fornecedor\(es\)\s*⏰ 01\/01 09:00\s*⚠ 4 ponto\(s\) a conferir/);
+  assert.match(barra, /3 itens\s*🏪 2 fornecedor\(es\)\s*⏰ 01\/01 09:00\s*⚠ 5 ponto\(s\) a conferir/);
   // mudar o prazo atualiza a barra na hora
   await page.fill('[data-draft=prazoResposta]', '2099-12-31');
-  assert.match(n(await page.locator('#barraCriar').innerText()), /31\/12 09:00\s*⚠ 3 ponto/);
+  assert.match(n(await page.locator('#barraCriar').innerText()), /31\/12 09:00\s*⚠ 4 ponto/);
   // conferência: sem marca, item em cotação aberta e fornecedor sem e-mail
   await page.click('[data-act=criarCotacao]');
   const dlg = n(await page.locator('.dlg').innerText());

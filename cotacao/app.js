@@ -1512,6 +1512,7 @@ function checklistNova(r = rascunho()) {
     if (c) emAberta.push(`${cod(x)} (nº ${c.numero})`);
   }
   if (emAberta.length) res.push({ tipo: 'aberta', txt: `${emAberta.length} item(ns) já estão numa cotação aberta: ${itensLista(emAberta)}` });
+  if (!r.papelzinhos) res.push({ tipo: 'papel', txt: 'Os papelzinhos de São Sebastião não foram importados (opcional)' });
   if (!r.prazoResposta) res.push({ tipo: 'prazo', txt: 'Sem prazo de resposta' });
   else if (new Date(`${r.prazoResposta}T${r.prazoHora || '23:59'}`) < new Date()) res.push({ tipo: 'prazo', txt: `O prazo (${fmtData(r.prazoResposta)}${r.prazoHora ? ' ' + r.prazoHora : ''}) já passou` });
   const forn = byId(db.fornecedores);
@@ -2970,11 +2971,69 @@ async function lerTextoArquivo(file) {
 }
 
 /** Lê .xlsx, .csv, .txt ou tabela HTML (.xls/.htm) e devolve as linhas como listas de textos. */
+/** Arquivo do zip (lê o diretório central e descompacta com o próprio navegador). */
+async function arquivoDoZip(buf, nome) {
+  const v = new DataView(buf);
+  let fim = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 66000); i--) if (v.getUint32(i, true) === 0x06054b50) { fim = i; break; }
+  if (fim < 0) throw new Error('Arquivo compactado inválido.');
+  const total = v.getUint16(fim + 10, true);
+  let p = v.getUint32(fim + 16, true);
+  const dec = new TextDecoder();
+  for (let k = 0; k < total; k++) {
+    if (v.getUint32(p, true) !== 0x02014b50) break;
+    const metodo = v.getUint16(p + 10, true);
+    const tam = v.getUint32(p + 20, true);
+    const nl = v.getUint16(p + 28, true), el = v.getUint16(p + 30, true), cl = v.getUint16(p + 32, true);
+    const local = v.getUint32(p + 42, true);
+    const n = dec.decode(new Uint8Array(buf, p + 46, nl));
+    if (n === nome) {
+      const ini = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
+      const dados = new Uint8Array(buf, ini, tam);
+      if (metodo === 0) return dados;
+      const fluxo = new Blob([dados]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return new Uint8Array(await new Response(fluxo).arrayBuffer());
+    }
+    p += 46 + nl + el + cl;
+  }
+  return null;
+}
+async function zipEhOds(file) {
+  try {
+    const m = await arquivoDoZip(await file.arrayBuffer(), 'mimetype');
+    return !!m && /opendocument\.spreadsheet/.test(new TextDecoder().decode(m));
+  } catch (e) { return false; }
+}
+/** Planilha do LibreOffice (.ods): linhas da primeira aba, como texto. */
+async function lerLinhasOds(file) {
+  const xml = await arquivoDoZip(await file.arrayBuffer(), 'content.xml');
+  if (!xml) throw new Error('Não achei a planilha dentro do arquivo .ods.');
+  const doc = new DOMParser().parseFromString(new TextDecoder().decode(xml), 'application/xml');
+  const NS = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0';
+  const tab = doc.getElementsByTagNameNS(NS, 'table')[0];
+  if (!tab) return [];
+  const linhas = [];
+  for (const tr of tab.getElementsByTagNameNS(NS, 'table-row')) {
+    const vals = [];
+    for (const td of tr.children) {
+      if (td.namespaceURI !== NS || !/^(covered-)?table-cell$/.test(td.localName)) continue;
+      const txt = [...td.childNodes].map(x => x.textContent).join(' ').replace(/\s+/g, ' ').trim();
+      const rep = Math.min(Number(td.getAttributeNS(NS, 'number-columns-repeated')) || 1, txt ? 200 : 20);
+      for (let k = 0; k < rep; k++) vals.push(txt);
+    }
+    while (vals.length && !vals[vals.length - 1]) vals.pop();
+    const repL = Math.min(Number(tr.getAttributeNS(NS, 'number-rows-repeated')) || 1, vals.length ? 500 : 1);
+    for (let k = 0; k < repL; k++) linhas.push(vals);
+  }
+  return linhas;
+}
+
 async function lerLinhasArquivo(file) {
   const cab = new Uint8Array(await file.slice(0, 8).arrayBuffer());
   const zip = cab[0] === 0x50 && cab[1] === 0x4b;
   const xlsAntigo = cab[0] === 0xd0 && cab[1] === 0xcf;
   if (xlsAntigo) throw new Error('Este arquivo está no formato antigo do Excel (.xls). Abra no Excel e salve como "Pasta de Trabalho do Excel (.xlsx)" ou como CSV, e selecione de novo.');
+  if (zip && (/\.ods$/i.test(file.name || '') || await zipEhOds(file))) return lerLinhasOds(file);
   if (zip) {
     const wb = await novoLivroExcel();
     await wb.xlsx.load(await file.arrayBuffer());
@@ -3035,6 +3094,53 @@ function casarLinhasDataCar() {
     if (!busca) l.sel = false;
     else if (l.sel === undefined) l.sel = false; // começam todos desmarcados
   });
+}
+
+/**
+ * Papelzinhos de São Sebastião: planilha diária (CÓDIGO / OBS 1…3) que a loja manda para entrar na cotação.
+ * Abre na mesma conferência do DataCar, um item por linha; o que já está na cotação não entra de novo.
+ */
+async function abrirArquivoPapel(file) {
+  try {
+    const linhas = (await lerLinhasArquivo(file)).filter(l => l.some(v => String(v).trim()));
+    if (!linhas.length) throw new Error('O arquivo está vazio.');
+    let h = linhas.slice(0, 10).findIndex(l => l.some(v => /^cod/.test(semAcento(v))));
+    if (h < 0) h = 0;
+    const largura = Math.max(...linhas.map(l => l.length));
+    const cab = Array.from({ length: largura }, (_, i) => String(linhas[h][i] ?? '').trim().replace(/:$/, '') || `Coluna ${i + 1}`);
+    let colCod = cab.findIndex(c => /^cod/.test(semAcento(c)));
+    if (colCod < 0) colCod = 0;
+    const dados = linhas.slice(h + 1).map(l => Array.from({ length: largura }, (_, i) => String(l[i] ?? '').trim())).filter(l => l[colCod]);
+    const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
+    ui.datacar = {
+      modo: 'papel',
+      arquivo: file.name,
+      cab,
+      col: colCod, // um item por grupo
+      colCod,
+      colDesc: -1,
+      colQtd: -1,
+      colMarca: -1,
+      colObs: cab.map((c, i) => (i !== colCod && /^obs/.test(semAcento(c)) ? i : -1)).filter(i => i >= 0),
+      linhas: dados.map((cels, orig) => ({ cels, orig })),
+      ordem: { campo: 'chave', dir: 1 },
+      pos: 0,
+      gcur: 0,
+      grupoAberto: null,
+      soPend: true, // os que já estão na cotação ficam escondidos
+    };
+    casarLinhasDataCar();
+    // o que já está na cotação não entra de novo
+    for (const l of ui.datacar.linhas) if (l.produtoId && naCotacao.has(l.produtoId)) { l.decisao = 'nao'; l.sel = false; l.jaNaCotacao = true; }
+    aplicarOrdemDataCar();
+    render();
+    focarDataCar();
+    const ja = ui.datacar.linhas.filter(l => l.jaNaCotacao).length;
+    if (ja) toast(`${ja} item(ns) dos papelzinhos já estão na cotação e não entram de novo.`, 6000);
+  } catch (e) {
+    console.error(e);
+    avisar('Não consegui ler o arquivo:\n' + e.message);
+  }
 }
 
 async function abrirArquivoDataCar(file) {
@@ -3519,7 +3625,7 @@ function progressoDataCar() {
     <div class="conf-progresso">
       <div class="conf-barra" role="progressbar" aria-valuemin="0" aria-valuemax="${gs.length}" aria-valuenow="${decididos}"><span style="width:${pct}%"></span></div>
       <div class="conf-numeros">
-        <span>Grupos decididos: <b>${decididos}</b> de ${gs.length}</span>
+        <span>${ui.datacar?.modo === 'papel' ? 'Itens' : 'Grupos'} decididos: <b>${decididos}</b> de ${gs.length}</span>
         <span class="conf-vai">✓ ${c.vai} itens vão</span>
         <span class="conf-nao">✗ ${c.nao} não vão</span>
         ${c.falta ? `<span class="muted">${c.falta} sem decisão</span>` : ''}
@@ -3543,7 +3649,13 @@ function conteudoGrupos() {
   const linhas = gs.map((g, i) => {
     if (!vis.has(i)) return '';
     const e = estadoGrupo(g);
-    const amostra = g.itens.slice(0, 3).map(l => (d.colDesc >= 0 && l.cels[d.colDesc]) || l.codigo).filter(Boolean);
+    const amostra = d.modo === 'papel'
+      ? g.itens.slice(0, 1).map(l => {
+        const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
+        const obs = (d.colObs || []).map(c => l.cels[c]).filter(Boolean).join(' · ');
+        return `${p ? p.descricao + (p.marca ? ' · ' + p.marca : '') : '🆕 não cadastrado'}${obs ? ' · ' + obs : ''}${l.jaNaCotacao ? ' · já está na cotação' : ''}`;
+      })
+      : g.itens.slice(0, 3).map(l => (d.colDesc >= 0 && l.cels[d.colDesc]) || l.codigo).filter(Boolean);
     const sel = d.selG.has(g.k);
     return `<div class="conf-grupo est-${e.estado} ${i === d.gcur ? 'atual' : ''}${sel ? ' selecionado' : ''}" data-g-idx="${i}">
       <span class="cg-sel" title="Selecionar (ou Shift+clique / Shift+↓ para uma faixa)"><input type="checkbox" tabindex="-1" ${sel ? 'checked' : ''} aria-label="Selecionar o grupo ${esc(g.rotulo)}"></span>
@@ -3570,12 +3682,12 @@ function conteudoGrupos() {
         <button type="button" class="sm conf-mini-vai" data-act="dcSelVai" title="Os selecionados vão (→)">✓ Vão</button>
         <button type="button" class="sm conf-mini-nao" data-act="dcSelNao" title="Os selecionados não vão (←)">✗ Não vão</button>
         <button type="button" class="sm link" data-act="dcSelLimpar" title="Esc">limpar seleção</button>`
-      : `<span class="small muted">${d.busca || d.soPend ? `${nVis} de ${gs.length} grupo(s) aparecendo · ` : ''}Shift+↓ ou Shift+clique seleciona vários · Ctrl+A todos</span>`}
+      : `<span class="small muted">${d.modo === 'papel' && gs.some(g => g.itens.some(l => l.jaNaCotacao)) ? `${gs.filter(g => g.itens.every(l => l.jaNaCotacao)).length} já estão na cotação (escondidos) · ` : ''}${d.busca || d.soPend ? `${nVis} de ${gs.length} aparecendo · ` : ''}Shift+↓ ou Shift+clique seleciona vários · Ctrl+A todos</span>`}
       ${pendVis ? `<span class="conf-lote-rest">Os ${pendVis} sem decisão${d.busca ? ' (da busca)' : ''}:
         <button type="button" class="sm conf-mini-vai" data-act="dcRestVai">✓ todos vão</button>
         <button type="button" class="sm conf-mini-nao" data-act="dcRestNao">✗ nenhum vai</button></span>` : ''}
     </div>
-    ${nSug ? `<div class="conf-sugestoes small">A OBS de ${nSug} grupo(s) já diz o que fazer (ex.: "CORTAR", "NÃO COTAR", "OK"). <button type="button" class="sm" data-act="dcSugestoes">Aplicar sugestões</button></div>` : ''}
+    ${nSug && d.modo !== 'papel' ? `<div class="conf-sugestoes small">A OBS de ${nSug} grupo(s) já diz o que fazer (ex.: "CORTAR", "NÃO COTAR", "OK"). <button type="button" class="sm" data-act="dcSugestoes">Aplicar sugestões</button></div>` : ''}
     <div class="conf-grupos" role="listbox" aria-label="Grupos de ${esc(d.cab[d.col])}">
       ${linhas}
       <div class="conf-grupo conf-concluir ${d.gcur === gs.length ? 'atual' : ''}" data-g-idx="${gs.length}">
@@ -3618,7 +3730,8 @@ function conteudoItem() {
       <div class="conf-desc">${esc(txt(d.colDesc) || (p ? p.descricao : ''))}</div>
       <div class="conf-cadastro small">${p
         ? `Cadastro: <b>${esc(p.codigo)}</b> · ${esc(p.descricao)}${p.similar ? ` · sim. ${esc(p.similar)}` : ''}`
-        : '<span class="badge warn">não cadastrado · será cadastrado ao adicionar</span>'}</div>
+        : `<span class="badge warn">não cadastrado · será cadastrado ao adicionar</span>
+          <label class="conf-desc-novo">Descrição para o cadastro <input data-dc-desc="1" value="${esc(l.desc ?? (txt(d.colDesc) || ''))}" placeholder="Ex.: SPRAY SELANTE 300ML" autocomplete="off"></label>`}</div>
       <div class="conf-observacoes">
         <div><span>${esc(d.cab[d.col])} na planilha</span><b>${esc(l.chave || '—')}</b></div>
         ${p && p.obs ? `<div><span>Observação no cadastro</span><b>${esc(p.obs)}</b></div>` : ''}
@@ -3653,9 +3766,9 @@ function renderDataCar() {
   if (!d) return '';
   return `
   <div class="dlg-fundo" id="dlgDataCar">
-    <div class="dlg dlg-conf" role="dialog" aria-modal="true" aria-labelledby="dcTitulo" tabindex="-1" id="dcCaixa">
+    <div class="dlg dlg-conf${d.modo === 'papel' ? ' modo-papel' : ''}" role="dialog" aria-modal="true" aria-labelledby="dcTitulo" tabindex="-1" id="dcCaixa">
       <div class="row-between">
-        <h3 id="dcTitulo" style="margin:0">Conferência por grupo de OBS</h3>
+        <h3 id="dcTitulo" style="margin:0">${d.modo === 'papel' ? '📝 Papelzinhos de São Sebastião' : 'Conferência por grupo de OBS'}</h3>
         <span class="muted small">${esc(d.arquivo)}</span>
       </div>
       <details class="conf-colunas">
@@ -3958,6 +4071,7 @@ const TIPOS_ITENS = [
   ['semMarca', '⚠ Sem marca', 'Itens sem marca pedida'],
   ['repetido', '🔁 Repetidos', 'Mesmo código em mais de uma linha'],
   ['novo', '🆕 Novos no cadastro', 'Cadastrados agora pelo arquivo do DataCar'],
+  ['papel', '📝 Papelzinhos', 'Vieram do arquivo de papelzinhos de São Sebastião'],
 ];
 function itemNoTipo(ctx, x, i, tipo = ui.tipoItens) {
   if (!tipo || !x) return true;
@@ -3965,6 +4079,7 @@ function itemNoTipo(ctx, x, i, tipo = ui.tipoItens) {
   if (tipo === 'semMarca') return !(x.marca || p?.marca);
   if (tipo === 'repetido') return ctx.repetido(x, i);
   if (tipo === 'novo') return !!x.novoCadastro;
+  if (tipo === 'papel') return !!x.papelzinho;
   return true;
 }
 function htmlTiposItens(ctx) {
@@ -4178,7 +4293,7 @@ function linhaItemNova(ctx, x, i) {
       <td class="c">${i + 1}</td>
       <td>${codigoSoNaCotacao(p)
         ? `<input class="cod-item ${x.codigoArquivo && x.codigoArquivo !== p.codigo ? 'so-cotacao' : ''}" data-codigo-item="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código só desta cotação: o cadastro continua ${esc(p.codigo)}." aria-label="Código de ${esc(p.descricao)} nesta cotação">`
-        : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
+        : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${x.papelzinho ? ' <span class="tag-papel" title="Veio dos papelzinhos de São Sebastião">PAPELZINHOS</span>' : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}" title="${origemObs}">OBS <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}
         ${textoObs.length || dup ? '' : '<br>'}<details class="sim-item"><summary title="Códigos similares (ficam no cadastro)">${p.similar ? `<b>${esc(p.similar)}</b> ✎` : '+ similar'}</summary><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Códigos similares" aria-label="Códigos similares de ${esc(p.descricao)}"></details></td>
@@ -4247,10 +4362,16 @@ function renderNova() {
   <section class="card">
     <h3>1. Itens da cotação (${r.itens.length})</h3>
     <div class="datacar-box${r.itens.length ? ' compacta' : ''}">
-      <label class="btn ${r.itens.length ? '' : 'btn-primary'}" style="margin:0">📂 ${r.itens.length ? 'Abrir outro arquivo do DataCar' : 'Abrir arquivo do DataCar'}<input type="file" class="hidden" accept=".xlsx,.xls,.csv,.txt,.htm,.html" data-import-datacar></label>
+      <label class="btn ${r.itens.length ? '' : 'btn-primary'}" style="margin:0">📂 ${r.itens.length ? 'Abrir outro arquivo do DataCar' : 'Abrir arquivo do DataCar'}<input type="file" class="hidden" accept=".xlsx,.xls,.ods,.csv,.txt,.htm,.html" data-import-datacar></label>
       <span class="small muted">${r.itens.length ? 'Os itens de outro arquivo são somados à lista.' : 'Escolha o arquivo gerado pelo DataCar e marque os itens que vão para a cotação. Os itens são reconhecidos pelo <b>código</b>; a <b>OBS</b> serve para ordenar e agrupar.'}</span>
     </div>
     ${painelRep}
+    <div class="papel-box${r.papelzinhos ? ' feito' : ''}">
+      <label class="btn sm" style="margin:0" title="Planilha diária de São Sebastião (CÓDIGO / OBS). Não é obrigatória.">📝 ${r.papelzinhos ? 'Abrir outro arquivo de papelzinhos' : 'Papelzinhos de São Sebastião'}<input type="file" class="hidden" accept=".ods,.xlsx,.csv,.txt" data-import-papel></label>
+      <span class="small ${r.papelzinhos ? '' : 'muted'}">${r.papelzinhos
+        ? `✓ <b>${esc(r.papelzinhos.arquivo)}</b> · ${r.papelzinhos.adicionados} acrescentado(s) · ${r.papelzinhos.jaEstavam} já estava(m) na cotação`
+        : 'Opcional: o arquivo diário da loja. O que já estiver na cotação não entra de novo; o resto entra com a etiqueta PAPELZINHOS.'}</span>
+    </div>
     ${r.itens.length ? `<div class="tipos-itens" id="tiposItens">${htmlTiposItens(ctx)}</div>` : ''}
     <div class="busca-itens"><input id="filtroItens" value="${esc(ui.filtroItens)}" placeholder="🔎 Procurar na lista ou no cadastro: código, similar, marca ou descrição" autocomplete="off" aria-label="Procurar nos itens da cotação e no cadastro"><span id="contaFiltroItens" class="small muted">${contaFiltroItens()}</span></div>
     <div id="avisoNovosCad">${htmlAvisoNovosCad()}</div>
@@ -5462,7 +5583,7 @@ function renderCotacao(id) {
           <td class="c">${l.i + 1}</td>
           <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
             <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
-            <span class="prod-tags">${l.it.marca ? `<span class="marca-pedida" title="Marca pedida: ${esc(l.it.marca)}">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
+            <span class="prod-tags">${l.it.papelzinho ? '<span class="tag-papel" title="Veio dos papelzinhos de São Sebastião">PAPELZINHOS</span>' : ''}${l.it.marca ? `<span class="marca-pedida" title="Marca pedida: ${esc(l.it.marca)}">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `${(() => {
@@ -7094,9 +7215,10 @@ const acoes = {
     const d = ui.datacar;
     const escolhidas = d.linhas.filter(l => l.sel && (l.codigo || l.chave));
     const rr = rascunho();
+    const papel = d.modo === 'papel';
     const mapaObs = { ...(rr.obsPorCodigo || {}) };
     const vistos = {};
-    for (const l of d.linhas) {
+    for (const l of papel ? [] : d.linhas) {
       const k = chaveCodigo(l.codigo || '');
       if (!k) continue;
       if (!vistos[k]) { vistos[k] = true; mapaObs[k] = []; } // este arquivo substitui o anterior para o código
@@ -7117,8 +7239,8 @@ const acoes = {
       if (!id) {
         // Produto novo: código = coluna de código do arquivo; a OBS (grupo) vai no campo Observação.
         const p = {
-          id: uid(), codigo: codArq || l.chave, similar: '', obsDataCar: codArq ? '' : l.chave, descricao: txt(l, d.colDesc) || codArq || l.chave, unidade: 'UN',
-          marca: (l.marca ?? txt(l, d.colMarca)).trim(), categoria: '', obs: l.chave, criadoEm: new Date().toISOString(),
+          id: uid(), codigo: codArq || l.chave, similar: '', obsDataCar: codArq || papel ? '' : l.chave, descricao: l.desc || txt(l, d.colDesc) || codArq || l.chave, unidade: 'UN',
+          marca: (l.marca ?? txt(l, d.colMarca)).trim(), categoria: '', obs: papel ? '' : l.chave, criadoEm: new Date().toISOString(),
         };
         db.produtos.push(p);
         id = p.id;
@@ -7136,6 +7258,7 @@ const acoes = {
       }
       const ja = r.itens.find(x => x.produtoId === id);
       const codigoArquivo = codArq;
+      if (ja && papel) { somados++; continue; } // papelzinho que já está na cotação: não acrescenta
       if (ja) {
         ja.quantidade = qtd;
         ja.obsArquivo = [...(ja.obsArquivo || []), l.chave || ''];
@@ -7143,8 +7266,12 @@ const acoes = {
         if (l.marca !== undefined) ja.marca = marcaCotacao;
         somados++;
       } else {
-        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao, obsArquivo: [l.chave || ''], ...(l.produtoId ? {} : { novoCadastro: true }) });
+        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao, obsArquivo: papel ? [] : [l.chave || ''], ...(papel ? { papelzinho: true } : {}), ...(l.produtoId ? {} : { novoCadastro: true }) });
       }
+    }
+    if (papel) {
+      const jaAntes = d.linhas.filter(l => l.jaNaCotacao).length;
+      r.papelzinhos = { arquivo: d.arquivo, em: new Date().toISOString(), adicionados: escolhidas.length - somados, jaEstavam: jaAntes + somados };
     }
     ui.datacar = null;
     salvar();
@@ -7332,7 +7459,7 @@ const acoes = {
       criadoEm: new Date().toISOString(),
       itens: itens.map(x => {
         const p = prod[x.produtoId];
-        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: x.marca || p.marca, marcaCotacao: x.marca || '', quantidade: 1, ...(lojaPelaObs(x.obsArquivo) ? { lojaObs: lojaPelaObs(x.obsArquivo) } : {}) };
+        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: x.marca || p.marca, marcaCotacao: x.marca || '', quantidade: 1, ...(lojaPelaObs(x.obsArquivo) ? { lojaObs: lojaPelaObs(x.obsArquivo) } : {}), ...(x.papelzinho ? { papelzinho: true } : {}) };
       }),
       fornecedores: fornecedores.map(novoFornCot),
     };
@@ -8433,6 +8560,9 @@ document.addEventListener('input', e => {
   } else if (t.dataset.qtd != null) {
     rascunho().itens[+t.dataset.qtd].quantidade = parseNum(t.value);
     salvar();
+  } else if (t.dataset.dcDesc != null && ui.datacar) {
+    const l = filaDataCar()[ui.datacar.pos];
+    if (l) l.desc = t.value.trim();
   } else if (t.dataset.dcMarca != null) {
     // a marca é gravada ao sair do campo (Enter, Tab, setas ou clique fora)
   } else if (t.id === 'filtroProd') {
@@ -9584,6 +9714,7 @@ async function aoMudarCampo(e) {
     else if (t.hasAttribute('data-import-cot')) await importarRespostas(files, cotAtual()?.id);
     else if (t.hasAttribute('data-import-produtos')) await importarProdutos(file);
     else if (t.hasAttribute('data-import-datacar')) await abrirArquivoDataCar(file);
+    else if (t.hasAttribute('data-import-papel')) await abrirArquivoPapel(file);
     else if (t.hasAttribute('data-restaurar')) {
       try {
         const dados = JSON.parse(await file.text());

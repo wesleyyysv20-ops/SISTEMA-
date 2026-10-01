@@ -55,7 +55,12 @@ test('criar cotação salva a planilha no modelo COTAÇÃO GERAL DISPPAR', async
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
-  const arq = await salvarDepois(s, () => page.click('[data-act=criarCotacao]'));
+  const arq = await salvarDepois(s, async () => {
+    await page.click('[data-act=criarCotacao]');
+    // lembra dos papelzinhos de São Sebastião (opcional): cria mesmo assim
+    assert.match(await page.locator('.dlg').innerText(), /papelzinhos de São Sebastião não foram importados \(opcional\)/);
+    await page.click('.dlg button.primary');
+  });
   assert.match(arq.nome, /^Cotacao_\d{4}\.xlsx$/);
   const wb = await lerXlsx(arq.buffer);
   const ws = wb.getWorksheet('Cotação');
