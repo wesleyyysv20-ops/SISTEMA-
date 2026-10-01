@@ -4300,6 +4300,63 @@ function painelRepetidos(ctx) {
   return painelRep;
 }
 
+/** Produto do cadastro com este código (o código inteiro ou uma das partes "A/B"). */
+function acharProdutoPorCodigo(cod) {
+  const mapa = indiceProdutos();
+  const k = v => semAcento(v).replace(/\s+/g, '');
+  let p = mapa.get(k(cod)) || null;
+  if (!p) for (const parte of String(cod).split(/[\/,;]+/)) { p = mapa.get(k(parte)); if (p) break; }
+  return p;
+}
+
+/** O produto foi cadastrado agora e não é usado em mais nada (pode sair do cadastro). */
+function produtoSoNesteItem(prodId, item) {
+  return !db.cotacoes.some(c => c.itens.some(it => it.produtoId === prodId))
+    && !rascunho().itens.some(y => y !== item && y.produtoId === prodId);
+}
+
+/**
+ * Papelzinho com código incompleto ou errado: a correção vai para o cadastro.
+ * Se o código corrigido já existe no cadastro, o item passa a ser aquele produto (sem repetir o cadastro).
+ */
+function corrigirCodigoPapel(i, valor) {
+  const r = rascunho();
+  const x = r.itens[i];
+  const p = x && db.produtos.find(pp => pp.id === x.produtoId);
+  const novo = String(valor || '').trim().toUpperCase();
+  if (!x || !p) return;
+  if (!novo || novo === String(x.codigoArquivo || p.codigo).toUpperCase()) { render(); return; }
+  const eraNovo = !!x.novoCadastro;
+  const existente = acharProdutoPorCodigo(novo);
+  if (existente && existente.id !== p.id) {
+    // já está no cadastro: usa o de lá (e o cadastro feito agora, se ninguém usa, sai)
+    if (eraNovo && produtoSoNesteItem(p.id, x)) db.produtos = db.produtos.filter(pp => pp.id !== p.id);
+    const outro = r.itens.find(y => y !== x && y.produtoId === existente.id);
+    if (outro) {
+      r.itens.splice(i, 1);
+      toast(`${existente.codigo} já estava na cotação: o papelzinho foi juntado a ele.`, 6000);
+    } else {
+      Object.assign(x, { produtoId: existente.id, codigoArquivo: '', marca: '' });
+      delete x.novoCadastro;
+      toast(`Código corrigido: é o ${existente.codigo} do cadastro (${existente.descricao}${existente.marca ? ' · ' + existente.marca : ''}).`, 6000);
+    }
+  } else if (eraNovo) {
+    // cadastrado agora pelo papelzinho: corrige o próprio cadastro
+    p.codigo = novo;
+    if (!p.descricao || p.descricao.toUpperCase() === String(x.codigoArquivo || '').toUpperCase()) p.descricao = p.descricao || novo;
+    x.codigoArquivo = '';
+    toast(`Código corrigido para ${novo} (salvo no cadastro).`);
+  } else {
+    // estava ligado a outro produto do cadastro por engano: cadastra o código certo
+    const np = { id: uid(), codigo: novo, similar: '', descricao: novo, unidade: 'UN', marca: '', categoria: '', obs: '', criadoEm: new Date().toISOString() };
+    db.produtos.push(np);
+    Object.assign(x, { produtoId: np.id, codigoArquivo: '', marca: '', novoCadastro: true });
+    toast(`${novo} não estava no cadastro: foi cadastrado. Preencha a descrição em Produtos e a marca na lista.`, 7000);
+  }
+  salvar();
+  render();
+}
+
 /** Itens desta cotação cadastrados agora pelo DataCar que ainda estão sem marca exigida. */
 function novosSemMarcaNaLista() {
   const r = rascunho();
@@ -4329,7 +4386,9 @@ function linhaItemNova(ctx, x, i) {
     const textoObs = daPlanilha.length ? obs : p.obs ? [p.obs] : [];
     return `<tr data-item-linha="${i}" ${itemNaBusca(x, p, ui.filtroItens) && itemNoTipo(ctx, x, i) ? '' : 'hidden'} class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
       <td class="c">${i + 1}</td>
-      <td>${codigoSoNaCotacao(p)
+      <td>${x.papelzinho
+        ? `<input class="cod-item cod-papel" data-codigo-papel="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código do papelzinho: corrija se veio incompleto ou errado. A correção fica salva no cadastro (se o código já existir lá, o item passa a ser o do cadastro)." aria-label="Código de ${esc(p.descricao)} (papelzinho)" spellcheck="false" autocomplete="off">`
+        : codigoSoNaCotacao(p)
         ? `<input class="cod-item ${x.codigoArquivo && x.codigoArquivo !== p.codigo ? 'so-cotacao' : ''}" data-codigo-item="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código só desta cotação: o cadastro continua ${esc(p.codigo)}." aria-label="Código de ${esc(p.descricao)} nesta cotação">`
         : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${x.papelzinho ? ' <span class="tag-papel" title="Veio dos papelzinhos de São Sebastião">PAPELZINHOS</span>' : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}" title="${origemObs}">OBS <b>${textoObs.map(esc).join(' · ')}</b></span>`
@@ -7208,7 +7267,7 @@ document.addEventListener('click', e => {
   }
   const linhaItem = e.target.closest('[data-item-linha]');
   if (linhaItem) {
-    const campo = e.target.closest('[data-marca-item], [data-similar-prod], [data-codigo-item]');
+    const campo = e.target.closest('[data-marca-item], [data-similar-prod], [data-codigo-item], [data-codigo-papel]');
     if (campo) { ui.cursorItem = +linhaItem.dataset.itemLinha; moverCursorItem(ui.cursorItem, false); campo.dataset.original = campo.value; }
     else if (!e.target.closest('button')) moverCursorItem(+linhaItem.dataset.itemLinha);
   }
@@ -8712,7 +8771,7 @@ function moverCursorItem(i, focarTabela = true) {
 
 /** Põe o foco num campo (marca ou similar) da linha i. modo: 'fim' | 'tudo' | texto inicial. */
 function focarCampoItem(i, campo, modo) {
-  const attr = { similar: 'data-similar-prod', codigo: 'data-codigo-item' }[campo] || 'data-marca-item';
+  const attr = { similar: 'data-similar-prod', codigo: 'data-codigo-item', codigoPapel: 'data-codigo-papel' }[campo] || 'data-marca-item';
   const tr = document.querySelector(`[data-item-linha="${i}"]`);
   const inp = tr && tr.querySelector(`[${attr}]`);
   if (!inp) { moverCursorItem(i); return; } // linha sem esse campo (código só nos KIT CORREIA/TENSOR)
@@ -8840,11 +8899,11 @@ async function perguntarRemoverItem(i, focar = true, doPainel = false) {
 function teclaItens(e) {
   const t = e.target;
   const tab = $('#tabItens');
-  const noCampo = t.matches('[data-marca-item], [data-similar-prod], [data-codigo-item]');
+  const noCampo = t.matches('[data-marca-item], [data-similar-prod], [data-codigo-item], [data-codigo-papel]');
   const linha = t.closest('[data-item-linha]');
   const atual = linha ? +linha.dataset.itemLinha : ui.cursorItem;
   if (noCampo) {
-    const campo = t.matches('[data-similar-prod]') ? 'similar' : t.matches('[data-codigo-item]') ? 'codigo' : 'marca';
+    const campo = t.matches('[data-similar-prod]') ? 'similar' : t.matches('[data-codigo-item]') ? 'codigo' : t.matches('[data-codigo-papel]') ? 'codigoPapel' : 'marca';
     // a lista é reordenada ao salvar (descrição, código): acha a linha do item depois de salvar
     const obj = rascunho().itens[atual];
     const posicao = () => Math.max(0, rascunho().itens.indexOf(obj));
@@ -9703,6 +9762,8 @@ async function aoMudarCampo(e) {
     const sum = t.closest('details')?.querySelector('summary');
     if (sum) sum.innerHTML = p.similar ? `<b>${esc(p.similar)}</b> ✎` : '+ similar';
     toast(p.similar ? `Similar salvo no cadastro de ${p.codigo || p.descricao}.` : 'Similar removido do cadastro.');
+  } else if (t.dataset.codigoPapel != null) {
+    corrigirCodigoPapel(+t.dataset.codigoPapel, t.value);
   } else if (t.dataset.codigoItem != null) {
     const item = rascunho().itens[+t.dataset.codigoItem];
     const p = item && db.produtos.find(x => x.id === item.produtoId);

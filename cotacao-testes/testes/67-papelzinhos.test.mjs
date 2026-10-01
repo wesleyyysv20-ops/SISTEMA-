@@ -60,3 +60,44 @@ test('papelzinhos: se tudo já está na cotação, avisa e não abre a conferên
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('papelzinhos: código editável; a correção vai para o cadastro e não repete o que já existe', async () => {
+  const s = await abrir(base({
+    produtos: [
+      { id: 'pe', codigo: 'GP30313/AMD30313', descricao: 'AMORTECEDOR DIANTEIRO', marca: 'COFAP' },
+      { id: 'pf', codigo: 'F990', descricao: 'FILTRO AR', marca: 'TECFIL' },
+      { id: 'n1', codigo: '7092DA5', descricao: '7092DA5', marca: '' },
+      { id: 'n2', codigo: 'GP3031', descricao: 'GP3031', marca: '' },
+      { id: 'n3', codigo: 'F99', descricao: 'F99', marca: '' },
+    ],
+    rascunho: { titulo: 'X', prazoResposta: '2099-12-31', obs: '', fornecedorIds: [], papelzinhos: { arquivo: 'p.ods', adicionados: 3, jaEstavam: 0 }, itens: [
+      { produtoId: 'pf', obsArquivo: ['10'] },
+      { produtoId: 'n1', papelzinho: true, novoCadastro: true },
+      { produtoId: 'n2', papelzinho: true, novoCadastro: true },
+      { produtoId: 'n3', papelzinho: true, novoCadastro: true },
+    ] },
+  }));
+  const { page } = s;
+  await page.click('nav [data-route=nova]');
+  assert.equal(await page.locator('[data-codigo-papel]').count(), 3, 'só os papelzinhos têm o código editável');
+  // 1) código incompleto, que não existe: corrige o próprio cadastro
+  await page.fill('[data-codigo-papel][value="7092DA5"]', '7092da50');
+  await page.press('[data-codigo-papel][value="7092DA5"]', 'Tab');
+  assert.equal(await page.evaluate(() => db.produtos.find(p => p.id === 'n1').codigo), '7092DA50');
+  // 2) o código certo já existe no cadastro: o item vira o produto de lá e o cadastro provisório sai
+  await page.fill('[data-codigo-papel][value="GP3031"]', 'GP30313');
+  await page.press('[data-codigo-papel][value="GP3031"]', 'Tab');
+  let r = await page.evaluate(() => ({ ids: rascunho().itens.map(x => x.produtoId), temN2: db.produtos.some(p => p.id === 'n2') }));
+  assert.ok(r.ids.includes('pe'));
+  assert.equal(r.temN2, false, 'não repete o cadastro');
+  // 3) o código certo já está na cotação: junta (o item some da lista)
+  await page.fill('[data-codigo-papel][value="F99"]', 'F990');
+  await page.press('[data-codigo-papel][value="F99"]', 'Tab');
+  r = await page.evaluate(() => ({ ids: rascunho().itens.map(x => x.produtoId), temN3: db.produtos.some(p => p.id === 'n3') }));
+  assert.deepEqual(r.ids.filter(id => id === 'pf').length, 1);
+  assert.equal(r.ids.length, 3);
+  assert.equal(r.temN3, false);
+  assert.match(await page.locator('#toast').innerText(), /F990 já estava na cotação/);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

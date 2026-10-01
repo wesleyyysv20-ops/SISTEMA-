@@ -1904,3 +1904,7 @@ a.stat-link:hover { border-color: var(--primary-2); transform: translateY(-1px);
 .uc-info { text-align: right; color: var(--muted); }
 .uc-info b { color: var(--text); }
 @media (max-width: 640px) { .ultima-cot { grid-template-columns: 60px 1fr auto; } .uc-info { display: none; } }
+
+/* código editável dos papelzinhos */
+.tab-itens input.cod-papel { width: 170px; height: 30px; font-family: var(--fonte-cod); font-weight: 700; font-size: 13.5px; border-style: dashed; border-color: color-mix(in srgb, var(--laranja) 55%, var(--line)); }
+.tab-itens input.cod-papel:focus { border-style: solid; }
