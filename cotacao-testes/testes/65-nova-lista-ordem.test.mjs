@@ -35,7 +35,7 @@ test('nova cotação: ordem por descrição, OBS ou código; similar recolhido e
   assert.deepEqual(await codigos(page), ['AA1', 'MM5', 'ZZ9']);
   // similar: sem coluna própria
   assert.equal(await page.locator('#tabItens thead th').count(), 5);
-  assert.match(await page.locator('[data-item-linha="0"] .sim-item summary').innerText(), /sim\. BKR6/);
+  assert.match(await page.locator('[data-item-linha="0"] .sim-item summary').innerText(), /^BKR6 ✎$/);
   await page.locator('[data-item-linha="1"] .sim-item summary').click();
   await page.fill('[data-item-linha="1"] [data-similar-prod]', 'UB629');
   await page.press('[data-item-linha="1"] [data-similar-prod]', 'Tab');

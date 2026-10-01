@@ -1815,3 +1815,4 @@ nav a { font-size: 14px; padding: 6px 10px; }
 }
 .sim-item { display: inline-block; margin: 2px 0 0 6px; vertical-align: middle; }
 .sim-item[open] { display: block; margin-left: 0; }
+br + .sim-item { margin-left: 0; }

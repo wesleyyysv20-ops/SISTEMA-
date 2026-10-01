@@ -4160,7 +4160,7 @@ function linhaItemNova(ctx, x, i) {
         : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}" title="${origemObs}">OBS <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}
-        <details class="sim-item"${p.similar ? '' : ''}><summary title="Códigos similares (ficam no cadastro)">${p.similar ? `sim. <b>${esc(p.similar)}</b> ✎` : '+ similar'}</summary><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Códigos similares" aria-label="Códigos similares de ${esc(p.descricao)}"></details></td>
+        ${textoObs.length || dup ? '' : '<br>'}<details class="sim-item"><summary title="Códigos similares (ficam no cadastro)">${p.similar ? `<b>${esc(p.similar)}</b> ✎` : '+ similar'}</summary><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Códigos similares" aria-label="Códigos similares de ${esc(p.descricao)}"></details></td>
       <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação (Enter duas vezes grava como padrão no cadastro).` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
       <td>${esc(p.descricao)}</td>
       <td class="c" style="white-space:nowrap">${dup ? `<button class="sm" data-act="manterItem" data-i="${i}" title="Manter na cotação e tirar o destaque">✓ Manter</button> ` : ''}<button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
@@ -9416,7 +9416,7 @@ async function aoMudarCampo(e) {
     p.similar = t.value.trim();
     salvar();
     const sum = t.closest('details')?.querySelector('summary');
-    if (sum) sum.innerHTML = p.similar ? `sim. <b>${esc(p.similar)}</b> ✎` : '+ similar';
+    if (sum) sum.innerHTML = p.similar ? `<b>${esc(p.similar)}</b> ✎` : '+ similar';
     toast(p.similar ? `Similar salvo no cadastro de ${p.codigo || p.descricao}.` : 'Similar removido do cadastro.');
   } else if (t.dataset.codigoItem != null) {
     const item = rascunho().itens[+t.dataset.codigoItem];
