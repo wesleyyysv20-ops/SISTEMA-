@@ -515,6 +515,13 @@ function assinaturaSemQtd(c) {
   return JSON.stringify([c, db.config, db.fornecedores, duvidas], (k, v) => (k === 'qtds' ? undefined : v));
 }
 
+// menu "⋯" das ações: fecha ao clicar fora ou depois de escolher
+document.addEventListener('click', e => {
+  for (const m of document.querySelectorAll('details.menu-acoes[open]')) {
+    if (!m.contains(e.target) || e.target.closest('.menu-acoes-lista button')) m.open = false;
+  }
+}, true);
+
 // arrastar o arquivo do DataCar ou dos papelzinhos para a caixa dele
 document.addEventListener('dragover', e => {
   const alvo = e.target.closest?.('[data-soltar]');
@@ -5472,8 +5479,7 @@ function renderCotacao(id) {
     const atrasado = prazo && prazo.pendentes.includes(fi);
     return `<tr>
       <td class="c"><input type="checkbox" class="sel-forn" data-sel-forn="${esc(f.fornecedorId)}" ${ui.sel.ids.has(f.fornecedorId) ? 'checked' : ''} aria-label="Marcar ${esc(f.nome)}"></td>
-      <td><b>${esc(f.nome)}</b>${f.contato ? `<br><span class="small muted">${esc(f.contato)}</span>` : ''}</td>
-      <td class="small">${esc(f.email || '—')}</td>
+      <td class="forn-cot-nome"><b>${esc(f.nome)}</b>${f.contato || f.email ? `<br><span class="small muted" title="${esc([f.contato, f.email].filter(Boolean).join(' · '))}">${esc([f.contato, f.email].filter(Boolean).join(' · '))}</span>` : ''}</td>
       <td>${f.concluidoEm
         ? `<button type="button" class="badge concluida" data-act="reabrirForn" data-f="${fi}" title="Pedido exportado em ${fmtData(f.concluidoEm)}. Clique para reabrir.">✓ Concluída</button>`
         : `${f.enviadoEm ? `<span class="badge ok">${fmtData(f.enviadoEm)}</span>` : '<span class="badge">não enviada</span>'}${pedidosPorFornecedor(c).some(p => p.fi === fi) ? ` <button type="button" class="link small marcar-concluida" data-act="marcarConcluida" data-f="${fi}" title="Já exportou o pedido deste fornecedor por outro caminho? Marque a cotação dele como concluída">✓ marcar concluída</button>` : ''}`}</td>
@@ -5481,10 +5487,14 @@ function renderCotacao(id) {
       <td class="r">${f.respondidoEm ? fmtMoeda(t.total) : '—'}</td>
       <td class="actions-cell">
         ${botaoExportarForn(f, fi, pedidoDe[fi]?.itens.length || 0)}
-        <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥 Importar<input type="file" class="hidden" accept=".xlsx,.xls" data-import="${fi}"></label>
-        <button class="sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎ Digitar</button>
-        <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="Baixar a planilha de cotação deste fornecedor (para enviar a ele)">⬇ Excel</button>
-        <button class="sm danger" data-act="removerFornCot" data-f="${fi}" title="Remover da cotação">✕</button>
+        <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥<span class="rot-acao"> Importar</span><input type="file" class="hidden" accept=".xlsx,.xls" data-import="${fi}"></label>
+        <details class="menu-acoes"><summary class="btn sm" title="Mais ações: digitar preços, baixar a planilha, remover">⋯</summary>
+          <div class="menu-acoes-lista">
+            <button class="sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎ Digitar preços</button>
+            <button class="sm" data-act="baixarPlanilha" data-f="${fi}" title="Baixar a planilha de cotação deste fornecedor (para enviar a ele)">⬇ Planilha (Excel)</button>
+            <button class="sm danger" data-act="removerFornCot" data-f="${fi}" title="Remover da cotação">✕ Remover da cotação</button>
+          </div>
+        </details>
       </td>
     </tr>`;
   }).join('');
@@ -5680,7 +5690,7 @@ function renderCotacao(id) {
     <div id="fornPendCot">${temResposta ? htmlResumoFornCot(c).chips : ''}</div>
     <div class="corpo-recolhe" ${fornCotAberto() ? '' : 'hidden'}>
     ${nf ? `<div class="table-wrap"><table>
-      <thead><tr><th class="c"><input type="checkbox" class="sel-forn" data-sel-todos ${nf && ui.sel.ids.size === nf ? 'checked' : ''} title="Marcar todos" aria-label="Marcar todos"></th><th>Fornecedor</th><th>E-mail</th><th>Envio</th><th>Resposta</th><th class="r">Total</th><th>Ações</th></tr></thead>
+      <thead><tr><th class="c"><input type="checkbox" class="sel-forn" data-sel-todos ${nf && ui.sel.ids.size === nf ? 'checked' : ''} title="Marcar todos" aria-label="Marcar todos"></th><th>Fornecedor</th><th>Envio</th><th>Resposta</th><th class="r">Total</th><th>Ações</th></tr></thead>
       <tbody>${fornRows}</tbody></table></div>` : '<p class="empty">Nenhum fornecedor nesta cotação.</p>'}
     <div class="row" style="margin-top:10px">
       ${disponiveis.length ? `<select id="addFornCot" style="width:auto;max-width:280px">${disponiveis.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select>
@@ -5694,9 +5704,9 @@ function renderCotacao(id) {
       <button class="sm" data-act="zipMarcados" data-sel-btn title="Um arquivo .zip com a planilha de cada fornecedor marcado">⬇ Planilhas dos marcados (.zip)</button>
       <button class="sm" data-act="cobrarMarcados" data-sel-btn title="E-mail de lembrete para quem ainda não respondeu">📣 Cobrar os marcados</button>
     </div>` : ''}
-    <p class="tip"><b>Para vários de uma vez:</b> marque os fornecedores e clique em <b>✉ Enviar para os marcados</b>: você baixa todas as planilhas num .zip e abre os e-mails um atrás do outro (ou um e-mail só, com todos em cópia oculta).<br>
+    <details class="tip ajuda-envio"><summary>ⓘ Como enviar e receber as planilhas</summary><b>Para vários de uma vez:</b> marque os fornecedores e clique em <b>✉ Enviar para os marcados</b>: você baixa todas as planilhas num .zip e abre os e-mails um atrás do outro (ou um e-mail só, com todos em cópia oculta).<br>
     <b>Para um só:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
-    Quando o fornecedor devolver a planilha preenchida, use <b>📥 Importar</b> para lançar os preços automaticamente.</p>
+    Quando o fornecedor devolver a planilha preenchida, use <b>📥 Importar</b> para lançar os preços automaticamente.</details>
     </div>
   </section>
 
@@ -5736,7 +5746,7 @@ function renderCotacao(id) {
       if (qtdAlertas) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso atencao aviso-alertas" data-tipo="alertas" title="Clique para ver só esses itens. Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} fora do normal</button>`);
       const fa = filtroAviso(c);
       const ets = et.map(x => (fa && x.includes(`data-tipo="${fa}"`) ? x.replace('class="pill-aviso', 'class="pill-aviso ativo') : x));
-      return et.length ? `<div class="avisos-comp" data-filtro="${fa}">${ets.join('')}<button type="button" class="link limpar-aviso" data-act="filtroAviso" data-tipo="${fa}" ${fa ? '' : 'hidden'}>✕ ver todos</button></div>` : '';
+      return et.length ? `<div class="avisos-comp${c.status === 'finalizada' ? ' discreto' : ''}" data-filtro="${fa}">${ets.join('')}<button type="button" class="link limpar-aviso" data-act="filtroAviso" data-tipo="${fa}" ${fa ? '' : 'hidden'}>✕ ver todos</button></div>` : '';
     })()}
     </div>
     ${tabelaComp}

@@ -1853,3 +1853,32 @@ br + .sim-item { margin-left: 0; }
 /* aviso (toast) escondido de verdade quando não há mensagem */
 #toast:not(.show) { visibility: hidden; transition: transform .25s, visibility 0s .25s; }
 .checklist label > span > br { display: none; }
+/* ===== cotação: números do topo numa linha, barra do comparativo sem quebrar, finalizada discreta ===== */
+.card-cab-cot .resumo-cot { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 6px; }
+.card-cab-cot .rc-kpi { padding: 7px 10px; }
+.card-cab-cot .rc-kpi b { font-size: clamp(14px, 1.6vw, 18px); }
+.card-cab-cot .rc-rot { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.filtro-venc select { max-width: 230px; }
+@media (max-width: 1100px) {
+  .busca-comp { width: 150px; }
+  .filtro-venc-rot { display: none; }
+  .filtro-venc select { max-width: 200px; }
+  .btn-pip { padding-left: 9px; padding-right: 9px; }
+}
+.avisos-comp.discreto .pill-aviso { background: var(--card-2); border-color: var(--line); color: var(--muted); font-weight: 500; font-size: 12px; padding: 2px 9px; }
+.avisos-comp.discreto .pill-aviso.ativo { color: var(--text); border-color: var(--primary-2); }
+/* cotação: quadro Fornecedores compacto */
+.forn-cot-nome .small { display: inline-block; max-width: 230px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.corpo-recolhe .badge { white-space: nowrap; }
+.corpo-recolhe .actions-cell { white-space: nowrap; }
+.ajuda-envio { padding: 8px 12px; }
+.ajuda-envio > summary { cursor: pointer; font-weight: 600; }
+.ajuda-envio[open] > summary { margin-bottom: 6px; }
+@media (max-width: 1100px) { .corpo-recolhe .rot-acao { display: none; } }
+/* menu "⋯" das ações do fornecedor */
+.menu-acoes { display: inline-block; position: relative; vertical-align: middle; }
+.menu-acoes > summary { list-style: none; cursor: pointer; padding: 3px 10px; font-weight: 800; letter-spacing: .05em; }
+.menu-acoes > summary::-webkit-details-marker { display: none; }
+.menu-acoes-lista { position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; display: flex; flex-direction: column; gap: 4px; min-width: 190px; padding: 6px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 10px 28px rgba(10, 18, 40, .18); }
+.menu-acoes-lista button { justify-content: flex-start; width: 100%; text-align: left; }
+.corpo-recolhe .table-wrap { overflow: visible; }

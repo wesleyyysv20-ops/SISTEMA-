@@ -10,7 +10,7 @@ async function abrirDigitar() {
   const s = await abrir(base({ cotacoes: [cotacao('c1', '0039', '2026-09-29', 'aberta', itens, [forn('f1', 'KAIZEN', { 1: { preco: 189.26, marca: 'COFAP/12', estoque: 12 } })])] }));
   await s.page.click('nav [data-route=cotacoes]');
   await s.page.click('[data-route=cotacao][data-id=c1]');
-  await s.page.click('[data-act=digitar][data-f="0"]');
+  await s.page.click('details.menu-acoes:has([data-act=digitar][data-f="0"]) > summary').then(() => s.page.click('[data-act=digitar][data-f="0"]'));
   return s;
 }
 

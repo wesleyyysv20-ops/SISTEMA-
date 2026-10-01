@@ -44,7 +44,7 @@ test('planilha nova do fornecedor com o preço corrigido: o aviso do item també
   const { page } = s;
   await page.click('nav [data-route=cotacoes]');
   await page.click('[data-route=cotacao][data-id=c1]');
-  const arq = await salvarDepois(s, () => page.click('[data-act=baixarPlanilha][data-f="0"]'));
+  const arq = await salvarDepois(s, () => page.click('details.menu-acoes:has([data-act=baixarPlanilha][data-f="0"]) > summary').then(() => page.click('[data-act=baixarPlanilha][data-f="0"]')));
   const wb = await lerXlsx(arq.buffer);
   const ws = wb.getWorksheet('Cotação');
   ws.getCell('G3').value = 1.6; ws.getCell('H3').value = 'PHILIPS'; // corrigido (ainda +130%)

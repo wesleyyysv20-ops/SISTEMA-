@@ -43,7 +43,7 @@ test('planilha enviada: códigos repetidos em vermelho; comparativo marca KIT e 
   const { page } = s;
   await page.click('nav [data-route=cotacoes]');
   await page.click('[data-route=cotacao][data-id=c1]');
-  const arq = await salvarDepois(s, () => page.click('[data-act=baixarPlanilha][data-f="0"]'));
+  const arq = await salvarDepois(s, () => page.click('details.menu-acoes:has([data-act=baixarPlanilha][data-f="0"]) > summary').then(() => page.click('[data-act=baixarPlanilha][data-f="0"]')));
   const ws = (await lerXlsx(arq.buffer)).getWorksheet('Cotação');
   const vermelhos = [3, 4, 5, 6].map(r => [valor(ws.getCell(`B${r}`)), ws.getCell(`B${r}`).font?.color?.argb === 'FFFF0000']);
   assert.deepEqual(vermelhos, [['40123', true], ['40123-KITCIA', true], ['CT1234', false], ['GB48167', false]]);

@@ -51,3 +51,18 @@ test('mudança vinda da nuvem não redesenha com a lista suspensa aberta nem com
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('quadro Fornecedores: menu "⋯" com digitar, planilha e remover; fecha ao clicar fora', async () => {
+  const s = await abrirCot();
+  const { page } = s;
+  await page.evaluate(() => { localStorage.setItem('cotacao.fornAberto', '1'); render(); });
+  const menu = page.locator('details.menu-acoes').first();
+  assert.equal(await menu.locator('[data-act=digitar]').isVisible(), false, 'fechado');
+  await menu.locator('summary').click();
+  assert.equal(await menu.locator('[data-act=digitar]').isVisible(), true);
+  assert.equal(await menu.locator('[data-act=removerFornCot]').isVisible(), true);
+  await page.mouse.click(5, 5);
+  assert.equal(await page.locator('details.menu-acoes[open]').count(), 0);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

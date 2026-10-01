@@ -19,7 +19,7 @@ test('importa várias planilhas respondidas de uma vez e mostra o resumo', async
   const precos = { 0: [10, 20], 1: [11, 19], 2: [12, null] };
   const arquivos = [];
   for (const fi of [0, 1, 2]) {
-    const arq = await salvarDepois(s, () => page.click(`[data-act=baixarPlanilha][data-f="${fi}"]`));
+    const arq = await salvarDepois(s, () => page.click(`details.menu-acoes:has([data-act=baixarPlanilha][data-f="${fi}"]) > summary`).then(() => page.click(`[data-act=baixarPlanilha][data-f="${fi}"]`)));
     const wb = await lerXlsx(arq.buffer);
     const ws = wb.getWorksheet('Cotação');
     precos[fi].forEach((v, k) => { if (v != null) { ws.getCell(`G${3 + k}`).value = v; ws.getCell(`H${3 + k}`).value = 'MARCA' + fi; } });

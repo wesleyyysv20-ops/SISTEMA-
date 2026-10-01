@@ -19,7 +19,7 @@ const dados = () => base({
 async function planilhaDoFornecedor(s, fi) {
   await s.page.click('nav [data-route=cotacoes]');
   await s.page.click('[data-route=cotacao][data-id=c1]');
-  return salvarDepois(s, () => s.page.click(`[data-act=baixarPlanilha][data-f="${fi}"]`));
+  return salvarDepois(s, () => s.page.click(`details.menu-acoes:has([data-act=baixarPlanilha][data-f="${fi}"]) > summary`).then(() => s.page.click(`[data-act=baixarPlanilha][data-f="${fi}"]`)));
 }
 
 test('importa a planilha devolvida pelo fornecedor (VALOR e MARCA)', async () => {
