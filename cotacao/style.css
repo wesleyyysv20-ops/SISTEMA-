@@ -2005,3 +2005,21 @@ tr.linha-cot:hover td { background: var(--hover); }
 .lista-prazo li .sm { margin-left: auto; }
 .envio-cot { white-space: nowrap; }
 .envio-cot .conf-receb { vertical-align: middle; margin-right: 4px; }
+
+/* cadastros: formulário recolhido em "+ Adicionar …" (abre sozinho ao editar) */
+.form-novo { margin-top: 10px; }
+.form-novo > summary { list-style: none; display: inline-flex; cursor: pointer; }
+.form-novo > summary::-webkit-details-marker { display: none; }
+.form-novo[open] > summary { margin-bottom: 12px; }
+.limpeza-cad > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.limpeza-cad[open] > summary { margin-bottom: 10px; }
+#tbForn td:nth-child(4) { white-space: nowrap; }
+.cab-cadastro { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.cab-cadastro > .row-between { order: 1; flex: 1 1 auto; }
+.cab-cadastro > details.form-novo { order: 2; margin-top: 0; }
+.cab-cadastro > details.form-novo[open] { flex-basis: 100%; order: 4; }
+.cab-cadastro > p { order: 3; flex-basis: 100%; margin: 0; }
+#tbProd .cod-prod .cod-comp { font-weight: 700; }
+#tbProd .actions-cell .sm.danger, #tbForn .actions-cell .sm.danger { color: var(--muted); border-color: var(--line); background: transparent; }
+#tbProd tr:hover .actions-cell .sm.danger, #tbForn tr:hover .actions-cell .sm.danger { color: var(--danger); border-color: var(--danger); }
+.card:has(> details.limpeza-cad:not([open])) { padding-top: 12px; padding-bottom: 12px; }

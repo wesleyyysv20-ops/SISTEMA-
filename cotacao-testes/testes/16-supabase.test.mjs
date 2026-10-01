@@ -16,6 +16,7 @@ test('Supabase: login, dados salvos na nuvem e sessão lembrada', async () => {
   assert.equal(await page.evaluate(() => db.fornecedores.map(f => f.nome).join()), 'Auto Mix', 'carregou os dados do Supabase');
   // cadastra um produto: vai para o Supabase
   await page.evaluate(() => ir('produtos'));
+  await page.click('details.form-novo > summary'); // + Adicionar produto
   await page.fill('[data-form=produto] [name=codigo]', 'GB48167');
   await page.fill('[data-form=produto] [name=descricao]', 'AMORTECEDOR TRASEIRO');
   await page.fill('[data-form=produto] [name=marca]', 'SÓ COFAP');

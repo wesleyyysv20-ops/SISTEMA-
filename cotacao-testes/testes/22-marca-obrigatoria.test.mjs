@@ -33,7 +33,7 @@ test('produtos sem marca exigida: aviso e exclusão com confirmação (tira tamb
   await page.click('.dlg button.danger');
   assert.deepEqual(await codigos(page), ['A1', 'D4', 'E5', 'F6']);
   assert.deepEqual(await page.evaluate(() => db.rascunho.itens.map(x => x.produtoId)), ['p1']);
-  assert.match(await page.locator('section:has(h3:text("Limpeza do cadastro"))').innerText(), /Todos os produtos têm marca exigida/);
+  assert.match(await page.locator('details.limpeza-cad').innerText(), /todos com marca[\s\S]*Todos os produtos têm marca exigida/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

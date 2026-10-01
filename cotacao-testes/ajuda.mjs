@@ -106,6 +106,12 @@ export function valor(cell) {
 
 export async function irPara(page, rota, id) {
   await page.evaluate(([r, i]) => ir(r, i), [rota, id ?? null]);
+  await abrirSecoes(page);
+}
+
+/** Abre as seções recolhidas dos cadastros ("+ Adicionar …", limpeza do cadastro), como quem clica nelas. */
+export async function abrirSecoes(page) {
+  await page.evaluate(() => document.querySelectorAll('#app details.form-novo, #app details.limpeza-cad').forEach(d => { d.open = true; }));
 }
 
 /* ---------- dados de exemplo ---------- */

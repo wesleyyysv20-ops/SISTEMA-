@@ -5899,10 +5899,10 @@ function linhasProdutos() {
     const u = h?.[h.length - 1];
     const aberto = ui.histProd === p.id && h;
     return `<tr${aberto ? ' class="hist-aberto"' : ''}>
-      <td>${esc(p.codigo || '—')}${p.similar ? `<br><span class="small muted">sim. ${esc(p.similar)}</span>` : ''}</td>
+      <td class="cod-prod"><span class="cod-comp">${esc(p.codigo || '—')}</span>${p.similar ? `<br><span class="small muted">sim. ${esc(p.similar)}</span>` : ''}</td>
       <td>${esc(p.descricao)}${p.obs ? `<br><span class="small muted">${esc(p.obs)}</span>` : ''}</td>
       <td class="c">${esc(p.unidade)}</td>
-      <td>${esc(p.marca)}</td>
+      <td>${p.marca ? esc(p.marca) : '<span class="badge warn" title="Sem marca exigida: preencha (QUALQUER, SÓ COFAP…)">⚠ sem marca</span>'}</td>
       <td>${esc(p.categoria)}</td>
       <td class="r">${u ? `<div class="ult-preco">
           ${graficoPrecos(h, false)}
@@ -6038,7 +6038,7 @@ function trocadorDeMarca(de, para) {
 function cartaoLimpezaProdutos() {
   const sem = produtosSemMarca();
   return `<section class="card">
-    <h3>Limpeza do cadastro</h3>
+    <details class="limpeza-cad"><summary><b>🧹 Limpeza do cadastro</b> ${sem.length ? `<span class="badge warn">⚠ ${sem.length} sem marca exigida</span>` : '<span class="badge ok">✓ todos com marca</span>'} <span class="small muted">· trocar marca em todos os produtos</span></summary>
     ${sem.length ? `<div class="aviso-recusa small" style="margin-bottom:10px">⚠ <b>${sem.length} produto(s) sem marca exigida.</b> Preencha a marca na cotação (ela fica salva no cadastro) ou edite aqui (QUALQUER, SÓ COFAP…).
       <div style="margin:6px 0">${sem.slice(0, 10).map(p => `<span class="badge">${esc(p.codigo || '—')}</span> ${esc(p.descricao)}`).join('<br>')}${sem.length > 10 ? `<br>… e mais ${sem.length - 10}` : ''}</div>
       <button type="button" class="sm danger" data-act="excluirSemMarca">🗑 Excluir os ${sem.length} produto(s) sem marca</button>
@@ -6049,6 +6049,7 @@ function cartaoLimpezaProdutos() {
       <label>Para<input name="para" required placeholder="Ex.: FREMAX" autocomplete="off"></label>
       <button class="sm primary">Trocar…</button>
     </form>
+    </details>
   </section>`;
 }
 
@@ -6056,8 +6057,10 @@ function renderProdutos() {
   const p = ui.editProd ? db.produtos.find(x => x.id === ui.editProd) : null;
   const v = p || { unidade: 'UN' };
   return `
-  <section class="card">
-    <h2>${p ? 'Editar produto' : 'Produtos'} <span class="badge">${db.produtos.length}</span></h2>
+  <section class="card cab-cadastro">
+    <div class="row-between"><h2 style="margin:0">${p ? 'Editar produto' : 'Produtos'} <span class="badge">${db.produtos.length}</span></h2></div>
+    <details class="form-novo"${p ? ' open' : ''}>
+    <summary class="btn${p ? '' : ' btn-primary'}">${p ? '✎ Editando: ' + esc(p.codigo || p.descricao) : '+ Adicionar produto'}</summary>
     <form data-form="produto" class="grid">
       <label>Código<input name="codigo" value="${esc(v.codigo)}"></label>
       <label style="grid-column:span 2">Descrição *<input name="descricao" required value="${esc(v.descricao)}"></label>
@@ -6072,6 +6075,7 @@ function renderProdutos() {
         <button class="primary">${p ? 'Salvar alterações' : '+ Adicionar produto'}</button>
       </div>
     </form>
+    </details>
   </section>
   ${cartaoLimpezaProdutos()}
   <section class="card">
@@ -7033,9 +7037,11 @@ function renderDuvidas() {
     .sort((a, b) => (a === SEM_FORN_DUV) - (b === SEM_FORN_DUV) || COLLATOR.compare(a, b));
   const contaForn = fo => todosGrupos.filter(g => fornDuvida(g[0]) === fo).length;
   return `
-  <section class="card">
-    <h2>Dúvidas <span class="badge">${duvidasDaTela().length}</span></h2>
-    <p class="muted small" style="margin-top:0">Itens que dependem da confirmação da loja antes de fechar a compra (marca diferente, preço estranho…). Monte a lista e copie o texto para o WhatsApp. No comparativo, o botão <b>❓</b> de cada item pergunta a loja (uma ou as duas), a quantidade e a observação e traz o item para cá já preenchido.</p>
+  <section class="card cab-cadastro">
+    <div class="row-between"><h2 style="margin:0">Dúvidas <span class="badge">${duvidasDaTela().length}</span></h2></div>
+    <p class="muted small" style="margin-top:0">Itens que dependem da confirmação da loja (marca diferente, preço estranho…). No comparativo, o botão ❓ manda o item para cá; depois é só copiar o texto para o WhatsApp.</p>
+    <details class="form-novo"${ed ? ' open' : ''}>
+    <summary class="btn${ed ? '' : ' btn-primary'}">${ed ? '✎ Editando a dúvida' : '+ Inserir item à mão'}</summary>
     <form data-form="duvida" class="grid form-duvida">
       ${ed ? '' : `<label>Empresa<select name="empresa">${emps.map(e => `<option ${v.empresa === e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></label>`}
       <label>Código do produto<input name="codigo" required value="${esc(v.codigo)}" autocomplete="off"></label>
@@ -7048,6 +7054,7 @@ function renderDuvidas() {
         <button class="primary">${ed ? 'Salvar alteração' : '+ Inserir item'}</button>
       </div>
     </form>
+    </details>
   </section>
   <div class="duvidas-grid">
     <section class="card">
@@ -7082,8 +7089,10 @@ function renderFornecedores() {
   const f = ui.editForn ? db.fornecedores.find(x => x.id === ui.editForn) : null;
   const v = f || {};
   return `
-  <section class="card">
-    <h2>${f ? 'Editar fornecedor' : 'Fornecedores'} <span class="badge">${db.fornecedores.length}</span></h2>
+  <section class="card cab-cadastro">
+    <div class="row-between"><h2 style="margin:0">${f ? 'Editar fornecedor' : 'Fornecedores'} <span class="badge">${db.fornecedores.length}</span></h2></div>
+    <details class="form-novo"${f ? ' open' : ''}>
+    <summary class="btn${f ? '' : ' btn-primary'}">${f ? '✎ Editando: ' + esc(f.nome) : '+ Adicionar fornecedor'}</summary>
     <form data-form="fornecedor" class="grid">
       <label>Nome / empresa *<input name="nome" required value="${esc(v.nome)}"></label>
       <label>Atendente (pessoa)<input name="contato" value="${esc(v.contato)}"></label>
@@ -7100,6 +7109,7 @@ function renderFornecedores() {
         <button class="primary">${f ? 'Salvar alterações' : '+ Adicionar fornecedor'}</button>
       </div>
     </form>
+    </details>
   </section>
   <section class="card">
     <input id="filtroForn" placeholder="Buscar fornecedor…" value="${esc(ui.filtroForn)}" style="margin-bottom:10px">
