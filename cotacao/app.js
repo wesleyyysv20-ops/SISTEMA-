@@ -515,6 +515,13 @@ function assinaturaSemQtd(c) {
   return JSON.stringify([c, db.config, db.fornecedores, duvidas], (k, v) => (k === 'qtds' ? undefined : v));
 }
 
+// lista de cotações: clicar em qualquer lugar da linha abre a cotação
+document.addEventListener('click', e => {
+  const tr = e.target.closest?.('tr[data-abrir-cot]');
+  if (!tr || e.target.closest('a, button, input, label, select')) return;
+  ir('cotacao', tr.dataset.abrirCot);
+});
+
 // menu "⋯" das ações: fecha ao clicar fora ou depois de escolher
 document.addEventListener('click', e => {
   for (const m of document.querySelectorAll('details.menu-acoes[open]')) {
@@ -575,6 +582,12 @@ function renderSeguro(caminhos = null) {
       if (pip.win && !pip.win.closed && pip.cotId === c.id) desenharPip(false);
       return;
     }
+  }
+  // digitando preços sem salvar: espera (os valores ficam no rascunho, mas o cursor e a rolagem não pulam)
+  if (ui.digitando?.rasc && Object.keys(ui.digitando.rasc).length && document.querySelector('#painelDigitar')) {
+    clearTimeout(ui.timerRenderAdiado);
+    ui.timerRenderAdiado = setTimeout(() => renderSeguro(), 2000);
+    return;
   }
   // editando as configurações sem salvar: não redesenha (apagaria o que foi digitado)
   if (ui.cfgSujo && rota().nome === 'config' && document.querySelector('.form-cfg')) return;
@@ -4536,16 +4549,20 @@ function linhasCotacoes() {
     .filter(c => (ui.verArquivadas ? !!c.arquivada : !c.arquivada))
     .filter(c => !ui.statusCot || c.status === ui.statusCot)
     .filter(c => !q || semAcento(`${c.numero} ${c.titulo} ${c.fornecedores.map(f => f.nome).join(' ')} ${c.itens.map(i => i.descricao + ' ' + i.codigo).join(' ')}`).includes(q));
-  if (!lista.length) return `<tr><td colspan="7" class="empty">${ui.verArquivadas ? 'Nenhuma cotação arquivada.' : 'Nenhuma cotação encontrada.'}</td></tr>`;
+  if (!lista.length) return `<tr><td colspan="8" class="empty">${ui.verArquivadas ? 'Nenhuma cotação arquivada.' : 'Nenhuma cotação encontrada.'}</td></tr>`;
   return lista.map(c => {
     const resp = c.fornecedores.filter(f => f.respondidoEm).length;
     const { melhor, itensCotados } = comparar(c);
-    return `<tr>
+    const peds = itensCotados ? pedidosPorFornecedor(c) : [];
+    const comPed = new Set([...peds.map(p => p.fi), ...c.fornecedores.map((f, fi) => (f.concluidoEm ? fi : -1)).filter(fi => fi >= 0)]);
+    const exp = [...comPed].filter(fi => c.fornecedores[fi].concluidoEm).length;
+    return `<tr class="linha-cot" data-abrir-cot="${esc(c.id)}" title="Abrir a cotação nº ${esc(c.numero)}">
       <td><a href="#" data-route="cotacao" data-id="${c.id}"><b>${esc(c.numero)}</b></a><span class="presenca-lista" data-cot="${esc(c.id)}">${htmlPresencaLista(c.id)}</span></td>
       <td>${fmtData(c.data)}</td>
       <td class="titulo-cot">${esc(c.titulo || '—')} <button type="button" class="link editar-titulo" data-act="editarTituloCot" data-id="${esc(c.id)}" title="Editar o título da cotação" aria-label="Editar o título da cotação nº ${esc(c.numero)}">✎</button></td>
       <td class="c">${c.itens.length}</td>
       <td class="c"><span class="badge ${resp === c.fornecedores.length && resp ? 'ok' : resp ? 'warn' : ''}">${resp}/${c.fornecedores.length}</span></td>
+      <td class="c">${comPed.size ? `<span class="badge ${exp === comPed.size ? 'ok' : exp ? 'warn' : ''}">${exp}/${comPed.size}</span>` : '<span class="muted">—</span>'}</td>
       <td class="r">${itensCotados ? fmtMoeda(melhor) : '—'}</td>
       <td>${statusBadge(c.status)}</td>
     </tr>`;
@@ -4560,7 +4577,12 @@ function avisosPrazo() {
     <ul class="lista-prazo">${lista.map(({ c, s }) => `<li>
       <a href="#" data-route="cotacao" data-id="${c.id}"><b>Cotação nº ${esc(c.numero)}</b></a>
       <span class="badge ${s.dias < 0 ? 'danger' : 'warn'}">${textoPrazo(s.dias, c.prazoHora)}</span>
-      <span class="small">faltam: ${s.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</span>
+      ${(() => {
+        const nomes = s.pendentes.map(fi => c.fornecedores[fi].nome);
+        const conf = s.pendentes.filter(fi => c.fornecedores[fi].confirmadoEm).length;
+        return `<span class="small" title="${esc(nomes.join(', '))}">faltam <b>${nomes.length}</b>: ${esc(nomes.slice(0, 4).join(', '))}${nomes.length > 4 ? ` e mais ${nomes.length - 4}` : ''}${conf ? ` · ${conf} confirmaram o recebimento` : ''}</span>
+      <button type="button" class="sm" data-act="cobrarCot" data-id="${esc(c.id)}" title="E-mail de lembrete para quem ainda não respondeu">📣 Cobrar</button>`;
+      })()}
     </li>`).join('')}</ul>
   </section>`;
 }
@@ -4599,22 +4621,22 @@ function renderCotacoes() {
     <div class="row-between">
       <h2>Cotações</h2>
       <div class="row">
-        <label class="btn" style="margin:0">📥 Importar planilhas respondidas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>
-        <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido de compra">🧾 Conferir NF-e (XML)<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
+        ${abertas.length ? '<label class="btn" style="margin:0" title="Importar as planilhas que os fornecedores devolveram (o sistema acha a cotação e o fornecedor de cada uma)">📥 Importar respostas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>' : ''}
+        <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido de compra">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
       </div>
     </div>
     <div class="stats">
-      <div class="stat"><span class="muted small">Cotações na lista</span><b>${visiveis.length}</b>${nArq ? `<span class="small muted">+ ${nArq} arquivada(s)</span>` : ''}</div>
-      <div class="stat"><span class="muted small">Abertas</span><b>${abertas.length}</b></div>
-      <div class="stat"><span class="muted small">Respostas pendentes</span><b>${aguardando}</b></div>
+      <a href="#" class="stat stat-link" data-act="filtroStatusCot" data-status="" title="Ver todas"><span class="muted small">Cotações na lista</span><b>${visiveis.length}</b>${nArq ? `<span class="small muted">+ ${nArq} arquivada(s)</span>` : ''}</a>
+      <a href="#" class="stat stat-link" data-act="filtroStatusCot" data-status="aberta" title="Ver só as abertas"><span class="muted small">Abertas</span><b>${abertas.length}</b></a>
+      <a href="#" class="stat stat-link${aguardando ? ' stat-atencao' : ''}" data-act="filtroStatusCot" data-status="aberta" title="Ver as abertas (onde faltam respostas)"><span class="muted small">Respostas pendentes</span><b>${aguardando}</b></a>
     </div>
-    <div class="row">
-      <input class="grow" id="filtroCot" placeholder="Buscar por nº, título, fornecedor ou produto…" value="${esc(ui.filtroCot)}">
-      <select id="statusCot" style="width:auto">
-        <option value="">Todos os status</option>
-        ${Object.entries(STATUS).map(([k, [t]]) => `<option value="${k}" ${ui.statusCot === k ? 'selected' : ''}>${t}</option>`).join('')}
-      </select>
+    <div class="row filtros-cot">
+      <input class="grow" id="filtroCot" placeholder="🔎 Buscar por nº, título, fornecedor ou produto…" value="${esc(ui.filtroCot)}">
+      <div class="chips-status" role="group" aria-label="Status">${[['', 'Todas'], ...Object.entries(STATUS).map(([k, [t]]) => [k, t + 's'])].map(([k, t]) => {
+        const n = k ? visiveis.filter(c => c.status === k).length : visiveis.length;
+        return `<button type="button" class="chip-status${(ui.statusCot || '') === k ? ' ativo' : ''}" data-act="filtroStatusCot" data-status="${k}">${t} <b>${n}</b></button>`;
+      }).join('')}</div>
       ${nArq || ui.verArquivadas ? `<label class="check-inline"><input type="checkbox" id="verArquivadas" ${ui.verArquivadas ? 'checked' : ''}> Ver só as arquivadas (${nArq})</label>` : ''}
     </div>
   </section>
@@ -4622,7 +4644,7 @@ function renderCotacoes() {
   ${sugestaoArquivar()}
   <section class="card table-wrap">
     <table>
-      <thead><tr><th>Nº</th><th>Data</th><th>Título</th><th class="c">Itens</th><th class="c">Respostas</th><th class="r">Melhor total</th><th>Status</th></tr></thead>
+      <thead><tr><th>Nº</th><th>Data</th><th>Título</th><th class="c">Itens</th><th class="c">Respostas</th><th class="c" title="Pedidos exportados / fornecedores com pedido">Pedidos</th><th class="r">Melhor total</th><th>Status</th></tr></thead>
       <tbody id="tbCot">${linhasCotacoes()}</tbody>
     </table>
   </section>`;
@@ -5629,29 +5651,33 @@ function renderCotacao(id) {
   if (ui.digitando && ui.digitando.cotId === c.id && c.fornecedores[ui.digitando.fi]) {
     const fi = ui.digitando.fi;
     const f = c.fornecedores[fi];
+    // o que já foi digitado e ainda não salvo (o redesenho da tela não pode apagar)
+    const rasc = ui.digitando.rasc || {};
+    const val = (nome, salvo) => (nome in rasc ? rasc[nome] : salvo ?? '');
     painel = `
     <section class="card" id="painelDigitar">
       <h3>Digitar preços — ${esc(f.nome)}</h3>
       <form data-form="precosManuais" data-f="${fi}">
         <div class="table-wrap"><table>
-          <thead><tr><th class="c">#</th><th>Código</th><th>Marca pedida</th><th>Descrição</th><th class="r">Qtd.</th><th class="r">Preço unit. (R$)</th><th>Prazo</th><th>Observação</th></tr></thead>
+          <thead><tr><th class="c">#</th><th>Código</th><th>Marca pedida</th><th>Descrição</th><th class="r">Qtd.</th><th class="r">Preço unit. (R$)</th><th>Marca</th><th>Prazo</th><th>Observação</th></tr></thead>
           <tbody>${c.itens.map((it, i) => {
             const rr = f.respostas?.[i] || {};
             return `<tr>
               <td class="c">${i + 1}</td>
               <td class="cod-digitar">${esc(it.codigo || '—')}</td>
-              <td>${it.marca ? `<span class="marca-pedida">${esc(it.marca)}</span>` : '<span class="muted">—</span>'}${rr.marca ? `<br><span class="small muted" title="Marca que o fornecedor respondeu">respondeu: ${esc(rr.marca)}</span>` : ''}</td>
+              <td>${it.marca ? `<span class="marca-pedida">${esc(it.marca)}</span>` : '<span class="muted">—</span>'}</td>
               <td>${esc(it.descricao)} <span class="muted small">${esc(it.unidade)}</span></td>
               <td class="r">${fmtNum(it.quantidade)}</td>
-              <td style="width:140px"><input class="price" inputmode="decimal" name="p_${i}" value="${rr.preco != null ? esc(rr.preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : ''}"></td>
-              <td style="width:120px"><input name="z_${i}" value="${esc(rr.prazo)}"></td>
-              <td><input name="o_${i}" value="${esc(rr.obs)}"></td>
+              <td style="width:130px"><input class="price" inputmode="decimal" name="p_${i}" value="${esc(val(`p_${i}`, rr.preco != null ? rr.preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : ''))}" autocomplete="off"></td>
+              <td style="width:150px"><input class="marca-digitar" name="m_${i}" value="${esc(val(`m_${i}`, rr.marca))}" placeholder="marca" autocomplete="off" title="Marca que o fornecedor informou${f.nome && /kaizen/i.test(f.nome) ? ' (Kaizen: pode digitar MARCA/estoque)' : ''}"></td>
+              <td style="width:110px"><input name="z_${i}" value="${esc(val(`z_${i}`, rr.prazo))}" autocomplete="off"></td>
+              <td><input name="o_${i}" value="${esc(val(`o_${i}`, rr.obs))}" autocomplete="off"></td>
             </tr>`;
           }).join('')}</tbody>
         </table></div>
         <p class="small muted" style="margin:8px 0 0">⌨ <kbd>↑</kbd> <kbd>↓</kbd> ou <kbd>Enter</kbd> mudam de item · <kbd>←</kbd> <kbd>→</kbd> no começo/fim do campo mudam de coluna.</p>
         <div class="grid" style="margin-top:12px">
-          ${COND_CAMPOS.map(([k, label]) => `<label>${label}<input name="c_${k}" value="${esc(f.cond?.[k])}"></label>`).join('')}
+          ${COND_CAMPOS.map(([k, label]) => `<label>${label}<input name="c_${k}" value="${esc(val(`c_${k}`, f.cond?.[k]))}"></label>`).join('')}
         </div>
         <div class="actions">
           <button type="button" data-act="fecharDigitar">Cancelar</button>
@@ -8321,6 +8347,10 @@ const acoes = {
       if (sem) { marcarLinhaComp(sem); sem.scrollIntoView({ block: 'center' }); sem.querySelector('input[data-qtd-loja]')?.focus({ preventScroll: true }); }
     }
   },
+  filtroStatusCot: el => {
+    ui.statusCot = el.dataset.status || '';
+    render();
+  },
   cobrarCot: el => {
     ir('cotacao', el.dataset.id);
     acoes.cobrarPendentes();
@@ -8522,8 +8552,14 @@ const formularios = {
       const preco = parseNum(d[`p_${i}`]);
       const prazo = d[`z_${i}`] || '';
       const obs = d[`o_${i}`] || '';
-      // 0,00 ou vazio: sem resposta; o resto do que já havia (marca, estoque…) continua
-      if (preco != null && preco > 0) respostas[i] = { ...(f.respostas?.[i] || {}), preco, prazo, obs };
+      const marca = (d[`m_${i}`] ?? '').trim();
+      // 0,00 ou vazio: sem resposta; o resto do que já havia (estoque…) continua
+      if (preco != null && preco > 0) {
+        const ant = f.respostas?.[i] || {};
+        const r = { ...ant, preco, prazo, obs };
+        if (marca !== (ant.marca || '')) { r.marca = marca; delete r.marcaOriginal; delete r.estoque; } // marca trocada aqui: vale a digitada
+        respostas[i] = r;
+      }
     });
     // preço corrigido (já tinha outro valor): a diferença do item fica aceita com o valor novo
     const antes = f.respostas || {};
@@ -8534,6 +8570,7 @@ const formularios = {
     });
     f.cond = Object.fromEntries(COND_CAMPOS.map(([k]) => [k, d[`c_${k}`] || '']));
     f.respondidoEm = Object.keys(respostas).length ? f.respondidoEm || new Date().toISOString() : null;
+    ajustarKaizen(c); // Kaizen: "NGK/685" = marca NGK e estoque 685
     ui.digitando = null;
     salvar();
     render();
@@ -8844,6 +8881,7 @@ document.addEventListener('submit', e => {
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.closest?.('.form-cfg')) ui.cfgSujo = true;
+  if (ui.digitando && t.name && t.closest?.('#painelDigitar')) (ui.digitando.rasc ||= {})[t.name] = t.value;
   if (t.id === 'filtroItens') {
     ui.filtroItens = t.value;
     aplicarFiltroItens();
@@ -9765,9 +9803,9 @@ document.addEventListener('keydown', e => {
 /* Digitar preços: setas e Enter andam pela tabela (Enter não salva o formulário no meio da digitação). */
 document.addEventListener('keydown', e => {
   const t = e.target;
-  const m = t.name?.match?.(/^([pzo])_(\d+)$/);
+  const m = t.name?.match?.(/^([pmzo])_(\d+)$/);
   if (!m || !t.closest('#painelDigitar') || e.ctrlKey || e.altKey || e.metaKey) return;
-  const cols = ['p', 'z', 'o'];
+  const cols = ['p', 'm', 'z', 'o'];
   const col = m[1], i = +m[2];
   const form = t.form;
   const campo = (c, k) => form.querySelector(`[name="${c}_${k}"]`);

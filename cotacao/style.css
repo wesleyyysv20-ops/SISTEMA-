@@ -1989,3 +1989,17 @@ a.stat-link:hover { border-color: var(--primary-2); transform: translateY(-1px);
 .pip-topo2 { flex-wrap: wrap; }
 .pip-topo2 .pip-pedido.abaixo { flex-wrap: wrap; white-space: normal; }
 .pip-topo2 .pip-pedido.abaixo .pip-ped-min { display: block; flex-basis: 100%; font-size: 10.5px; }
+
+/* ===== lista de cotações ===== */
+.filtros-cot { align-items: center; }
+.chips-status { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-status { padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--card-2); border: 1px solid var(--line); color: var(--muted); box-shadow: none; min-height: 0; height: auto; }
+.chip-status b { color: var(--text); margin-left: 2px; }
+.chip-status:hover { color: var(--text); border-color: var(--primary-2); }
+.chip-status.ativo { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.chip-status.ativo b { color: var(--on-primary); }
+tr.linha-cot { cursor: pointer; }
+tr.linha-cot:hover td { background: var(--hover); }
+#tbCot .titulo-cot { max-width: 320px; }
+.lista-prazo li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.lista-prazo li .sm { margin-left: auto; }
