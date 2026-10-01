@@ -2003,3 +2003,5 @@ tr.linha-cot:hover td { background: var(--hover); }
 #tbCot .titulo-cot { max-width: 320px; }
 .lista-prazo li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .lista-prazo li .sm { margin-left: auto; }
+.envio-cot { white-space: nowrap; }
+.envio-cot .conf-receb { vertical-align: middle; margin-right: 4px; }
