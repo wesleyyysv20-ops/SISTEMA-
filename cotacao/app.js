@@ -515,6 +515,20 @@ function assinaturaSemQtd(c) {
   return JSON.stringify([c, db.config, db.fornecedores, duvidas], (k, v) => (k === 'qtds' ? undefined : v));
 }
 
+let ponteiroApertado = false;
+let ultimoClique = 0;
+document.addEventListener('pointerdown', () => { ponteiroApertado = true; ultimoClique = Date.now(); }, true);
+document.addEventListener('pointerup', () => { ponteiroApertado = false; ultimoClique = Date.now(); }, true);
+document.addEventListener('pointercancel', () => { ponteiroApertado = false; }, true);
+
+/** Algo aberto ou em uso na tela que um redesenho fecharia. */
+function ocupadoNaTela() {
+  const ativo = document.activeElement;
+  return ponteiroApertado || Date.now() - ultimoClique < 700
+    || (ativo?.tagName === 'SELECT' && !!$('#app')?.contains(ativo)) // lista suspensa (pode estar aberta)
+    || !!document.querySelector('.dlg-fundo, #dlgDataCar'); // janela de confirmação, conferência do DataCar…
+}
+
 function renderSeguro(caminhos = null) {
   if (caminhos && !afetaTela(caminhos)) return;
   // um colega digitou quantidades na cotação aberta: atualiza só os números e os totais (a tabela fica)
@@ -526,6 +540,13 @@ function renderSeguro(caminhos = null) {
       if (pip.win && !pip.win.closed && pip.cotId === c.id) desenharPip(false);
       return;
     }
+  }
+  // a pessoa está clicando, com uma lista suspensa aberta ou com uma janela aberta: redesenha depois
+  // (senão o que ela acabou de abrir pisca e fecha sozinho)
+  if (ocupadoNaTela()) {
+    clearTimeout(ui.timerRenderAdiado);
+    ui.timerRenderAdiado = setTimeout(() => renderSeguro(), 900);
+    return;
   }
   // janela de escolher arquivo aberta: redesenha depois (senão a escolha do arquivo se perde)
   if (ui.escolhendoArquivo && Date.now() - ui.escolhendoArquivo < 120000) {
@@ -6837,6 +6858,31 @@ function ir(nome, id = null) {
 let telaDesenhada = null; // tela do último render (para manter a rolagem ao redesenhar a mesma tela)
 
 /** Posição de rolagem da página e das tabelas com rolagem própria (comparativo, listas). */
+/**
+ * Seções "▸ abrir" (details) continuam como a pessoa deixou depois de redesenhar a tela
+ * (antes, um redesenho — ex.: um colega salvou algo — fechava o que tinha acabado de ser aberto).
+ */
+function chaveDetalhe(el, k) {
+  const sim = el.querySelector('[data-similar-prod]');
+  return el.id || (sim ? 'sim:' + sim.dataset.similarProd : `${el.className}#${k}`);
+}
+function guardarAbertos() {
+  const conta = {};
+  return new Map([...document.querySelectorAll('#app details')].map(el => {
+    const k = (conta[el.className] = (conta[el.className] ?? -1) + 1);
+    return [chaveDetalhe(el, k), el.open];
+  }));
+}
+function voltarAbertos(m) {
+  if (!m?.size) return;
+  const conta = {};
+  for (const el of document.querySelectorAll('#app details')) {
+    const k = (conta[el.className] = (conta[el.className] ?? -1) + 1);
+    const v = m.get(chaveDetalhe(el, k));
+    if (v != null && el.open !== v) el.open = v;
+  }
+}
+
 function guardarRolagem() {
   return { y: window.scrollY, x: window.scrollX, tabelas: [...document.querySelectorAll('#app .table-wrap')].map(el => [el.scrollTop, el.scrollLeft]) };
 }
@@ -6878,6 +6924,7 @@ function render() {
   const tela = `${nome}|${id ?? ''}`;
   const rolagem = telaDesenhada === tela ? guardarRolagem() : null;
   const foco = telaDesenhada === tela ? guardarFoco() : null;
+  const abertos = telaDesenhada === tela ? guardarAbertos() : null;
   telaDesenhada = tela;
   atualizarNavAdmin();
   const views = {
@@ -6902,6 +6949,7 @@ function render() {
       <p class="muted">Ocorreu um erro: ${esc(e.message)}</p>
       <p class="muted small">Tente recarregar a página. Se continuar, avise com a mensagem acima.</p></section>`;
   }
+  if (abertos) voltarAbertos(abertos);
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
