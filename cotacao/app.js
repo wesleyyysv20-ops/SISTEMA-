@@ -5381,6 +5381,19 @@ function seletorStatusCot(c) {
   return `<div class="status-cot" role="group" aria-label="Status da cotação">${Object.entries(STATUS).map(([k, [t, cls]]) => `<button type="button" class="st-${cls}${c.status === k ? ' ativo' : ''}" data-act="mudarStatusCot" data-status="${k}" aria-pressed="${c.status === k}">${c.status === k ? '● ' : ''}${esc(t)}</button>`).join('')}</div>`;
 }
 
+/** Próximo número livre: maior que o de todas as cotações (o contador pode estar atrasado em outro computador). */
+function proximoNumeroCot() {
+  const maior = Math.max(0, ...db.cotacoes.map(c => parseInt(c.numero, 10) || 0));
+  return Math.max(Number(db.config.proxNumero) || 1, maior + 1);
+}
+/** Esta cotação tem o número repetido e é a mais nova das que o repetem (é ela que deve trocar). */
+function numeroRepetidoCot(c) {
+  const iguais = db.cotacoes.filter(x => x.numero === c.numero);
+  if (iguais.length < 2) return false;
+  const mais = [...iguais].sort((a, b) => String(b.criadoEm || b.data || '').localeCompare(String(a.criadoEm || a.data || '')))[0];
+  return mais.id === c.id;
+}
+
 /** Cotação finalizada fica só para consulta (até você destravar nesta tela). */
 function cotTravada(c) {
   return !!c && c.status === 'finalizada' && !ui.destravadas?.has(c.id);
@@ -5429,7 +5442,10 @@ function htmlResumoFornCot(c) {
   const exp = [...comPed].filter(fi => c.fornecedores[fi].concluidoEm).length;
   const fin = c.status === 'finalizada';
   const pend = fin ? [] : peds.filter(p => !p.f.concluidoEm);
-  const partes = [`${nf} fornecedor(es)`, `${resp} de ${nf} responderam`];
+  const conf = c.fornecedores.filter(f => f.confirmadoEm).length;
+  const partes = [`${nf} fornecedor(es)`];
+  if (conf && resp < nf) partes.push(`${conf} de ${nf} confirmaram o recebimento`);
+  partes.push(`${resp} de ${nf} responderam`);
   if (comPed.size) partes.push(`${exp} de ${comPed.size} pedidos exportados`);
   if (pend.length) partes.push(`faltam ${pend.length}`);
   else if (comPed.size && exp === comPed.size) partes.push('✓ todos exportados');
@@ -5545,7 +5561,14 @@ function renderCotacao(id) {
     const atrasado = prazo && prazo.pendentes.includes(fi);
     return `<tr>
       <td class="c"><input type="checkbox" class="sel-forn" data-sel-forn="${esc(f.fornecedorId)}" ${ui.sel.ids.has(f.fornecedorId) ? 'checked' : ''} aria-label="Marcar ${esc(f.nome)}"></td>
-      <td class="forn-cot-nome"><b>${esc(f.nome)}</b>${f.contato || f.email ? `<br><span class="small muted" title="${esc([f.contato, f.email].filter(Boolean).join(' · '))}">${esc([f.contato, f.email].filter(Boolean).join(' · '))}</span>` : ''}</td>
+      <td class="forn-cot-nome">${(() => {
+        const cad = db.fornecedores.find(x => x.id === f.fornecedorId);
+        const atend = cad?.contato || f.contato || '';
+        const subst = cad?.substituto || '';
+        const email = cad?.email || f.email || '';
+        return `<b>${esc(f.nome)}</b>${atend || subst || email ? `<br><span class="small muted" title="${esc([atend && 'Atendente: ' + atend, subst && 'Substituto: ' + subst, email].filter(Boolean).join(' · '))}">${atend ? esc(atend) : ''}${subst ? `${atend ? ' · ' : ''}<span class="subst-forn">subst. ${esc(subst)}</span>` : ''}${email ? `${atend || subst ? ' · ' : ''}${esc(email)}` : ''}</span>` : ''}`;
+      })()}</td>
+      <td class="c"><label class="conf-receb" title="${f.confirmadoEm ? `Confirmou o recebimento em ${fmtData(f.confirmadoEm)} ${new Date(f.confirmadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Marque quando o fornecedor confirmar que recebeu a cotação'}"><input type="checkbox" data-confirmar-forn="${fi}" ${f.confirmadoEm ? 'checked' : ''} aria-label="${esc(f.nome)} confirmou que recebeu"></label></td>
       <td>${f.concluidoEm
         ? `<button type="button" class="badge concluida" data-act="reabrirForn" data-f="${fi}" title="Pedido exportado em ${fmtData(f.concluidoEm)}. Clique para reabrir.">✓ Concluída</button>`
         : `${f.enviadoEm ? `<span class="badge ok">${fmtData(f.enviadoEm)}</span>` : '<span class="badge">não enviada</span>'}${pedidosPorFornecedor(c).some(p => p.fi === fi) ? ` <button type="button" class="link small marcar-concluida" data-act="marcarConcluida" data-f="${fi}" title="Já exportou o pedido deste fornecedor por outro caminho? Marque a cotação dele como concluída">✓ marcar concluída</button>` : ''}`}</td>
@@ -5742,6 +5765,7 @@ function renderCotacao(id) {
       <p class="muted">Criada em ${fmtData(c.data)} · ${c.status === 'finalizada' ? '' : `<label class="prazo-inline">Responder até <input type="date" data-change="prazoCot" value="${esc(c.prazoResposta)}"><input type="time" data-change="prazoHoraCot" value="${esc(c.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></label> · `}${c.itens.length} itens · ${c.fornecedores.length} fornecedor(es)</p>
       <div id="presencaCot" class="presenca" data-cot="${esc(c.id)}" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div>
     </div>
+    ${numeroRepetidoCot(c) ? `<p class="aviso-num-repetido">⚠ Outra cotação também tem o <b>nº ${esc(c.numero)}</b>. <button type="button" class="sm primary" data-act="renumerarCot">Trocar esta para nº ${String(proximoNumeroCot()).padStart(4, '0')}</button></p>` : ''}
     ${prazo ? `<p class="aviso-prazo ${prazo.dias < 0 ? 'vencido' : ''}">⏰ O prazo de resposta ${textoPrazo(prazo.dias, c.prazoHora)} (${textoDataPrazo(c)}) e ${prazo.pendentes.length === 1 ? 'falta 1 fornecedor responder' : `faltam ${prazo.pendentes.length} fornecedores responderem`}: <b>${prazo.pendentes.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}</b>.
       <button class="sm" data-act="cobrarPendentes">📣 Cobrar quem falta</button></p>` : ''}
     ${c.obs ? `<p class="small" style="margin:6px 0 0;white-space:pre-wrap">${esc(c.obs)}</p>` : ''}
@@ -5756,7 +5780,7 @@ function renderCotacao(id) {
     <div id="fornPendCot">${temResposta ? htmlResumoFornCot(c).chips : ''}</div>
     <div class="corpo-recolhe" ${fornCotAberto() ? '' : 'hidden'}>
     ${nf ? `<div class="table-wrap"><table>
-      <thead><tr><th class="c"><input type="checkbox" class="sel-forn" data-sel-todos ${nf && ui.sel.ids.size === nf ? 'checked' : ''} title="Marcar todos" aria-label="Marcar todos"></th><th>Fornecedor</th><th>Envio</th><th>Resposta</th><th class="r">Total</th><th>Ações</th></tr></thead>
+      <thead><tr><th class="c"><input type="checkbox" class="sel-forn" data-sel-todos ${nf && ui.sel.ids.size === nf ? 'checked' : ''} title="Marcar todos" aria-label="Marcar todos"></th><th>Fornecedor</th><th class="c" title="Marque quando o fornecedor confirmar que recebeu a cotação">Confirmou</th><th>Envio</th><th>Resposta</th><th class="r">Total</th><th>Ações</th></tr></thead>
       <tbody>${fornRows}</tbody></table></div>` : '<p class="empty">Nenhum fornecedor nesta cotação.</p>'}
     <div class="row" style="margin-top:10px">
       ${disponiveis.length ? `<select id="addFornCot" style="width:auto;max-width:280px">${disponiveis.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select>
@@ -6723,6 +6747,13 @@ function cartaoAndamento(c) {
       ${pend.length && (prazo.vencido || prazo.perto) ? `<button type="button" class="sm" data-act="cobrarCot" data-id="${esc(c.id)}">📣 Cobrar quem falta (${pend.length})</button>` : ''}
     </div>` : ''}
     <div class="andamentos">
+      ${pend.length ? (() => {
+        // quem confirmou que recebeu a cotação (quem já respondeu, recebeu)
+        const conf = c.fornecedores.filter(f => f.confirmadoEm || respondeu(f));
+        const naoConf = c.fornecedores.filter(f => !f.confirmadoEm && !respondeu(f));
+        const det = `${conf.length ? `✓ ${conf.map(f => esc(f.nome)).join(', ')}` : 'ninguém confirmou ainda'}${naoConf.length && conf.length ? ` · falta: ${nomes(naoConf)}` : ''}`;
+        return barraAndamento('Confirmaram o recebimento', conf.length, nf, det, 'fornecedores', c.id);
+      })() : ''}
       ${barraAndamento('Respostas', resp, nf, pend.length ? `falta: ${nomes(pend)}` : '✓ todos responderam', 'fornecedores', c.id)}
       ${resp ? barraAndamento('Quantidades', comQtd, comPreco.length, comQtd < comPreco.length ? `${comPreco.length - comQtd} item(ns) sem quantidade` : '✓ todos com quantidade', 'comparativo', c.id) : ''}
       ${peds.length ? barraAndamento('Pedidos exportados', exportados, peds.length, exportados < peds.length ? `falta: ${nomes(peds.filter(p => !p.f.concluidoEm).map(p => p.f))}` : '✓ todos exportados', 'pedidos', c.id) : ''}
@@ -7611,7 +7642,7 @@ const acoes = {
     if (ck.length && !(await confirmar(`Antes de criar, confira:\n\n${ck.map(x => '⚠ ' + x.txt).join('\n')}\n\nCriar a cotação mesmo assim?`, 'Criar mesmo assim'))) return;
 
     const cfg = db.config;
-    const numero = String(cfg.proxNumero).padStart(4, '0');
+    const numero = String(proximoNumeroCot()).padStart(4, '0');
     const c = {
       id: uid(),
       numero,
@@ -7640,7 +7671,7 @@ const acoes = {
       toast('Cotação não criada: o salvamento foi cancelado.');
       return;
     }
-    cfg.proxNumero = Number(cfg.proxNumero) + 1;
+    cfg.proxNumero = Number(numero) + 1;
     db.cotacoes.push(c);
     db.rascunho = null;
     salvar();
@@ -8090,6 +8121,17 @@ const acoes = {
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
   analiseForn: el => abrirAnaliseFornecedor(el.dataset.id),
+  renumerarCot: async () => {
+    const c = cotAtual();
+    if (!c) return;
+    const novo = String(proximoNumeroCot()).padStart(4, '0');
+    if (!(await confirmar(`Trocar o número desta cotação (${c.titulo || 'sem título'}, de ${fmtData(c.data)}) de nº ${c.numero} para nº ${novo}?\n\nAs respostas dos fornecedores continuam sendo reconhecidas normalmente. Só as planilhas já enviadas mostram o número antigo.`, `Trocar para nº ${novo}`))) return;
+    c.numero = novo;
+    db.config.proxNumero = Number(novo) + 1;
+    salvar();
+    render();
+    toast(`Agora é a cotação nº ${novo}.`);
+  },
   mudarStatusCot: async el => {
     const c = cotAtual();
     const novo = el.dataset.status;
@@ -9828,6 +9870,14 @@ async function aoMudarCampo(e) {
   } else if (t.id === 'statusCot') {
     ui.statusCot = t.value;
     $('#tbCot').innerHTML = linhasCotacoes();
+  } else if (t.dataset.confirmarForn != null) {
+    const c = cotAtual();
+    const f = c?.fornecedores[+t.dataset.confirmarForn];
+    if (!f) return;
+    f.confirmadoEm = t.checked ? new Date().toISOString() : null;
+    salvar();
+    atualizarResumosCot(c);
+    toast(t.checked ? `${f.nome}: recebimento confirmado.` : `${f.nome}: confirmação desmarcada.`);
   } else if (t.dataset.selForn || t.hasAttribute('data-sel-todos')) {
     const c = cotAtual();
     if (!c || !ui.sel) return;

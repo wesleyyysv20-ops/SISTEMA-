@@ -73,7 +73,7 @@ test('exportar pedido: uma planilha Excel por loja (cada uma com o seu Salvar co
   assert.deepEqual(ss.linhas.map(l => [l[1], l[ss.col('QTD')]]), [['COD-A', 3], ['COD-C', 4]]);
 
   // marcada como concluída; o formato fica lembrado no cadastro do fornecedor
-  assert.match(await page.locator('.corpo-recolhe tbody tr').first().locator('td').nth(2).innerText(), /✓ Concluída/, 'na coluna Envio');
+  assert.match(await page.locator('.corpo-recolhe tbody tr').first().locator('td').nth(3).innerText(), /✓ Concluída/, 'na coluna Envio');
   assert.deepEqual(await page.evaluate(() => db.fornecedores.find(f => f.id === 'f1').formatoPedido), { tipo: 'individual' });
   // reabrir
   await page.click('[data-act=reabrirForn]');

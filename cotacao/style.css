@@ -1911,3 +1911,11 @@ a.stat-link:hover { border-color: var(--primary-2); transform: translateY(-1px);
 .uc-num { font-family: Inter, system-ui, sans-serif; white-space: nowrap; }
 .stats-inicio { margin-top: 10px; }
 .tudo-em-dia { margin: 4px 0 0; color: var(--ok); font-weight: 600; }
+
+/* número repetido e confirmação de recebimento */
+.aviso-num-repetido { margin: 8px 0 0; padding: 6px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line)); font-size: 13.5px; }
+.aviso-num-repetido .sm { margin-left: 6px; }
+.conf-receb { display: inline-flex; align-items: center; justify-content: center; margin: 0; padding: 4px; cursor: pointer; }
+.conf-receb input { width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: var(--ok); }
+.subst-forn { color: var(--danger); font-weight: 600; }
+.andamento-det { white-space: normal; line-height: 1.35; }
