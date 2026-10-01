@@ -2056,3 +2056,8 @@ tr.linha-cot:hover td { background: var(--hover); }
 .af-chip.ganha { background: var(--ok-bg); color: var(--ok); }
 .af-mini-barra { display: inline-block; width: 48px; height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; vertical-align: middle; }
 .af-mini-barra > span { display: block; height: 100%; background: var(--primary-2); border-radius: 4px; }
+/* linha de total: o rótulo quebra em vez de ser cortado */
+.tab-comp > tbody > tr.total > td.fd:not(.col-qtd):not(:last-child) { white-space: normal; font-size: 12.5px; line-height: 1.25; }
+/* versão estreita: colunas de fornecedor mais justas (etiqueta da marca cortada com …, detalhe no mouse) */
+.tab-comp.estreita .chip-marca { max-width: 104px; }
+.tab-comp.estreita td.r.escolhivel, .tab-comp.estreita td.r[data-dica] { max-width: 130px; }

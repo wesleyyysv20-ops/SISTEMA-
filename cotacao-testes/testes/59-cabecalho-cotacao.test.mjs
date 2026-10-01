@@ -55,8 +55,14 @@ test('cotação finalizada: sem o prazo e sem pendência de exportar', async () 
 test('comparativo: preço escolhido, quantidades e total presos à direita; descrição numa linha', async () => {
   const s = await abrirCot();
   const { page } = s;
-  await page.setViewportSize({ width: 1100, height: 800 });
-  await page.evaluate(() => render());
+  // tela larga: a tabela (3 fornecedores) cabe inteira → nada fica preso nem coberto
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await page.evaluate(() => { ui.colFixas = null; render(); });
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => document.querySelector('.tab-comp').classList.contains('fixa-dir')), false, 'cabe inteira: sem colunas presas');
+  // tela estreita: não cabe → preço escolhido, quantidades e total ficam presos à direita
+  await page.setViewportSize({ width: 900, height: 800 });
+  await page.evaluate(() => { localStorage.setItem('cotacao.compacto', '0'); ui.colFixas = null; render(); });
   await page.waitForFunction(() => document.querySelector('.tab-comp')?.classList.contains('fixa-dir'));
   assert.equal(await page.locator('.tab-comp thead th:text-is("Fornecedor")').count(), 0, 'o vencedor fica junto do preço escolhido');
   // rolando a tabela, o total continua na borda direita

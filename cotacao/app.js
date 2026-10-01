@@ -2437,6 +2437,12 @@ async function exportarComparativo(c) {
  * Itens que cada fornecedor ganhou: [{ fi, f, itens: [{ it, i, preco, marca, qtd, qtds }], total }].
  * Com `lojaId`, só as quantidades daquela loja. Itens com quantidade 0 não entram.
  */
+/** Quantidade comprada de fato do item: a das lojas em que ele NÃO está em Dúvidas (a mesma conta do pedido exportado). */
+function qtdComprada(c, l, porLoja = temQtdLojas(c)) {
+  if (!l.duvida) return l.q;
+  return porLoja ? lojas().reduce((s, lj) => s + (l.duvida.has(lj.id) ? 0 : qtdLoja(c, l.i, lj.id)), 0) : 0;
+}
+
 function pedidosPorFornecedor(c, lojaId = null) {
   const { linhas, porLoja } = comparar(c);
   const LJ = lojas();
@@ -4583,7 +4589,7 @@ function linhasCotacoes() {
   if (!lista.length) return `<tr><td colspan="8" class="empty">${ui.verArquivadas ? 'Nenhuma cotação arquivada.' : 'Nenhuma cotação encontrada.'}</td></tr>`;
   return lista.map(c => {
     const resp = c.fornecedores.filter(f => f.respondidoEm).length;
-    const { melhor, itensCotados } = comparar(c);
+    const { itensCotados } = comparar(c);
     const peds = itensCotados ? pedidosPorFornecedor(c) : [];
     const comPed = new Set([...peds.map(p => p.fi), ...c.fornecedores.map((f, fi) => (f.concluidoEm ? fi : -1)).filter(fi => fi >= 0)]);
     const exp = [...comPed].filter(fi => c.fornecedores[fi].concluidoEm).length;
@@ -4594,7 +4600,7 @@ function linhasCotacoes() {
       <td class="c">${c.itens.length}</td>
       <td class="c"><span class="badge ${resp === c.fornecedores.length && resp ? 'ok' : resp ? 'warn' : ''}">${resp}/${c.fornecedores.length}</span></td>
       <td class="c">${comPed.size ? `<span class="badge ${exp === comPed.size ? 'ok' : exp ? 'warn' : ''}">${exp}/${comPed.size}</span>` : '<span class="muted">—</span>'}</td>
-      <td class="r">${itensCotados ? fmtMoeda(melhor) : '—'}</td>
+      <td class="r">${itensCotados ? fmtMoeda(peds.reduce((t, pp) => t + pp.total, 0)) : '—'}</td>
       <td>${statusBadge(c.status)}</td>
     </tr>`;
   }).join('');
@@ -4675,7 +4681,7 @@ function renderCotacoes() {
   ${sugestaoArquivar()}
   <section class="card table-wrap">
     <table>
-      <thead><tr><th>Nº</th><th>Data</th><th>Título</th><th class="c">Itens</th><th class="c">Respostas</th><th class="c" title="Pedidos exportados / fornecedores com pedido">Pedidos</th><th class="r">Melhor total</th><th>Status</th></tr></thead>
+      <thead><tr><th>Nº</th><th>Data</th><th>Título</th><th class="c">Itens</th><th class="c">Respostas</th><th class="c" title="Pedidos exportados / fornecedores com pedido">Pedidos</th><th class="r" title="Total do pedido: preço escolhido × quantidade, sem os itens em Dúvidas">Total do pedido</th><th>Status</th></tr></thead>
       <tbody id="tbCot">${linhasCotacoes()}</tbody>
     </table>
   </section>`;
@@ -5249,7 +5255,7 @@ function linhaTotalComp(c, comp) {
   return `<tr class="total" id="totalComp">
     <td></td><td>Total dos itens cotados${comp.porLoja ? '<br><span class="small muted">com as quantidades das lojas</span>' : '<br><span class="small muted">1 unidade de cada</span>'}</td>
     ${fornecedoresVisiveisComp(c).map(j => comp.totais[j]).map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
-    <td class="fd">${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td>${nf > 1 ? '<td class="fd"></td>' : ''}
+    <td class="fd">${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td>${nf > 1 ? '<td class="fd col-dif"></td>' : ''}
     ${LJ.map(lj => `<td class="c col-qtd fd">${qtdL(lj) ? `${fmtNum(qtdL(lj))} un.<br><span class="small">${fmtMoeda(comp.porLojaTotal[lj.id])}</span>` : '<span class="muted">—</span>'}</td>`).join('')}
     <td class="r fd">${fmtMoeda(comp.melhor)}${comp.escolhasManuais ? `<br><span class="small muted">menor possível ${fmtMoeda(comp.menorPossivel)}</span>` : ''}</td>
   </tr>`;
@@ -5554,21 +5560,31 @@ function ajustarColunasFixas() {
   };
   const ant = ui.colFixas;
   let m;
-  if (ant && ant.wrapW === wrapW && ant.nCols === nCols && ant.fixa) {
+  if (ant && ant.wrapW === wrapW && ant.nCols === nCols && (ant.fixa || ant.inteira)) {
+    if (ant.inteira) { if (tab.scrollWidth <= wrapW + 1) return; ui.colFixas = null; return ajustarColunasFixas(); } // continua cabendo inteira na versão estreita
     // mesma largura e mesmas colunas: a tabela já veio com a decisão anterior (sem medir duas vezes)
     m = medir();
     if (!m.cabe) { tab.classList.remove('estreita'); m = medir(); if (!m.cabe) { tab.classList.add('estreita'); m = medir(); } }
   } else {
-    tab.classList.remove('estreita');
-    m = medir();
-    if (!m.cabe) {
+    // 1º: a tabela inteira cabe na largura? então nada fica preso (nada é coberto nem cortado)
+    tab.classList.remove('fixa-dir', 'estreita');
+    if (tab.scrollWidth <= wrapW + 1) m = { larg: [], cabe: false };
+    else {
       tab.classList.add('estreita');
-      m = medir();
-      if (!m.cabe) tab.classList.remove('estreita');
+      if (tab.scrollWidth <= wrapW + 1) m = { larg: [], cabe: false, inteira: true };
+      else {
+        tab.classList.remove('estreita');
+        m = medir();
+        if (!m.cabe) {
+          tab.classList.add('estreita');
+          m = medir();
+          if (!m.cabe) tab.classList.remove('estreita');
+        }
+      }
     }
   }
   tab.classList.toggle('fixa-dir', m.cabe);
-  ui.colFixas = { wrapW, nCols, fixa: m.cabe, estreita: tab.classList.contains('estreita') };
+  ui.colFixas = { wrapW, nCols, fixa: m.cabe, estreita: tab.classList.contains('estreita'), inteira: !!m.inteira };
   if (!m.cabe) return;
   // distância até a borda direita de cada coluna presa, pela posição a partir do fim (CSS :nth-last-child)
   let acc = 0;
@@ -6206,8 +6222,8 @@ function dadosRelatorio() {
     if (!comp.itensCotados) continue;
     const r = { c, itens: 0, total: 0, media: 0, maior: 0, comparaveis: 0 };
     for (const l of comp.linhas) {
-      if (l.preco == null || !l.q) continue;
-      const q = l.q;
+      const q = l.preco == null ? 0 : qtdComprada(c, l, comp.porLoja);
+      if (!q) continue; // sem quantidade ou todo em Dúvidas: não foi comprado
       const validos = l.precos.filter(p => p != null);
       r.itens++;
       r.total += l.preco * q;
@@ -6226,7 +6242,7 @@ function dadosRelatorio() {
       if (f.respondidoEm || comp.totais[fi].cotados) x.respondeu++;
       x.cotados += comp.totais[fi].cotados;
       x.ganhos += comp.totais[fi].vencidos;
-      x.valor += comp.totais[fi].valorVencido;
+      x.valor += comp.linhas.reduce((t, l) => t + (l.vencedor === fi && l.preco != null ? l.preco * qtdComprada(c, l, comp.porLoja) : 0), 0);
       for (const l of comp.linhas) if (l.vencedor === fi && !l.manual && !l.preferencia && l.difSegundo != null) x.difs.push(l.difSegundo);
     });
     porCot.push(r);
@@ -6511,7 +6527,7 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
         if (l.marcas[j] === 'errada') r.erradas.push({ c, it: l.it, pedida: l.it.marca, mandou: m });
         if (l.vencedor === j) {
           h.ganhos++;
-          h.valor += p * l.q;
+          h.valor += p * qtdComprada(c, l, comp.porLoja);
           if (l.minIdx === j) r.ganhosPreco++;
           if (m) { const k = String(m).trim().toUpperCase(); r.marcasGanhas[k] = (r.marcasGanhas[k] || 0) + 1; }
         }
