@@ -3158,16 +3158,23 @@ async function abrirArquivoPapel(file) {
       pos: 0,
       gcur: 0,
       grupoAberto: null,
-      soPend: true, // os que já estão na cotação ficam escondidos
     };
     casarLinhasDataCar();
-    // o que já está na cotação não entra de novo
-    for (const l of ui.datacar.linhas) if (l.produtoId && naCotacao.has(l.produtoId)) { l.decisao = 'nao'; l.sel = false; l.jaNaCotacao = true; }
+    // o que já está na Nova cotação nem aparece aqui (não entra de novo)
+    const d = ui.datacar;
+    const jaEstao = d.linhas.filter(l => l.produtoId && naCotacao.has(l.produtoId));
+    d.linhas = d.linhas.filter(l => !jaEstao.includes(l));
+    d.jaNaCotacao = jaEstao.length;
+    if (!d.linhas.length) {
+      ui.datacar = null;
+      rascunho().papelzinhos = { arquivo: file.name, em: new Date().toISOString(), adicionados: 0, jaEstavam: jaEstao.length };
+      salvar();
+      render();
+      return avisar(`Todos os ${jaEstao.length} item(ns) dos papelzinhos já estão na cotação. Nada a acrescentar.`);
+    }
     aplicarOrdemDataCar();
     render();
     focarDataCar();
-    const ja = ui.datacar.linhas.filter(l => l.jaNaCotacao).length;
-    if (ja) toast(`${ja} item(ns) dos papelzinhos já estão na cotação e não entram de novo.`, 6000);
   } catch (e) {
     console.error(e);
     avisar('Não consegui ler o arquivo:\n' + e.message);
@@ -3684,7 +3691,7 @@ function conteudoGrupos() {
       ? g.itens.slice(0, 1).map(l => {
         const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
         const obs = (d.colObs || []).map(c => l.cels[c]).filter(Boolean).join(' · ');
-        return `${p ? p.descricao + (p.marca ? ' · ' + p.marca : '') : '🆕 não cadastrado'}${obs ? ' · ' + obs : ''}${l.jaNaCotacao ? ' · já está na cotação' : ''}`;
+        return `${p ? p.descricao + (p.marca ? ' · ' + p.marca : '') : '🆕 não cadastrado'}${obs ? ' · ' + obs : ''}`;
       })
       : g.itens.slice(0, 3).map(l => (d.colDesc >= 0 && l.cels[d.colDesc]) || l.codigo).filter(Boolean);
     const sel = d.selG.has(g.k);
@@ -3713,7 +3720,7 @@ function conteudoGrupos() {
         <button type="button" class="sm conf-mini-vai" data-act="dcSelVai" title="Os selecionados vão (→)">✓ Vão</button>
         <button type="button" class="sm conf-mini-nao" data-act="dcSelNao" title="Os selecionados não vão (←)">✗ Não vão</button>
         <button type="button" class="sm link" data-act="dcSelLimpar" title="Esc">limpar seleção</button>`
-      : `<span class="small muted">${d.modo === 'papel' && gs.some(g => g.itens.some(l => l.jaNaCotacao)) ? `${gs.filter(g => g.itens.every(l => l.jaNaCotacao)).length} já estão na cotação (escondidos) · ` : ''}${d.busca || d.soPend ? `${nVis} de ${gs.length} aparecendo · ` : ''}Shift+↓ ou Shift+clique seleciona vários · Ctrl+A todos</span>`}
+      : `<span class="small muted">${d.modo === 'papel' && d.jaNaCotacao ? `${d.jaNaCotacao} já estava(m) na cotação (não aparecem aqui) · ` : ''}${d.busca || d.soPend ? `${nVis} de ${gs.length} aparecendo · ` : ''}Shift+↓ ou Shift+clique seleciona vários · Ctrl+A todos</span>`}
       ${pendVis ? `<span class="conf-lote-rest">Os ${pendVis} sem decisão${d.busca ? ' (da busca)' : ''}:
         <button type="button" class="sm conf-mini-vai" data-act="dcRestVai">✓ todos vão</button>
         <button type="button" class="sm conf-mini-nao" data-act="dcRestNao">✗ nenhum vai</button></span>` : ''}
@@ -6464,28 +6471,88 @@ function pendencias() {
   return lista.sort((a, b) => ordem[a.nivel] - ordem[b.nivel]);
 }
 
+/** "Bom dia" + dia da semana e data (o Início abre com o dia de hoje). */
+function saudacaoInicio() {
+  const d = new Date();
+  const h = d.getHours();
+  const oi = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+  const dia = d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+  return `${oi} · ${dia}`;
+}
+
+/** Nova cotação em montagem: o que já tem e o que falta (itens, marcas, fornecedores, prazo, papelzinhos). */
+function cartaoRascunhoInicio() {
+  const r = db.rascunho;
+  if (!r || !r.itens?.length) return '';
+  const prod = prodPorId();
+  const itens = r.itens.filter(x => prod[x.produtoId]);
+  const semMarca = itens.filter(x => !(x.marca || prod[x.produtoId].marca)).length;
+  const nf = (r.fornecedorIds || []).length;
+  const passo = (ok, txt, opcional) => `<li class="${ok ? 'ok' : opcional ? 'opcional' : 'falta'}">${ok ? '✓' : opcional ? '○' : '•'} ${txt}</li>`;
+  return `<section class="card cartao-rascunho">
+    <div class="row-between">
+      <div><h3 style="margin:0">📝 Nova cotação em montagem</h3>
+        <p class="small muted" style="margin:2px 0 0">${esc(r.titulo || 'sem título')}${r.prazoResposta ? ` · responder até ${fmtData(r.prazoResposta)}${r.prazoHora ? ' ' + esc(r.prazoHora) : ''}` : ''}</p></div>
+      <a class="btn btn-primary" href="#" data-route="nova">Continuar →</a>
+    </div>
+    <ul class="passos-rascunho">
+      ${passo(true, `<b>${itens.length}</b> ${itens.length === 1 ? 'item' : 'itens'}`)}
+      ${passo(!semMarca, semMarca ? `<b>${semMarca}</b> sem marca pedida` : 'todas as marcas preenchidas')}
+      ${passo(nf > 0, nf ? `<b>${nf}</b> fornecedor(es)` : 'nenhum fornecedor marcado')}
+      ${passo(!!r.prazoResposta, r.prazoResposta ? 'prazo definido' : 'sem prazo')}
+      ${passo(!!r.papelzinhos, r.papelzinhos ? `papelzinhos importados (${r.papelzinhos.adicionados})` : 'papelzinhos de São Sebastião (opcional)', true)}
+    </ul>
+  </section>`;
+}
+
+/** Últimas cotações (acesso rápido, mesmo quando não há nenhuma aberta). */
+function ultimasCotacoesInicio() {
+  const cs = [...db.cotacoes].filter(c => c.status !== 'cancelada')
+    .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero)).slice(0, 5);
+  if (!cs.length) return '';
+  return `<section class="card">
+    <div class="row-between"><h3 style="margin:0">Últimas cotações</h3><a href="#" class="small" data-route="cotacoes">ver todas →</a></div>
+    <div class="ultimas-cot">${cs.map(c => {
+      const peds = pedidosPorFornecedor(c);
+      const total = peds.reduce((t, p) => t + p.total, 0);
+      const comPed = new Set([...peds.map(p => p.fi), ...c.fornecedores.map((f, fi) => (f.concluidoEm ? fi : -1)).filter(fi => fi >= 0)]);
+      const exp = [...comPed].filter(fi => c.fornecedores[fi].concluidoEm).length;
+      return `<a href="#" class="ultima-cot" data-route="cotacao" data-id="${esc(c.id)}">
+        <span class="uc-num">nº ${esc(c.numero)}</span>
+        <span class="uc-tit">${esc(c.titulo || '—')}<br><span class="small muted">${fmtData(c.data)} · ${c.itens.length} itens · ${c.fornecedores.length} fornecedores</span></span>
+        <span class="uc-info small">${total ? `<b>${fmtMoeda(total)}</b><br>` : ''}${comPed.size ? `${exp}/${comPed.size} pedidos` : ''}</span>
+        ${statusBadge(c.status)}
+      </a>`;
+    }).join('')}</div>
+  </section>`;
+}
+
 function renderInicio() {
   const pend = pendencias();
   const ativas = db.cotacoes.filter(c => !c.arquivada && c.status === 'aberta');
   const icone = { urgente: '🔴', aviso: '🟡', info: '🔵' };
+  const cartaoRasc = cartaoRascunhoInicio();
+  const pendLista = cartaoRasc ? pend.filter(p => p.rota !== 'nova') : pend; // a nova cotação já tem o cartão dela
+  const nDuv = gruposDuvidas(duvidasPendentes()).length;
   return `
   <section class="card">
     <div class="row-between">
-      <h2>Início</h2>
+      <div><h2 style="margin:0">Início</h2><p class="small muted saudacao">${esc(saudacaoInicio())}</p></div>
       <div class="row">
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
         <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
-        <label class="btn" style="margin:0">📥 Importar planilhas respondidas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>
+        ${ativas.length ? '<label class="btn" style="margin:0" title="Importar as planilhas que os fornecedores devolveram (o sistema acha a cotação e o fornecedor de cada uma)">📥 Importar respostas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>' : ''}
       </div>
     </div>
     ${htmlContinuar()}
-    <div class="stats">
-      <div class="stat"><span class="muted small">Itens no banco</span><b>${db.produtos.length.toLocaleString('pt-BR')}</b></div>
-      <div class="stat"><span class="muted small">Cotações abertas</span><b>${ativas.length}</b></div>
-      <div class="stat"><span class="muted small">Itens em dúvida</span><b>${gruposDuvidas(duvidasPendentes()).length}</b></div>
-      <div class="stat${pend.some(p => p.nivel === 'urgente') ? ' stat-ruim' : ''}"><span class="muted small">Pendências</span><b>${pend.length}</b></div>
+    <div class="stats stats-inicio">
+      <a href="#" class="stat stat-link" data-route="produtos" title="Ver o cadastro de produtos"><span class="muted small">Itens no banco</span><b>${db.produtos.length.toLocaleString('pt-BR')}</b></a>
+      <a href="#" class="stat stat-link" data-route="cotacoes" title="Ver as cotações"><span class="muted small">Cotações abertas</span><b>${ativas.length}</b></a>
+      <a href="#" class="stat stat-link${nDuv ? ' stat-atencao' : ''}" data-route="duvidas" title="Ver a fila de dúvidas"><span class="muted small">Itens em dúvida</span><b>${nDuv}</b></a>
+      <a href="#" class="stat stat-link${pend.some(p => p.nivel === 'urgente') ? ' stat-ruim' : ''}" data-act="irPendencias" title="Ver o que fazer agora"><span class="muted small">Pendências</span><b>${pend.length}</b></a>
     </div>
   </section>
+  ${cartaoRasc}
   ${ativas.length ? `<section class="card">
     <h3>Andamento das cotações abertas</h3>
     <div class="cartoes-cot">${[...ativas].sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))).map(cartaoAndamento).join('')}</div>
@@ -6494,14 +6561,15 @@ function renderInicio() {
     <h3>👥 Trabalhando agora</h3>
     <div id="presencaInicio">${htmlPresencaInicio()}</div>
   </section>
-  <section class="card">
+  <section class="card" id="pendenciasInicio">
     <h3>O que fazer agora</h3>
-    ${pend.length ? `<ul class="lista-pend">${pend.map(p => `<li class="pend-${p.nivel}">
+    ${pendLista.length ? `<ul class="lista-pend">${pendLista.map(p => `<li class="pend-${p.nivel}">
       <span class="pend-icone">${icone[p.nivel]}</span>
       <div class="pend-texto"><b>${esc(p.texto)}</b>${p.detalhe ? `<br><span class="small muted">${esc(p.detalhe)}</span>` : ''}</div>
       <a class="btn sm" href="#" data-route="${p.rota}"${p.id ? ` data-id="${esc(p.id)}"` : ''}>${esc(p.botao)} →</a>
-    </li>`).join('')}</ul>` : '<p class="empty">Tudo em dia. 🎉</p>'}
-  </section>`;
+    </li>`).join('')}</ul>` : `<p class="empty">${cartaoRasc ? 'Fora a nova cotação em montagem, tudo em dia. 🎉' : 'Tudo em dia. 🎉'}</p>`}
+  </section>
+  ${ultimasCotacoesInicio()}`;
 }
 
 /* ---------------- Início: andamento, prazo, continuar e quem está trabalhando ---------------- */
@@ -7308,7 +7376,7 @@ const acoes = {
       }
     }
     if (papel) {
-      const jaAntes = d.linhas.filter(l => l.jaNaCotacao).length;
+      const jaAntes = d.jaNaCotacao || 0;
       r.papelzinhos = { arquivo: d.arquivo, em: new Date().toISOString(), adicionados: escolhidas.length - somados, jaEstavam: jaAntes + somados };
     }
     ui.datacar = null;
@@ -8013,6 +8081,7 @@ const acoes = {
     ir('relatorios');
     document.getElementById('notaFornecedores')?.scrollIntoView({ block: 'start' });
   },
+  irPendencias: () => document.getElementById('pendenciasInicio')?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
   continuarDeOndeParei: () => {
     const u = lerUltimoLugar();
     if (!u) return;
