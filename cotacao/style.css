@@ -1795,3 +1795,23 @@ nav a { font-size: 14px; padding: 6px 10px; }
 .tab-itens input { height: 32px; padding: 4px 9px; font-size: 13.5px; }
 .tab-itens td:nth-child(5) { font-size: 13.5px; }
 .tab-itens .sm.danger { padding: 2px 8px; }
+
+/* nova cotação: preencher padrão, ordem, similar recolhido, barra compacta */
+.nc-padrao { align-self: center; margin-bottom: 4px; }
+.th-ordem { padding: 0; border: 0; background: none; box-shadow: none; min-height: 0; height: auto; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+.th-ordem:hover { color: var(--primary-2); text-decoration: underline; }
+.th-ordem.ativa { color: var(--primary-2); }
+.sim-item { margin-top: 2px; font-family: Inter, system-ui, sans-serif; letter-spacing: 0; font-weight: 400; }
+.sim-item > summary { display: inline-block; list-style: none; cursor: pointer; font-size: 11px; color: var(--muted); }
+.sim-item > summary::-webkit-details-marker { display: none; }
+.sim-item > summary:hover { color: var(--primary-2); }
+.sim-item[open] > summary { display: none; }
+.sim-item input { width: 170px; height: 28px; margin-top: 2px; font-size: 12.5px; }
+@media (max-width: 1000px) {
+  .barra-criar { flex-wrap: nowrap; padding: 8px 10px; gap: 8px; }
+  .barra-criar-resumo { gap: 2px 10px; font-size: 13px; flex-wrap: nowrap; white-space: nowrap; min-width: 0; overflow: hidden; }
+  .barra-criar .rot-longo { display: none; }
+  .barra-criar-acoes { flex: none; }
+}
+.sim-item { display: inline-block; margin: 2px 0 0 6px; vertical-align: middle; }
+.sim-item[open] { display: block; margin-left: 0; }

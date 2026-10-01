@@ -1507,14 +1507,14 @@ function htmlBarraCriar(r = rascunho()) {
   const ck = n ? checklistNova(r) : [];
   const prazo = r.prazoResposta ? `${fmtData(r.prazoResposta).slice(0, 5)}${r.prazoHora ? ' ' + r.prazoHora : ''}` : 'sem prazo';
   return `<div class="barra-criar-resumo">
-      <span title="Itens na cotação">📦 <b>${n}</b> ${n === 1 ? 'item' : 'itens'}</span>
-      <span title="Fornecedores que vão receber">🏪 <b>${nf}</b> fornecedor(es)</span>
+      <span title="Itens na cotação">📦 <b>${n}</b><span class="rot-longo"> ${n === 1 ? 'item' : 'itens'}</span></span>
+      <span title="Fornecedores que vão receber">🏪 <b>${nf}</b><span class="rot-longo"> fornecedor(es)</span></span>
       <span title="Responder até">⏰ ${esc(prazo)}</span>
-      ${ck.length ? `<span class="barra-criar-alerta" title="${esc(ck.map(x => '• ' + x.txt).join('\n'))}">⚠ ${ck.length} ponto(s) a conferir</span>` : n ? '<span class="barra-criar-ok">✓ tudo certo</span>' : ''}
+      ${ck.length ? `<span class="barra-criar-alerta" title="${esc(ck.map(x => '• ' + x.txt).join('\n'))}">⚠ ${ck.length}<span class="rot-longo"> ponto(s) a conferir</span></span>` : n ? '<span class="barra-criar-ok">✓<span class="rot-longo"> tudo certo</span></span>' : ''}
     </div>
     <div class="barra-criar-acoes">
       <button type="button" class="sm" data-act="limparRascunho">Limpar tudo</button>
-      <button type="button" class="primary" data-act="criarCotacao" title="Cria a cotação e salva a planilha em Excel" ${n ? '' : 'disabled'}>Criar cotação e salvar planilha →</button>
+      <button type="button" class="primary" data-act="criarCotacao" title="Cria a cotação e salva a planilha em Excel" ${n ? '' : 'disabled'}>Criar cotação<span class="rot-longo"> e salvar planilha</span> →</button>
     </div>`;
 }
 function atualizarBarraCriar() {
@@ -4036,9 +4036,14 @@ function incluirNaLista(id) {
 const codigoSoNaCotacao = p => /\bKIT (CORREIA|TENSOR)\b/.test(normMarca(p && p.descricao));
 
 /** Itens da cotação sempre em ordem alfabética (A-Z) pela descrição. */
-function ordenarItensRascunho(r, prod) {
-  r.itens.sort((a, b) => COLLATOR.compare(prod[a.produtoId]?.descricao || '', prod[b.produtoId]?.descricao || '')
-    || COLLATOR.compare(a.codigoArquivo || prod[a.produtoId]?.codigo || '', b.codigoArquivo || prod[b.produtoId]?.codigo || ''));
+/** Ordem da lista da nova cotação: 'desc' (descrição A→Z, a da planilha), 'obs' (OBS do DataCar) ou 'cod' (código). */
+function ordenarItensRascunho(r, prod, ordem = 'desc') {
+  const desc = (a, b) => COLLATOR.compare(prod[a.produtoId]?.descricao || '', prod[b.produtoId]?.descricao || '');
+  const cod = (a, b) => COLLATOR.compare(a.codigoArquivo || prod[a.produtoId]?.codigo || '', b.codigoArquivo || prod[b.produtoId]?.codigo || '');
+  const obs = x => tirarXX((x.obsArquivo || [])[0] || '') || '\uffff'; // sem OBS vai para o fim
+  r.itens.sort(ordem === 'cod' ? (a, b) => cod(a, b) || desc(a, b)
+    : ordem === 'obs' ? (a, b) => COLLATOR.compare(obs(a), obs(b)) || desc(a, b) || cod(a, b)
+      : (a, b) => desc(a, b) || cod(a, b));
 }
 
 /** O que a lista de itens da nova cotação precisa para desenhar: códigos repetidos, OBS… */
@@ -4154,8 +4159,8 @@ function linhaItemNova(ctx, x, i) {
         ? `<input class="cod-item ${x.codigoArquivo && x.codigoArquivo !== p.codigo ? 'so-cotacao' : ''}" data-codigo-item="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código só desta cotação: o cadastro continua ${esc(p.codigo)}." aria-label="Código de ${esc(p.descricao)} nesta cotação">`
         : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}" title="${origemObs}">OBS <b>${textoObs.map(esc).join(' · ')}</b></span>`
-        : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
-      <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
+        : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}
+        <details class="sim-item"${p.similar ? '' : ''}><summary title="Códigos similares (ficam no cadastro)">${p.similar ? `sim. <b>${esc(p.similar)}</b> ✎` : '+ similar'}</summary><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Códigos similares" aria-label="Códigos similares de ${esc(p.descricao)}"></details></td>
       <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação (Enter duas vezes grava como padrão no cadastro).` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
       <td>${esc(p.descricao)}</td>
       <td class="c" style="white-space:nowrap">${dup ? `<button class="sm" data-act="manterItem" data-i="${i}" title="Manter na cotação e tirar o destaque">✓ Manter</button> ` : ''}<button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
@@ -4190,7 +4195,7 @@ function renderNova() {
   const r = rascunho();
   const prod = prodPorId();
   r.itens = r.itens.filter(x => prod[x.produtoId]);
-  ordenarItensRascunho(r, prod);
+  ordenarItensRascunho(r, prod, ui.ordemItens);
   const forn = byId(db.fornecedores);
   r.fornecedorIds = r.fornecedorIds.filter(id => forn[id]);
 
@@ -4208,6 +4213,7 @@ function renderNova() {
   <section class="card nova-cab">
     <div class="nova-cab-linha">
       <h2>Nova cotação</h2>
+      ${!r.titulo || !r.prazoResposta || !r.obs ? `<button type="button" class="sm nc-padrao" data-act="preencherPadraoNova" title="Preenche só o que está vazio: título do dia, prazo no próximo dia útil e as observações da última cotação. Os itens e fornecedores continuam.">↺ Preencher padrão</button>` : ''}
       <label class="nc-titulo">Título<input data-draft="titulo" value="${esc(r.titulo)}" placeholder="Ex.: COTAÇÃO 30 DE SETEMBRO"></label>
       <label class="nc-prazo">Responder até<span class="prazo-campos"><input type="date" data-draft="prazoResposta" value="${esc(r.prazoResposta)}"><input type="time" data-draft="prazoHora" value="${esc(r.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></span></label>
     </div>
@@ -4229,7 +4235,11 @@ function renderNova() {
     <div id="avisoNovosCad">${htmlAvisoNovosCad()}</div>
     <div id="foraDaLista" class="fora-lista">${htmlForaDaLista()}</div>
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
-      <thead><tr><th class="c">#</th><th>Código</th><th>Similar</th><th>Marca</th><th>Descrição A→Z</th><th></th></tr></thead>
+      <thead><tr><th class="c">#</th><th>${(() => {
+        const o = ui.ordemItens || 'desc';
+        const bt = (k, rot, tit) => `<button type="button" class="th-ordem${o === k ? ' ativa' : ''}" data-act="ordemItens" data-ordem="${k}" title="${tit}">${rot}${o === k ? ' ↓' : ''}</button>`;
+        return `${bt('cod', 'Código', 'Ordenar por código')} <span class="muted">·</span> ${bt('obs', 'OBS', 'Ordenar pela OBS do DataCar (mesma ordem da conferência)')}</th><th>Marca</th><th>${bt('desc', 'Descrição', 'Ordenar pela descrição (A→Z, a ordem da planilha)')}`;
+      })()}</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
       <p class="small muted" style="margin:6px 0 0">Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca (sugere as marcas do cadastro; <span class="kbd">Delete</span> apaga a sugestão) · <span class="kbd">Enter</span> salva nesta cotação e vai para o próximo · <span class="kbd">Enter</span> <span class="kbd">Enter</span> salva como padrão no cadastro · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar · <span class="kbd">Ctrl</span>+<span class="kbd">Delete</span> ou ✕ tira o item (pede confirmação) · em KIT CORREIA e KIT TENSOR o código pode ser trocado só nesta cotação</p>` : '<p class="empty">Abra o arquivo do DataCar acima para trazer os itens.</p>'}
   </section>
@@ -7215,6 +7225,17 @@ const acoes = {
   },
   cadastrarDaBusca: () => cadastrarEIncluir(codigoParaCadastrar(ui.filtroItens)),
 
+  preencherPadraoNova: () => {
+    const r = rascunho();
+    const pad = novoRascunho();
+    const feitos = [];
+    if (!r.titulo) { r.titulo = pad.titulo; feitos.push('título'); }
+    if (!r.prazoResposta) { r.prazoResposta = pad.prazoResposta; r.prazoHora = r.prazoHora || pad.prazoHora; feitos.push('prazo'); }
+    if (!r.obs && pad.obs) { r.obs = pad.obs; feitos.push('observações'); }
+    salvar();
+    render();
+    toast(feitos.length ? `Preenchido: ${feitos.join(', ')}.` : 'Nada para preencher.');
+  },
   fornDeSempre: () => {
     const r = rascunho();
     r.fornecedorIds = [...new Set([...r.fornecedorIds, ...fornecedoresDeSempre()])];
@@ -7701,6 +7722,11 @@ const acoes = {
   },
   sairSupabase: () => sairSupabase(),
   abrirBusca: () => abrirBusca(),
+  ordemItens: el => {
+    ui.ordemItens = el.dataset.ordem || 'desc';
+    ui.cursorItem = 0;
+    render();
+  },
   tipoItens: el => {
     ui.tipoItens = el.dataset.tipo || '';
     const t = document.getElementById('tiposItens');
@@ -8405,6 +8431,7 @@ function focarCampoItem(i, campo, modo) {
   const tr = document.querySelector(`[data-item-linha="${i}"]`);
   const inp = tr && tr.querySelector(`[${attr}]`);
   if (!inp) { moverCursorItem(i); return; } // linha sem esse campo (código só nos KIT CORREIA/TENSOR)
+  inp.closest('details')?.setAttribute('open', ''); // similar fica recolhido: abre para digitar
   moverCursorItem(i, false);
   inp.dataset.original = inp.value;
   inp.focus();
@@ -9388,6 +9415,8 @@ async function aoMudarCampo(e) {
     if (!p) return;
     p.similar = t.value.trim();
     salvar();
+    const sum = t.closest('details')?.querySelector('summary');
+    if (sum) sum.innerHTML = p.similar ? `sim. <b>${esc(p.similar)}</b> ✎` : '+ similar';
     toast(p.similar ? `Similar salvo no cadastro de ${p.codigo || p.descricao}.` : 'Similar removido do cadastro.');
   } else if (t.dataset.codigoItem != null) {
     const item = rascunho().itens[+t.dataset.codigoItem];
