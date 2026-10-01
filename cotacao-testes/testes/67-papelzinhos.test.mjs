@@ -13,7 +13,7 @@ test('papelzinhos (.ods): o que já está na cotação não entra; o resto entra
   const s = await abrir(dados());
   const { page } = s;
   await page.click('nav [data-route=nova]');
-  assert.match(await page.locator('.papel-box').innerText(), /Papelzinhos de São Sebastião[\s\S]*Opcional/);
+  assert.match(await page.locator('.papel-box').innerText(), /Papelzinhos de São Sebastião[\s\S]*opcional · ainda não importado/);
   await page.setInputFiles('[data-import-papel]', exemplo('papelzinhos.ods'));
   await page.waitForSelector('#dlgDataCar');
   assert.match(await page.locator('#dcTitulo').innerText(), /Papelzinhos de São Sebastião/);

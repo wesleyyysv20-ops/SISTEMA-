@@ -515,6 +515,29 @@ function assinaturaSemQtd(c) {
   return JSON.stringify([c, db.config, db.fornecedores, duvidas], (k, v) => (k === 'qtds' ? undefined : v));
 }
 
+// arrastar o arquivo do DataCar ou dos papelzinhos para a caixa dele
+document.addEventListener('dragover', e => {
+  const alvo = e.target.closest?.('[data-soltar]');
+  if (!alvo || !e.dataTransfer?.types?.includes('Files')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  alvo.classList.add('soltando');
+});
+document.addEventListener('dragleave', e => {
+  const alvo = e.target.closest?.('[data-soltar]');
+  if (alvo && !alvo.contains(e.relatedTarget)) alvo.classList.remove('soltando');
+});
+document.addEventListener('drop', async e => {
+  const alvo = e.target.closest?.('[data-soltar]');
+  if (!alvo) return;
+  e.preventDefault();
+  alvo.classList.remove('soltando');
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  if (alvo.dataset.soltar === 'papel') await abrirArquivoPapel(file);
+  else await abrirArquivoDataCar(file);
+});
+
 let ponteiroApertado = false;
 let ultimoClique = 0;
 document.addEventListener('pointerdown', () => { ponteiroApertado = true; ultimoClique = Date.now(); }, true);
@@ -1536,7 +1559,8 @@ function htmlBarraCriar(r = rascunho()) {
     </div>
     <div class="barra-criar-acoes">
       <button type="button" class="sm" data-act="limparRascunho">Limpar tudo</button>
-      <button type="button" class="primary" data-act="criarCotacao" title="Cria a cotação e salva a planilha em Excel" ${n ? '' : 'disabled'}>Criar cotação<span class="rot-longo"> e salvar planilha</span> →</button>
+      ${n ? '' : '<span class="small muted barra-criar-dica">Adicione itens para criar</span>'}
+      <button type="button" class="primary" data-act="criarCotacao" title="${n ? 'Cria a cotação e salva a planilha em Excel' : 'Adicione itens (arquivo do DataCar, papelzinhos ou busca no cadastro) para criar a cotação'}" ${n ? '' : 'disabled'}>Criar cotação<span class="rot-longo"> e salvar planilha</span> →</button>
     </div>`;
 }
 function atualizarBarraCriar() {
@@ -4347,33 +4371,37 @@ function renderNova() {
 
   return `
   <section class="card nova-cab">
-    <div class="nova-cab-linha">
+    <div class="nova-cab-topo">
       <h2>Nova cotação</h2>
-      ${!r.titulo || !r.prazoResposta || !r.obs ? `<button type="button" class="sm nc-padrao" data-act="preencherPadraoNova" title="Preenche só o que está vazio: título do dia, prazo no próximo dia útil e as observações da última cotação. Os itens e fornecedores continuam.">↺ Preencher padrão</button>` : ''}
+      ${!r.titulo || !r.prazoResposta || (!r.obs && ultimaCotacao()?.obs) ? `<button type="button" class="sm nc-padrao" data-act="preencherPadraoNova" title="Preenche só o que está vazio: título do dia, prazo no próximo dia útil e as observações da última cotação. Os itens e fornecedores continuam.">↺ Preencher padrão</button>` : ''}
+    </div>
+    <div class="nova-cab-linha">
       <label class="nc-titulo">Título<input data-draft="titulo" value="${esc(r.titulo)}" placeholder="Ex.: COTAÇÃO 30 DE SETEMBRO"></label>
       <label class="nc-prazo">Responder até<span class="prazo-campos"><input type="date" data-draft="prazoResposta" value="${esc(r.prazoResposta)}"><input type="time" data-draft="prazoHora" value="${esc(r.prazoHora || '')}" aria-label="Hora do prazo" title="Hora (opcional)"></span></label>
     </div>
-    <details class="nc-obs"${r.obs ? '' : ' open'}>
-      <summary>📝 Observações para o fornecedor <span class="small muted nc-obs-resumo">${r.obs ? '· ' + esc(r.obs.replace(/\s+/g, ' ').slice(0, 90)) + (r.obs.length > 90 ? '…' : '') : '(vai na planilha)'}</span></summary>
+    <details class="nc-obs">
+      <summary>📝 Observações para o fornecedor <span class="small muted nc-obs-resumo">${r.obs ? '· ' + esc(r.obs.replace(/\s+/g, ' ').slice(0, 90)) + (r.obs.length > 90 ? '…' : '') : '· nenhuma (clique para escrever; vai na planilha)'}</span></summary>
       <textarea data-draft="obs" rows="2" placeholder="Ex.: Entrega na loja, informar prazo e forma de pagamento.">${esc(r.obs)}</textarea>
     </details>
   </section>
 
   <section class="card">
     <h3>1. Itens da cotação (${r.itens.length})</h3>
-    <div class="datacar-box${r.itens.length ? ' compacta' : ''}">
+    <div class="fontes-itens${r.itens.length ? '' : ' vazio'}">
+    <div class="datacar-box${r.itens.length ? ' compacta' : ''}" data-soltar="datacar" title="Clique no botão ou arraste o arquivo para cá">
       <label class="btn ${r.itens.length ? '' : 'btn-primary'}" style="margin:0">📂 ${r.itens.length ? 'Abrir outro arquivo do DataCar' : 'Abrir arquivo do DataCar'}<input type="file" class="hidden" accept=".xlsx,.xls,.ods,.csv,.txt,.htm,.html" data-import-datacar></label>
-      <span class="small muted">${r.itens.length ? 'Os itens de outro arquivo são somados à lista.' : 'Escolha o arquivo gerado pelo DataCar e marque os itens que vão para a cotação. Os itens são reconhecidos pelo <b>código</b>; a <b>OBS</b> serve para ordenar e agrupar.'}</span>
+      <span class="small muted">${r.itens.length ? 'Os itens de outro arquivo são somados à lista.' : 'Clique ou <b>arraste o arquivo para cá</b>. Os itens são reconhecidos pelo <b>código</b>; a <b>OBS</b> serve para ordenar e agrupar.'}</span>
     </div>
     ${painelRep}
-    <div class="papel-box${r.papelzinhos ? ' feito' : ''}">
+    <div class="papel-box${r.papelzinhos ? ' feito' : ''}" data-soltar="papel" title="Clique no botão ou arraste o arquivo para cá">
       <label class="btn sm" style="margin:0" title="Planilha diária de São Sebastião (CÓDIGO / OBS). Não é obrigatória.">📝 ${r.papelzinhos ? 'Abrir outro arquivo de papelzinhos' : 'Papelzinhos de São Sebastião'}<input type="file" class="hidden" accept=".ods,.xlsx,.csv,.txt" data-import-papel></label>
       <span class="small ${r.papelzinhos ? '' : 'muted'}">${r.papelzinhos
         ? `✓ <b>${esc(r.papelzinhos.arquivo)}</b> · ${r.papelzinhos.adicionados} acrescentado(s) · ${r.papelzinhos.jaEstavam} já estava(m) na cotação`
-        : 'Opcional: o arquivo diário da loja. O que já estiver na cotação não entra de novo; o resto entra com a etiqueta PAPELZINHOS.'}</span>
+        : r.itens.length ? 'opcional · ainda não importado' : 'Opcional: o arquivo diário da loja. O que já estiver na cotação não entra de novo; o resto entra com a etiqueta PAPELZINHOS.'}</span>
+    </div>
     </div>
     ${r.itens.length ? `<div class="tipos-itens" id="tiposItens">${htmlTiposItens(ctx)}</div>` : ''}
-    <div class="busca-itens"><input id="filtroItens" value="${esc(ui.filtroItens)}" placeholder="🔎 Procurar na lista ou no cadastro: código, similar, marca ou descrição" autocomplete="off" aria-label="Procurar nos itens da cotação e no cadastro"><span id="contaFiltroItens" class="small muted">${contaFiltroItens()}</span></div>
+    <div class="busca-itens"><input id="filtroItens" value="${esc(ui.filtroItens)}" placeholder="${r.itens.length ? '🔎 Procurar na lista ou no cadastro: código, similar, marca ou descrição' : '🔎 Ou procure um item no cadastro para adicionar (código, similar, marca ou descrição)'}" autocomplete="off" aria-label="Procurar nos itens da cotação e no cadastro"><span id="contaFiltroItens" class="small muted">${contaFiltroItens()}</span></div>
     <div id="avisoNovosCad">${htmlAvisoNovosCad()}</div>
     <div id="foraDaLista" class="fora-lista">${htmlForaDaLista()}</div>
     ${r.itens.length ? `<div class="table-wrap tab-itens" id="tabItens" tabindex="0" aria-label="Itens da cotação. Use as setas para navegar e digite para preencher a marca."><table>
@@ -4383,7 +4411,7 @@ function renderNova() {
         return `${bt('cod', 'Código', 'Ordenar por código')} <span class="muted">·</span> ${bt('obs', 'OBS', 'Ordenar pela OBS do DataCar (mesma ordem da conferência)')}</th><th>Marca</th><th>${bt('desc', 'Descrição', 'Ordenar pela descrição (A→Z, a ordem da planilha)')}`;
       })()}</th><th></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
-      <p class="small muted" style="margin:6px 0 0">Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca (sugere as marcas do cadastro; <span class="kbd">Delete</span> apaga a sugestão) · <span class="kbd">Enter</span> salva nesta cotação e vai para o próximo · <span class="kbd">Enter</span> <span class="kbd">Enter</span> salva como padrão no cadastro · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar · <span class="kbd">Ctrl</span>+<span class="kbd">Delete</span> ou ✕ tira o item (pede confirmação) · em KIT CORREIA e KIT TENSOR o código pode ser trocado só nesta cotação</p>` : '<p class="empty">Abra o arquivo do DataCar acima para trazer os itens.</p>'}
+      <details class="atalhos-itens small muted"><summary>⌨ Atalhos do teclado na lista</summary>Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca (sugere as marcas do cadastro; <span class="kbd">Delete</span> apaga a sugestão) · <span class="kbd">Enter</span> salva nesta cotação e vai para o próximo · <span class="kbd">Enter</span> <span class="kbd">Enter</span> salva como padrão no cadastro · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar · <span class="kbd">Ctrl</span>+<span class="kbd">Delete</span> ou ✕ tira o item (pede confirmação) · em KIT CORREIA e KIT TENSOR o código pode ser trocado só nesta cotação</details>` : ''}
   </section>
 
   <section class="card">
@@ -4391,7 +4419,7 @@ function renderNova() {
       <h3>2. Fornecedores que vão receber (${r.fornecedorIds.length})</h3>
       ${db.fornecedores.length ? `<div class="forn-atalhos">${fornecedoresDeSempre().length ? `<button type="button" class="sm primary" data-act="fornDeSempre" title="Os mesmos fornecedores da última cotação">⭐ Os de sempre (${fornecedoresDeSempre().length})</button>` : ''}<button type="button" class="sm" data-act="fornTodos">Todos</button><button type="button" class="sm" data-act="fornNenhum">Nenhum</button></div>` : ''}
     </div>
-    <p class="small muted" style="margin:-6px 0 10px">Opcional. Você pode criar a cotação sem fornecedor e enviar a planilha para quem quiser; ao importar a resposta, o fornecedor é identificado pelo nome escrito na planilha.</p>
+    <p class="small muted" style="margin:-6px 0 10px" title="Ao importar a resposta, o fornecedor é identificado pelo nome escrito na planilha.">Opcional: dá para criar sem fornecedor e enviar a planilha para quem quiser.</p>
     ${fornList}
     <details>
       <summary>+ Cadastrar fornecedor novo</summary>

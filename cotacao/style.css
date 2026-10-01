@@ -1825,3 +1825,31 @@ br + .sim-item { margin-left: 0; }
 .conf-desc-novo input { height: 32px; font-size: 14px; }
 .modo-papel .cg-obs > b + span { display: none; }
 .modo-papel .cg-obs b { font-family: var(--fonte-cod); }
+
+/* nova cotação: cabeçalho em 2 linhas, fontes de itens lado a lado, arrastar e soltar */
+.nova-cab-topo { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.nova-cab-topo h2 { margin: 0; }
+.nova-cab-topo .nc-padrao { margin: 0; }
+.fontes-itens { display: flex; flex-direction: column; gap: 8px; }
+.fontes-itens.vazio { display: grid; grid-template-columns: 3fr 2fr; gap: 10px; align-items: stretch; }
+.fontes-itens.vazio > div { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; margin: 0; padding: 16px; min-height: 110px; }
+.fontes-itens .papel-box { margin: 0; }
+@media (max-width: 700px) { .fontes-itens.vazio { grid-template-columns: 1fr; } }
+[data-soltar].soltando { outline: 3px dashed var(--primary-2); outline-offset: 2px; background: color-mix(in srgb, var(--primary-2) 10%, var(--card)); }
+.barra-criar-dica { white-space: nowrap; }
+/* nova cotação: fontes lado a lado também com itens, atalhos recolhidos, ✕ discreto, fornecedores compactos */
+.fontes-itens:not(.vazio) { flex-direction: row; flex-wrap: wrap; }
+.fontes-itens:not(.vazio) > div { flex: 1 1 280px; min-height: 0; }
+.atalhos-itens { margin-top: 6px; }
+.atalhos-itens > summary { cursor: pointer; width: fit-content; }
+.atalhos-itens[open] > summary { margin-bottom: 4px; }
+.tab-itens .sm.danger[data-act=removerItem] { color: var(--muted); border-color: var(--line); background: transparent; }
+.tab-itens tr:hover .sm.danger[data-act=removerItem], .tab-itens tr.item-atual .sm.danger[data-act=removerItem], .tab-itens .sm.danger[data-act=removerItem]:focus-visible { color: var(--danger); border-color: var(--danger); }
+.checklist { grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr)); }
+.checklist label { min-width: 0; padding: 6px 10px; }
+.checklist label > span { min-width: 0; overflow: hidden; }
+.checklist label .small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.checklist label b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* aviso (toast) escondido de verdade quando não há mensagem */
+#toast:not(.show) { visibility: hidden; transition: transform .25s, visibility 0s .25s; }
+.checklist label > span > br { display: none; }

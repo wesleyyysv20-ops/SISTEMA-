@@ -19,7 +19,7 @@ test('nova cotação: "Preencher padrão" completa título e prazo sem perder os
   assert.match(r.titulo, /^COTAÇÃO \d+ DE /);
   assert.match(r.prazoResposta, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(r.itens.length, 3, 'itens continuam');
-  assert.equal(await page.locator('[data-act=preencherPadraoNova]').count(), 1, 'observações ainda vazias (não há cotação anterior)');
+  assert.equal(await page.locator('[data-act=preencherPadraoNova]').count(), 0, 'nada mais a preencher (não há observação anterior para copiar)');
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
