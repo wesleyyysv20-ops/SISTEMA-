@@ -538,6 +538,21 @@ document.addEventListener('click', e => {
   });
 }
 
+// menu "⋯": abre por cima da página, junto do botão (a tabela tem rolagem própria e cortaria a lista)
+document.addEventListener('toggle', e => {
+  const m = e.target;
+  if (!m.matches?.('details.menu-acoes') || !m.open) return;
+  const lista = m.querySelector('.menu-acoes-lista');
+  const r = m.querySelector('summary').getBoundingClientRect();
+  lista.style.position = 'fixed';
+  lista.style.top = `${r.bottom + 4}px`;
+  lista.style.right = `${Math.max(8, document.documentElement.clientWidth - r.right)}px`;
+  const lr = lista.getBoundingClientRect();
+  if (lr.bottom > window.innerHeight - 8) lista.style.top = `${Math.max(8, r.top - lr.height - 4)}px`; // sem espaço embaixo: abre para cima
+}, true);
+// rolou a página: o menu aberto fecha (senão ficaria solto no lugar)
+window.addEventListener('scroll', () => document.querySelectorAll('details.menu-acoes[open]').forEach(m => { m.open = false; }), { passive: true, capture: true });
+
 // menu "⋯" das ações: fecha ao clicar fora ou depois de escolher
 document.addEventListener('click', e => {
   for (const m of document.querySelectorAll('details.menu-acoes[open]')) {

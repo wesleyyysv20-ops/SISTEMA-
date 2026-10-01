@@ -1879,9 +1879,9 @@ br + .sim-item { margin-left: 0; }
 .menu-acoes { display: inline-block; position: relative; vertical-align: middle; }
 .menu-acoes > summary { list-style: none; cursor: pointer; padding: 3px 10px; font-weight: 800; letter-spacing: .05em; }
 .menu-acoes > summary::-webkit-details-marker { display: none; }
-.menu-acoes-lista { position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; display: flex; flex-direction: column; gap: 4px; min-width: 190px; padding: 6px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 10px 28px rgba(10, 18, 40, .18); }
+.menu-acoes-lista { position: fixed; z-index: 60; display: flex; flex-direction: column; gap: 4px; min-width: 190px; padding: 6px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 10px 28px rgba(10, 18, 40, .18); }
 .menu-acoes-lista button { justify-content: flex-start; width: 100%; text-align: left; }
-.corpo-recolhe .table-wrap { overflow: visible; }
+.corpo-recolhe .table-wrap { overflow-x: auto; }
 
 /* ===== Início ===== */
 .saudacao { margin: 2px 0 0; text-transform: none; }
@@ -2029,3 +2029,11 @@ tr.linha-cot:hover td { background: var(--hover); }
 .voltar-topo { position: fixed; right: 18px; bottom: 84px; z-index: 45; width: 42px; height: 42px; padding: 0; border-radius: 50%; font-size: 20px; font-weight: 800; background: var(--card); color: var(--primary); border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(10, 18, 40, .18); display: inline-flex; align-items: center; justify-content: center; }
 .voltar-topo:hover { background: var(--primary); color: var(--on-primary); }
 .voltar-topo[hidden] { display: none; }
+/* topo entre 1101 e 1480px: menu numa linha só (antes "Configurações" caía para baixo) */
+@media (min-width: 1101px) and (max-width: 1480px) {
+  .topbar { gap: 6px 10px; }
+  .brand { font-size: 15px; gap: 8px; }
+  nav { flex-wrap: nowrap; gap: 0; }
+  nav a { white-space: nowrap; padding: 5px 8px; font-size: 13.5px; }
+  .status-nuvem { font-size: 11px; padding: 2px 8px; }
+}
