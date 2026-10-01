@@ -76,6 +76,14 @@ export function supabaseFalso({ liberados = ['wes@loja.com'], senha = '123456', 
         return x ? json(route, 200, x.dados) : json(route, 400, { code: 'P0001', message: 'Backup não encontrado.' });
       }
       if (fn === 'cotacao_definir_senha') { senhas.set(b.p_email, b.p_senha); return route.fulfill({ status: 204, headers: cors }); }
+      if (fn === 'cotacao_definir_admin') {
+        if (!admins.includes(email)) return json(route, 403, { code: '42501', message: 'Só administradores podem definir administradores.' });
+        if (!b.p_admin && b.p_email === email) return json(route, 400, { code: 'P0001', message: 'Você não pode tirar o seu próprio acesso de administrador.' });
+        if (!liberados.includes(b.p_email)) return json(route, 400, { code: 'P0001', message: 'Usuário não encontrado: ' + b.p_email });
+        if (b.p_admin && !admins.includes(b.p_email)) admins.push(b.p_email);
+        if (!b.p_admin && admins.includes(b.p_email)) admins.splice(admins.indexOf(b.p_email), 1);
+        return route.fulfill({ status: 204, headers: cors });
+      }
       if (fn === 'cotacao_remover_usuario') {
         if (b.p_email === email) return json(route, 400, { code: 'P0001', message: 'Você não pode tirar o seu próprio acesso.' });
         liberados.splice(liberados.indexOf(b.p_email), 1);

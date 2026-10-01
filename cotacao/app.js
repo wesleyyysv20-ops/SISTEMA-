@@ -1221,7 +1221,7 @@ function renderConta() {
         <thead><tr><th>Usuário</th><th>Acesso</th><th>Último acesso</th><th></th></tr></thead>
         <tbody>${U.lista.map(u => `<tr>
           <td><b>${esc(u.nome || u.email)}</b>${u.nome ? `<br><span class="small muted">${esc(u.email)}</span>` : ''}</td>
-          <td>${u.admin ? '<span class="badge ok">administrador</span>' : '<span class="badge">usuário</span>'}</td>
+          <td>${u.admin ? '<span class="badge ok">administrador</span>' : '<span class="badge">usuário</span>'}${u.email !== String(nuvem.usuario || '').toLowerCase() ? `<br><button type="button" class="link small" data-act="alternarAdmin" data-email="${esc(u.email)}" data-admin="${u.admin ? '0' : '1'}">${u.admin ? 'tirar administrador' : '⭐ tornar administrador'}</button>` : ''}</td>
           <td class="small">${esc(fmtAcesso(u.ultimo_acesso))}</td>
           <td class="actions-cell"><button class="sm" data-act="senhaUsuario" data-email="${esc(u.email)}">Trocar senha</button>${u.email !== String(nuvem.usuario || '').toLowerCase() ? ` <button class="sm danger" data-act="removerUsuario" data-email="${esc(u.email)}">Tirar acesso</button>` : ''}</td>
         </tr>`).join('')}</tbody>
@@ -8489,6 +8489,22 @@ const acoes = {
     const { error } = await nuvem.supabase.rpc('cotacao_definir_senha', { p_email: email, p_senha: senha });
     if (error) return avisar('Não consegui trocar a senha: ' + msgErroSb(error));
     toast(`Senha de ${email} trocada.`);
+  },
+  alternarAdmin: async el => {
+    const email = el.dataset.email;
+    const vira = el.dataset.admin === '1';
+    const msg = vira
+      ? `Tornar ${email} administrador?\n\nA pessoa vai poder cadastrar e tirar usuários, trocar senhas, ver os Relatórios, editar cotações finalizadas e restaurar backups.`
+      : `Tirar de ${email} o acesso de administrador?\n\nA pessoa continua usando o sistema normalmente, sem as funções de administrador.`;
+    if (!(await confirmar(msg, vira ? 'Tornar administrador' : 'Tirar administrador'))) return;
+    const { error } = await nuvem.supabase.rpc('cotacao_definir_admin', { p_email: email, p_admin: vira });
+    if (error) {
+      if (/cotacao_definir_admin|function|PGRST202/i.test(String(error.message || error.code))) return avisar('Falta ativar esta função no banco (Supabase): rode o arquivo cotacao-supabase/admin.sql no SQL Editor.');
+      return avisar('Não consegui mudar: ' + msgErroSb(error));
+    }
+    await carregarUsuarios();
+    render();
+    toast(vira ? `${email} agora é administrador.` : `${email} não é mais administrador.`);
   },
   removerUsuario: async el => {
     const email = el.dataset.email;

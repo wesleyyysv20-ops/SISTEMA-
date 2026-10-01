@@ -92,3 +92,26 @@ test('usuários: quem não é administrador não vê o cadastro; outro computado
   assert.deepEqual(erros, []);
   await context.close();
 });
+
+test('usuários: administrador torna outra pessoa administradora e tira depois (com confirmação)', async () => {
+  const sb = supabaseFalso({ docs: new Map([['sistema/config', { loja: 'DISPPAR' }]]), liberados: ['wes@loja.com', 'ana@loja.com'], admins: ['wes@loja.com'] });
+  const { page, erros } = await abrirSite(sb);
+  await logado(page, 'wes@loja.com', '123456');
+  await page.waitForFunction(() => nuvem.admin === true);
+  await page.evaluate(() => { ui.abaConfig = 'conta'; ir('config'); });
+  await page.waitForSelector('#cardConta table');
+  // eu mesmo não tenho o botão (não dá para tirar o próprio acesso de administrador)
+  assert.equal(await page.locator('[data-act=alternarAdmin][data-email="wes@loja.com"]').count(), 0);
+  await page.click('[data-act=alternarAdmin][data-email="ana@loja.com"]');
+  assert.match(await page.locator('.dlg').innerText(), /Tornar ana@loja\.com administrador/);
+  await page.click('.dlg button.primary');
+  await page.waitForFunction(() => /ana@loja\.com agora é administrador/.test(document.querySelector('#toast')?.textContent || ''));
+  assert.ok(sb.admins.includes('ana@loja.com'));
+  assert.match(await page.locator('#cardConta tbody tr', { hasText: 'ana@loja.com' }).innerText(), /administrador[\s\S]*tirar administrador/);
+  await page.click('[data-act=alternarAdmin][data-email="ana@loja.com"]');
+  await page.click('.dlg button.primary');
+  await page.waitForFunction(() => /não é mais administrador/.test(document.querySelector('#toast')?.textContent || ''));
+  assert.ok(!sb.admins.includes('ana@loja.com'));
+  assert.deepEqual(erros, []);
+  await page.close();
+});
