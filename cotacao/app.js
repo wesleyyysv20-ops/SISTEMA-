@@ -3062,24 +3062,10 @@ async function abrirArquivoDataCar(file) {
 /** "XX" na OBS do DataCar = item para cotar para a loja de São Sebastião. */
 const temXX = v => /(^|[^a-z0-9])xx([^a-z0-9]|$)/i.test(String(v || ''));
 const tirarXX = v => String(v || '').replace(/(^|\s)xx(?=\s|$)/gi, ' ').replace(/\s+/g, ' ').trim();
-function lojaDss() {
-  return lojas().find(lj => /^dss$/i.test(lj.sigla || '') || lj.id === 'sao-sebastiao' || /sebasti/.test(semAcento(lj.nome))) || null;
-}
-function siglaDss() {
-  const lj = lojaDss();
-  return lj ? siglaLoja(lj) : 'DSS';
-}
 /** Etiqueta da loja pela OBS: 'dss' (só XX), 'ambas' (com e sem XX) ou ''. */
 function lojaPelaObs(obs = []) {
   if (!obs.some(temXX)) return '';
   return obs.some(o => !temXX(o)) ? 'ambas' : 'dss';
-}
-function tagLojaObs(tipo) {
-  if (!tipo) return '';
-  const txt = tipo === 'dss' ? siglaDss() : lojas().map(siglaLoja).join(' + ');
-  const tit = tipo === 'dss' ? `XX na OBS do DataCar: cotar para ${lojaDss()?.nome || 'São Sebastião'} (só informação: a quantidade é você que digita)`
-    : 'O item veio com e sem XX na OBS: para as duas lojas (só informação)';
-  return `<span class="tag-loja" title="${esc(tit)}">📍 ${esc(txt)}</span>`;
 }
 
 // "01" e "01 XX" ficam no mesmo grupo (o XX aparece em cada item)
@@ -3540,7 +3526,7 @@ function conteudoGrupos() {
     const sel = d.selG.has(g.k);
     return `<div class="conf-grupo est-${e.estado} ${i === d.gcur ? 'atual' : ''}${sel ? ' selecionado' : ''}" data-g-idx="${i}">
       <span class="cg-sel" title="Selecionar (ou Shift+clique / Shift+↓ para uma faixa)"><input type="checkbox" tabindex="-1" ${sel ? 'checked' : ''} aria-label="Selecionar o grupo ${esc(g.rotulo)}"></span>
-      <div class="cg-obs"><b title="${esc(g.rotulo)}">${esc(g.rotulo)}</b><span>${e.n} ${e.n === 1 ? 'item' : 'itens'}</span>${(nx => (nx ? `<span class="tag-loja" title="${nx} item(ns) com XX na OBS: para ${esc(lojaDss()?.nome || 'São Sebastião')}">📍 ${nx === e.n ? '' : nx + ' '}${esc(siglaDss())}</span>` : ''))(g.itens.filter(l => temXX(l.chave)).length)}${(sug => (sug ? `<span class="sug-obs ${sug.tipo}" title="A OBS diz &quot;${esc(sug.palavra)}&quot;">${{ vai: 'sugestão: vai', nao: 'sugestão: não vai', revisar: 'revisar' }[sug.tipo]}</span>` : ''))(sugestaoObs(g.rotulo))}</div>
+      <div class="cg-obs"><b title="${esc(g.rotulo)}">${esc(g.rotulo)}</b><span>${e.n} ${e.n === 1 ? 'item' : 'itens'}</span>${(sug => (sug ? `<span class="sug-obs ${sug.tipo}" title="A OBS diz &quot;${esc(sug.palavra)}&quot;">${{ vai: 'sugestão: vai', nao: 'sugestão: não vai', revisar: 'revisar' }[sug.tipo]}</span>` : ''))(sugestaoObs(g.rotulo))}</div>
       <div class="cg-amostra small">${amostra.map(esc).join(' · ')}${e.n > 3 ? ` <span class="muted">+${e.n - 3}</span>` : ''}</div>
       <div class="cg-estado"><span class="badge ${e.estado === 'vai' ? 'ok' : e.estado === 'nao' ? 'danger' : e.estado === 'pendente' ? '' : 'warn'}">${rotEstado[e.estado]}${e.estado === 'misto' || e.estado === 'incompleto' ? ` · ${e.vai} vão` : ''}</span></div>
       <div class="cg-acoes">
@@ -3605,7 +3591,6 @@ function conteudoItem() {
       <div class="conf-topo">
         ${l.decisao ? `<span class="badge ${l.decisao === 'vai' ? 'ok' : 'danger'}">já decidido: ${l.decisao === 'vai' ? 'VAI' : 'NÃO VAI'}</span>` : ''}
         ${repetido ? '<span class="badge warn">código repetido no arquivo</span>' : ''}
-        ${temXX(l.chave) ? tagLojaObs('dss') : ''}
         ${p && naCotacao.has(p.id) ? '<span class="badge">já está na cotação</span>' : ''}
       </div>
       <div class="conf-codigo">${esc(l.codigo || l.chave)}</div>
@@ -3951,7 +3936,6 @@ function itemNaBusca(x, p, termo, pals = palavrasBusca(termo)) {
 const TIPOS_ITENS = [
   ['semMarca', '⚠ Sem marca', 'Itens sem marca pedida'],
   ['repetido', '🔁 Repetidos', 'Mesmo código em mais de uma linha'],
-  ['dss', '📍 São Sebastião', 'XX na OBS do DataCar: para a loja de São Sebastião'],
   ['novo', '🆕 Novos no cadastro', 'Cadastrados agora pelo arquivo do DataCar'],
 ];
 function itemNoTipo(ctx, x, i, tipo = ui.tipoItens) {
@@ -3959,7 +3943,6 @@ function itemNoTipo(ctx, x, i, tipo = ui.tipoItens) {
   const p = ctx.prod[x.produtoId];
   if (tipo === 'semMarca') return !(x.marca || p?.marca);
   if (tipo === 'repetido') return ctx.repetido(x, i);
-  if (tipo === 'dss') return !!lojaPelaObs(x.obsArquivo || []);
   if (tipo === 'novo') return !!x.novoCadastro;
   return true;
 }
@@ -4169,7 +4152,7 @@ function linhaItemNova(ctx, x, i) {
       <td class="c">${i + 1}</td>
       <td>${codigoSoNaCotacao(p)
         ? `<input class="cod-item ${x.codigoArquivo && x.codigoArquivo !== p.codigo ? 'so-cotacao' : ''}" data-codigo-item="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código só desta cotação: o cadastro continua ${esc(p.codigo)}." aria-label="Código de ${esc(p.descricao)} nesta cotação">`
-        : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${tagLojaObs(lojaPelaObs(x.obsArquivo || [])) ? ' ' + tagLojaObs(lojaPelaObs(x.obsArquivo || [])) : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
+        : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}" title="${origemObs}">OBS <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}</td>
       <td style="width:170px"><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Opcional" aria-label="Códigos similares de ${esc(p.descricao)}"></td>
@@ -5448,7 +5431,7 @@ function renderCotacao(id) {
           <td class="c">${l.i + 1}</td>
           <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
             <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
-            <span class="prod-tags">${tagLojaObs(l.it.lojaObs)}${l.it.marca ? `<span class="marca-pedida" title="Marca pedida: ${esc(l.it.marca)}">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
+            <span class="prod-tags">${l.it.marca ? `<span class="marca-pedida" title="Marca pedida: ${esc(l.it.marca)}">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
           ${celulas}
           ${temResposta ? `${(() => {
@@ -5474,7 +5457,7 @@ function renderCotacao(id) {
               const acao = alvo >= 0 && alvo !== l.vencedor ? ` class="r fd col-dif escolhe-dif" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvo}" title="Clique para comprar de ${esc(c.fornecedores[alvo].nome)} (${fmtMoeda(l.precos[alvo])})"` : ' class="r fd col-dif"';
               return `<td${acao}>${celulaDifSegundo(c, l)}</td>`;
             })() : ''}
-            ${LJ.map(lj => `<td class="c col-qtd fd${l.it.lojaObs === 'dss' && lj.id === lojaDss()?.id ? ' loja-obs' : ''}"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}"${cotTravada(c) ? ' readonly' : ''} title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
+            ${LJ.map(lj => `<td class="c col-qtd fd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}"${cotTravada(c) ? ' readonly' : ''} title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r fd" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
         }).join('')}
@@ -9127,7 +9110,7 @@ function desenharPip(focar) {
         <div class="pip-cab">
           <button type="button" class="pip-cod" data-pip="copiar" title="Clique (ou C) para copiar o código e colar no DataCar"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉</span></button>
         </div>
-        <div class="pip-linha-desc"><span class="pip-desc" title="${esc(l.it.descricao || '')}">${esc(l.it.descricao || '')}</span>${tagLojaObs(l.it.lojaObs)}<span class="pip-estado" id="pipEstado">${rotEstado}</span></div>
+        <div class="pip-linha-desc"><span class="pip-desc" title="${esc(l.it.descricao || '')}">${esc(l.it.descricao || '')}</span><span class="pip-estado" id="pipEstado">${rotEstado}</span></div>
         ${f ? (() => {
           const tags = [
             l.recusadaGanhou ? '<span class="pip-tag recusada">⚠ marca recusada</span>' : '',
@@ -9158,7 +9141,7 @@ function desenharPip(focar) {
       <div class="pip-col-qtd">
         <div class="pip-qtds">${LJ.map(lj => {
           const v = c.qtds?.[l.i]?.[lj.id];
-          return `<label class="${l.it.lojaObs === 'dss' && lj.id === lojaDss()?.id ? 'loja-obs' : ''}" title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}${l.it.lojaObs === 'dss' && lj.id === lojaDss()?.id ? ' 📍' : ''}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder="0"></label>`;
+          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder="0"></label>`;
         }).join('')}</div>
         <div id="pipEstoque">${estoquePip(c, l)}</div>
         <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
