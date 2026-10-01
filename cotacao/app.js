@@ -9631,8 +9631,7 @@ function desenharPip(focar) {
       <span class="pip-pos" title="Item da cotação · posição na lista">#${l.i + 1} <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
       <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>
     </div>
-    <div id="pipPedido">${htmlPedidoPip(c)}</div>
-    <div id="pipAviso">${avisoConcluidoPip(c, lista)}</div>
+    <div class="pip-topo2"><div id="pipPedido">${htmlPedidoPip(c)}</div><div id="pipAviso">${avisoConcluidoPip(c, lista)}</div></div>
     <div id="pipPresenca" class="presenca" ${htmlPresencaCot(c.id) ? '' : 'hidden'}>${htmlPresencaCot(c.id)}</div>
     <div class="pip-grade">
       <div class="pip-item estado-${estado}" id="pipItem">
@@ -9670,9 +9669,8 @@ function desenharPip(focar) {
       <div class="pip-col-qtd">
         <div class="pip-qtds">${LJ.map(lj => {
           const v = c.qtds?.[l.i]?.[lj.id];
-          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span>${esc(lj.nome)}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder="0"></label>`;
-        }).join('')}</div>
-        <div id="pipEstoque">${estoquePip(c, l)}</div>
+          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span class="pip-loja-nome">${esc(lj.nome)}</span><span class="pip-loja-sigla">${esc(siglaLoja(lj))}</span><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder="0"></label>`;
+        }).join('')}<div id="pipEstoque">${estoquePip(c, l)}</div></div>
         <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
       </div>
     </div>

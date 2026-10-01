@@ -1946,3 +1946,46 @@ a.stat-link:hover { border-color: var(--primary-2); transform: translateY(-1px);
 [data-aba-cfg][hidden], .barra-salvar-cfg[hidden] { display: none !important; }
 .form-cfg { margin: 0; }
 .barra-salvar-cfg { position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 10px 14px; border-radius: 14px 14px 0 0; background: var(--card); border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -6px 18px rgba(10, 18, 40, .08); }
+/* ===== janela flutuante: tudo cabe sem rolar ===== */
+.pip-corpo { padding: 6px 7px; }
+.pip-barra { margin-bottom: 4px; }
+.pip-topo2 { display: flex; align-items: center; gap: 6px; margin: 0 0 5px; min-width: 0; }
+.pip-topo2 > #pipPedido { flex: 0 1 auto; min-width: 0; }
+.pip-topo2 > #pipAviso { flex: 1 1 auto; min-width: 0; }
+.pip-topo2 .pip-pedido { margin: 0; padding: 2px 8px; flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
+.pip-topo2 .pip-ped-nome { max-width: 90px; }
+.pip-topo2 .pip-ped-total { font-size: 13.5px; }
+.pip-topo2 .pip-ped-min { display: none; }
+.pip-topo2 .pip-pedido.abaixo .pip-ped-total { color: var(--laranja-texto, #8a4b00); }
+.pip-topo2 .pip-faltam { margin: 0; gap: 6px; }
+.pip-topo2 .pip-prog { min-width: 24px; }
+.pip-topo2 .pip-concluido { margin: 0; padding: 3px 8px; font-size: 12px; }
+.pip-item { padding: 5px 7px 5px 10px; }
+.pip-cod { padding: 1px 8px; }
+.pip-linha-desc { margin: 3px 0 4px; }
+.pip-ganhador { padding: 4px 7px; margin-bottom: 4px; }
+.pip-marcas { margin-top: 2px; }
+.pip-segundo { padding: 3px 7px; }
+.pip-seg-rot { flex-basis: auto; }
+.pip-col-qtd { margin-top: 5px; }
+.pip-qtds { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 5px; align-items: end; }
+.pip-qtds label { flex-direction: row; align-items: center; gap: 4px; }
+.pip-qtds label input.qtd-loja { flex: 1; min-width: 0; height: 34px; }
+.pip-loja-nome { display: none; }
+.pip-loja-sigla { font-size: 11px; font-weight: 800; color: var(--muted); }
+#pipEstoque:empty { display: none; }
+#pipEstoque .pip-estoque { margin: 0; height: 34px; padding: 2px 7px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; }
+#pipEstoque .pip-estoque b { font-size: 14px; line-height: 1; }
+#pipEstoque .pip-estoque > span { font-size: 10px; }
+#pipEstoque .pip-estoque small { margin: 0; font-size: 10px; }
+.pip-total { margin-top: 3px; }
+.pip-proximos { margin-top: 4px; }
+/* na janela larga, quantidades em coluna com o nome inteiro da loja */
+@media (min-width: 470px) {
+  .pip-loja-nome { display: inline; font-size: 11px; font-weight: 700; color: var(--muted); }
+  .pip-loja-sigla { display: none; }
+  .pip-qtds label { flex-direction: column; align-items: stretch; }
+}
+.pip-topo2 { flex-wrap: wrap; }
+.pip-topo2 .pip-pedido.abaixo { flex-wrap: wrap; white-space: normal; }
+.pip-topo2 .pip-pedido.abaixo .pip-ped-min { display: block; flex-basis: 100%; font-size: 10.5px; }
