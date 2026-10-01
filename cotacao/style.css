@@ -1908,3 +1908,6 @@ a.stat-link:hover { border-color: var(--primary-2); transform: translateY(-1px);
 /* código editável dos papelzinhos */
 .tab-itens input.cod-papel { width: 170px; height: 30px; font-family: var(--fonte-cod); font-weight: 700; font-size: 13.5px; border-style: dashed; border-color: color-mix(in srgb, var(--laranja) 55%, var(--line)); }
 .tab-itens input.cod-papel:focus { border-style: solid; }
+.uc-num { font-family: Inter, system-ui, sans-serif; white-space: nowrap; }
+.stats-inicio { margin-top: 10px; }
+.tudo-em-dia { margin: 4px 0 0; color: var(--ok); font-weight: 600; }

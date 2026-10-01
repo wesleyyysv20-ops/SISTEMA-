@@ -6608,7 +6608,7 @@ function renderInicio() {
       <a href="#" class="stat stat-link" data-route="produtos" title="Ver o cadastro de produtos"><span class="muted small">Itens no banco</span><b>${db.produtos.length.toLocaleString('pt-BR')}</b></a>
       <a href="#" class="stat stat-link" data-route="cotacoes" title="Ver as cotações"><span class="muted small">Cotações abertas</span><b>${ativas.length}</b></a>
       <a href="#" class="stat stat-link${nDuv ? ' stat-atencao' : ''}" data-route="duvidas" title="Ver a fila de dúvidas"><span class="muted small">Itens em dúvida</span><b>${nDuv}</b></a>
-      <a href="#" class="stat stat-link${pend.some(p => p.nivel === 'urgente') ? ' stat-ruim' : ''}" data-act="irPendencias" title="Ver o que fazer agora"><span class="muted small">Pendências</span><b>${pend.length}</b></a>
+      <a href="#" class="stat stat-link${pendLista.some(p => p.nivel === 'urgente') ? ' stat-ruim' : ''}" data-act="irPendencias" title="Ver o que fazer agora"><span class="muted small">Pendências</span><b>${pendLista.length}</b></a>
     </div>
   </section>
   ${cartaoRasc}
@@ -6620,14 +6620,14 @@ function renderInicio() {
     <h3>👥 Trabalhando agora</h3>
     <div id="presencaInicio">${htmlPresencaInicio()}</div>
   </section>
-  <section class="card" id="pendenciasInicio">
+  ${!pendLista.length && cartaoRasc ? '' : `<section class="card" id="pendenciasInicio">
     <h3>O que fazer agora</h3>
     ${pendLista.length ? `<ul class="lista-pend">${pendLista.map(p => `<li class="pend-${p.nivel}">
       <span class="pend-icone">${icone[p.nivel]}</span>
       <div class="pend-texto"><b>${esc(p.texto)}</b>${p.detalhe ? `<br><span class="small muted">${esc(p.detalhe)}</span>` : ''}</div>
       <a class="btn sm" href="#" data-route="${p.rota}"${p.id ? ` data-id="${esc(p.id)}"` : ''}>${esc(p.botao)} →</a>
-    </li>`).join('')}</ul>` : `<p class="empty">${cartaoRasc ? 'Fora a nova cotação em montagem, tudo em dia. 🎉' : 'Tudo em dia. 🎉'}</p>`}
-  </section>
+    </li>`).join('')}</ul>` : '<p class="tudo-em-dia">✓ Tudo em dia. 🎉</p>'}
+  </section>`}
   ${ultimasCotacoesInicio()}`;
 }
 
