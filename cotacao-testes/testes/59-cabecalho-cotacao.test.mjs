@@ -57,7 +57,7 @@ test('comparativo: preço escolhido, quantidades e total presos à direita; desc
   const { page } = s;
   await page.setViewportSize({ width: 1100, height: 800 });
   await page.evaluate(() => render());
-  assert.match(await page.locator('.tab-comp').getAttribute('class'), /fixa-dir/);
+  await page.waitForFunction(() => document.querySelector('.tab-comp')?.classList.contains('fixa-dir'));
   assert.equal(await page.locator('.tab-comp thead th:text-is("Fornecedor")').count(), 0, 'o vencedor fica junto do preço escolhido');
   // rolando a tabela, o total continua na borda direita
   const wrap = page.locator('.painel-comp');

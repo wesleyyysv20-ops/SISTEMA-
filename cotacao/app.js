@@ -522,6 +522,22 @@ document.addEventListener('click', e => {
   ir('cotacao', tr.dataset.abrirCot);
 });
 
+// "↑" para voltar ao topo nas páginas longas
+{
+  let quadroTopo = 0;
+  window.addEventListener('scroll', () => {
+    if (quadroTopo) return;
+    quadroTopo = requestAnimationFrame(() => {
+      quadroTopo = 0;
+      const b = document.getElementById('voltarTopo');
+      if (b) b.hidden = window.scrollY < 900;
+    });
+  }, { passive: true });
+  document.addEventListener('click', e => {
+    if (e.target.closest?.('#voltarTopo')) window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+}
+
 // menu "⋯" das ações: fecha ao clicar fora ou depois de escolher
 document.addEventListener('click', e => {
   for (const m of document.querySelectorAll('details.menu-acoes[open]')) {
@@ -5510,37 +5526,50 @@ function ajustarColunasFixas() {
   const tab = document.querySelector('.tab-comp');
   if (!tab) return;
   const wrapW = tab.parentElement?.clientWidth || 0;
-  const todos = () => [...tab.querySelectorAll(':scope > thead > tr > th')];
+  const ths = () => [...tab.querySelectorAll(':scope > thead > tr > th')];
+  const nCols = ths().length;
+  // uma leitura de layout: larguras do cabeçalho (as colunas presas são as últimas de cada linha)
   const medir = () => {
-    const ths = todos().filter(th => th.classList.contains('fd') && th.offsetWidth > 0);
-    const larg = ths.map(th => th.getBoundingClientRect().width);
-    const esq = todos().slice(0, 2).reduce((a2, th) => a2 + th.getBoundingClientRect().width, 0);
-    const temForn = todos().length - todos().filter(th => th.classList.contains('fd')).length > 2;
-    return { ths, larg, cabe: temForn && ths.length > 0 && esq + larg.reduce((x, y) => x + y, 0) + 100 <= wrapW };
+    const todos = ths();
+    const fd = todos.filter(th => th.classList.contains('fd'));
+    const larg = fd.map(th => th.getBoundingClientRect().width); // escondida (Dif. na versão estreita) = 0
+    const esq = todos.slice(0, 2).reduce((x, th) => x + th.getBoundingClientRect().width, 0);
+    const temForn = todos.length - fd.length > 2;
+    return { larg, cabe: temForn && fd.length > 0 && esq + larg.reduce((x, y) => x + y, 0) + 100 <= wrapW };
   };
-  // 1º tenta com todas as colunas; não cabendo, a versão estreita (a Dif. vai para dentro do preço escolhido)
-  tab.classList.remove('estreita');
-  let m = medir();
-  if (!m.cabe) {
-    tab.classList.add('estreita');
+  const ant = ui.colFixas;
+  let m;
+  if (ant && ant.wrapW === wrapW && ant.nCols === nCols && ant.fixa) {
+    // mesma largura e mesmas colunas: a tabela já veio com a decisão anterior (sem medir duas vezes)
     m = medir();
-    if (!m.cabe) tab.classList.remove('estreita');
+    if (!m.cabe) { tab.classList.remove('estreita'); m = medir(); if (!m.cabe) { tab.classList.add('estreita'); m = medir(); } }
+  } else {
+    tab.classList.remove('estreita');
+    m = medir();
+    if (!m.cabe) {
+      tab.classList.add('estreita');
+      m = medir();
+      if (!m.cabe) tab.classList.remove('estreita');
+    }
   }
   tab.classList.toggle('fixa-dir', m.cabe);
+  ui.colFixas = { wrapW, nCols, fixa: m.cabe, estreita: tab.classList.contains('estreita') };
   if (!m.cabe) return;
+  // distância até a borda direita de cada coluna presa, pela posição a partir do fim (CSS :nth-last-child)
   let acc = 0;
-  for (let k = m.ths.length - 1; k >= 0; k--) {
-    tab.style.setProperty(`--fd${m.ths.length - 1 - k}`, acc + 'px');
+  const vars = [];
+  for (let k = m.larg.length - 1; k >= 0; k--) {
+    vars.push(`--fd${m.larg.length - 1 - k}:${acc}px`);
     acc += m.larg[k];
   }
-  for (const tr of tab.querySelectorAll(':scope > * > tr')) numerarFd(tr);
+  ui.colFixas.vars = vars.join(';');
+  if (tab.getAttribute('style') !== ui.colFixas.vars) tab.setAttribute('style', ui.colFixas.vars); // só mexe se mudou
 }
-
-/** Posição de cada célula presa à direita (0 = a última); na versão estreita a Dif. some e não conta. */
-function numerarFd(tr) {
-  const estreita = tr.closest('table')?.classList.contains('estreita');
-  const fds = [...tr.querySelectorAll(':scope > .fd')].filter(td => !(estreita && td.classList.contains('col-dif')));
-  fds.forEach((td, k) => { td.dataset.fd = fds.length - 1 - k; });
+/** Depois de a tela ser desenhada (aproveita o layout que o navegador já fez; não trava o redesenho). */
+let quadroColFixas = 0;
+function ajustarColunasFixasDepois() {
+  cancelAnimationFrame(quadroColFixas);
+  quadroColFixas = requestAnimationFrame(() => setTimeout(ajustarColunasFixas, 0));
 }
 let timerColFixas = null;
 window.addEventListener('resize', () => { clearTimeout(timerColFixas); timerColFixas = setTimeout(ajustarColunasFixas, 150); });
@@ -5557,8 +5586,7 @@ function atualizarTotaisComp(c, i = null) {
   const tot = $('#totalComp');
   if (tot) {
     tot.outerHTML = linhaTotalComp(c, comp);
-    const novo = $('#totalComp');
-    if (novo) numerarFd(novo);
+
   }
   // a seção de pedidos é pesada: atualiza quando a pessoa para de digitar
   clearTimeout(ui.timerPedidos);
@@ -5701,7 +5729,7 @@ function renderCotacao(id) {
   const ordemForn = fornecedoresVisiveisComp(c); // colunas de fornecedores em ordem alfabética (sem quem não respondeu)
   const escondidos = c.fornecedores.length - ordemForn.length;
   const tabelaComp = `
-    <div class="table-wrap painel-comp${cotTravada(c) ? ' travada' : ''}"><table class="tab-comp${modoCompacto() ? ' compacto' : ''}">
+    <div class="table-wrap painel-comp${cotTravada(c) ? ' travada' : ''}"><table class="tab-comp${modoCompacto() ? ' compacto' : ''}${ui.colFixas?.fixa ? ' fixa-dir' : ''}${ui.colFixas?.estreita ? ' estreita' : ''}"${ui.colFixas?.vars ? ` style="${ui.colFixas.vars}"` : ''}>
       <thead><tr>
         <th class="c">#</th><th>Produto</th>${temResposta ? '' : '<th class="r">Qtd.</th>'}
         ${ordemForn.map(j => `<th class="r">${esc(c.fornecedores[j].nome)}</th>`).join('')}
@@ -7392,7 +7420,7 @@ function render() {
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
-  if (nome === 'cotacao') ajustarColunasFixas();
+  if (nome === 'cotacao') ajustarColunasFixasDepois();
   anunciarPresenca();
   anotarUltimoLugar();
   const cotTela = nome === 'cotacao' ? db.cotacoes.find(x => x.id === id) : null;

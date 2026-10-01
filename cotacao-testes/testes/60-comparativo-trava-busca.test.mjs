@@ -23,6 +23,7 @@ async function abrirCot(status, largura = 1280) {
 test('tela de ~950px: a decisão fica presa à direita (versão estreita, 2º lugar dentro do preço escolhido)', async () => {
   const s = await abrirCot('aberta', 960);
   const { page } = s;
+  await page.waitForFunction(() => document.querySelector('.tab-comp')?.classList.contains('fixa-dir'));
   const cls = await page.locator('.tab-comp').getAttribute('class');
   assert.match(cls, /fixa-dir/);
   assert.match(cls, /estreita/);
