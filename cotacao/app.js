@@ -10449,7 +10449,7 @@ async function aoMudarCampo(e) {
   }
 }
 
-navegacao.nome = db.config.loja ? 'cotacoes' : 'config';
+navegacao.nome = db.config.loja ? 'inicio' : 'config'; // ao abrir o sistema: a tela Início
 render();
 mostrarStatus(nuvem.status);
 iniciarNuvem();
