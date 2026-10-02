@@ -1816,6 +1816,109 @@ function desfazerPermissao(c, i, f) {
   if (!Object.keys(c.permitidas[i]).length) delete c.permitidas[i];
 }
 
+/**
+ * Campanhas de marca (ex.: outubro, ENVIA PEÇAS com a marca PERFECT): db.config.campanhas =
+ * [{ id, marca, fornecedorId ('' = qualquer), de, ate (AAAA-MM-DD), meta (R$, opcional) }].
+ * O sistema só MOSTRA onde há preço da campanha; quem escolhe é você.
+ */
+function dentroCampanha(k, data) {
+  const d = String(data || '').slice(0, 10);
+  return (!k.de || d >= k.de) && (!k.ate || d <= k.ate);
+}
+function campanhasAtivas(c) {
+  return (db.config.campanhas || []).filter(k => k.marca && dentroCampanha(k, c.data));
+}
+function marcaDaCampanha(k, marca) {
+  const st = statusMarca(k.marca, marca);
+  return st === 'ok' || st === 'abrev';
+}
+function nomeFornCampanha(k) {
+  if (!k.fornecedorId) return 'qualquer fornecedor';
+  return db.fornecedores.find(x => x.id === k.fornecedorId)?.nome || 'fornecedor removido';
+}
+/** Preço da campanha mais barato do item (índice do fornecedor), ou -1. */
+function campanhaMelhor(l) {
+  let jm = -1;
+  l.campanhas.forEach((k, j) => { if (k && l.precos[j] != null && !l.recusas[j] && (jm < 0 || l.precos[j] < l.precos[jm])) jm = j; });
+  return jm;
+}
+function chipCampanha(k) {
+  return `<span class="chip-campanha" title="Campanha ${esc(k.marca)} · ${esc(nomeFornCampanha(k))}${k.ate ? ' · até ' + fmtData(k.ate) : ''}. Você decide se compra por ela.">🏷️ campanha</span>`;
+}
+/** Quanto já foi comprado pela campanha nesta cotação e no período todo (a mesma conta do pedido). */
+function statsCampanha(k, c) {
+  const soma = cot => {
+    const comp = comparar(cot);
+    let valor = 0, itens = 0, fora = 0;
+    for (const l of comp.linhas) {
+      if (l.vencedor >= 0 && l.campanhas[l.vencedor]?.id === k.id) {
+        const q = qtdComprada(cot, l, comp.porLoja);
+        if (q) { valor += l.preco * q; itens++; }
+      } else if (!l.duvida && l.campanhas.some((x, j) => x?.id === k.id && l.precos[j] != null && !l.recusas[j])) fora++;
+    }
+    return { valor, itens, fora };
+  };
+  const aqui = soma(c);
+  const periodo = db.cotacoes.filter(x => dentroCampanha(k, x.data)).reduce((t, x) => t + (x === c ? aqui.valor : soma(x).valor), 0);
+  return { ...aqui, periodo };
+}
+function htmlCampanhasCot(c) {
+  const ativas = campanhasAtivas(c);
+  if (!ativas.length) return '';
+  return `<div class="camp-cot">${ativas.map(k => {
+    const st = statsCampanha(k, c);
+    const pct = k.meta ? Math.min(1, st.periodo / k.meta) : 0;
+    const periodo = `${k.de ? fmtData(k.de) : '…'} a ${k.ate ? fmtData(k.ate) : '…'}`;
+    return `<div class="camp-card">
+      <div class="camp-tit"><span>🏷️ Campanha <b>${esc(k.marca)}</b> · ${esc(nomeFornCampanha(k))}</span><span class="small muted">${periodo}</span>
+        <button type="button" class="link small" data-act="editarCampanha" data-id="${esc(k.id)}" title="Editar a campanha">✎</button><button type="button" class="link small" data-act="excluirCampanha" data-id="${esc(k.id)}" title="Excluir a campanha">✕</button></div>
+      <div class="camp-num"><span>Nesta cotação: <b>${fmtMoeda(st.valor)}</b> <span class="small muted">${st.itens} ${st.itens === 1 ? 'item' : 'itens'}</span></span>
+        <span>No período: <b>${fmtMoeda(st.periodo)}</b>${k.meta ? ` <span class="small muted">de ${fmtMoeda(k.meta)} · ${st.periodo >= k.meta ? '✓ meta batida' : 'faltam ' + fmtMoeda(k.meta - st.periodo)}</span>` : ''}</span>
+        ${st.fora ? `<button type="button" class="camp-fora" data-act="filtroAviso" data-tipo="campanha" title="Itens com preço da campanha em que você escolheu outro fornecedor (ou outro está ganhando). Clique para ver.">⚠ ${st.fora} ${st.fora === 1 ? 'item tem' : 'itens têm'} preço da campanha e não ${st.fora === 1 ? 'está escolhido' : 'estão escolhidos'}</button>` : ''}</div>
+      ${k.meta ? `<span class="camp-barra${pct >= 1 ? ' ok' : ''}"><span style="width:${Math.round(pct * 100)}%"></span></span>` : ''}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+/** Formulário da campanha (nova ou editar). Devolve os dados ou null. */
+function dialogoCampanha(c, k = null) {
+  return new Promise(resolve => {
+    const d0 = String(c?.data || hojeISO()).slice(0, 10);
+    const [a, m] = d0.split('-').map(Number);
+    const fimMes = `${a}-${String(m).padStart(2, '0')}-${String(new Date(a, m, 0).getDate()).padStart(2, '0')}`;
+    const v = k || { marca: '', fornecedorId: '', de: `${d0.slice(0, 8)}01`, ate: fimMes, meta: null };
+    const marcas = [...new Set((c?.fornecedores || []).flatMap(f => Object.values(f.respostas || {}).map(o => String(o?.marca || '').trim().toUpperCase())).filter(Boolean))].sort();
+    const forns = [...db.fornecedores].sort((x, y) => x.nome.localeCompare(y.nome));
+    const fundo = document.createElement('div');
+    fundo.className = 'dlg-fundo';
+    fundo.innerHTML = `<form class="dlg dlg-campanha" role="dialog" aria-modal="true">
+      <h3>🏷️ ${k ? 'Editar campanha' : 'Nova campanha de marca'}</h3>
+      <p class="small muted">O sistema mostra no comparativo e na janela flutuante onde há preço da campanha. Quem escolhe o fornecedor é você.</p>
+      <label>Marca<input name="marca" list="campMarcas" value="${esc(v.marca)}" autocomplete="off" required placeholder="ex.: PERFECT"><datalist id="campMarcas">${marcas.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
+      <label>Fornecedor<select name="forn"><option value="">Qualquer fornecedor</option>${forns.map(f => `<option value="${esc(f.id)}" ${f.id === v.fornecedorId ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}</select></label>
+      <div class="grid2"><label>De<input type="date" name="de" value="${esc(v.de || '')}"></label><label>Até<input type="date" name="ate" value="${esc(v.ate || '')}"></label></div>
+      <label>Meta de compra no período (opcional)<input name="meta" inputmode="decimal" value="${v.meta ? String(v.meta).replace('.', ',') : ''}" placeholder="R$"></label>
+      <div class="actions"><button type="button" data-r="0">Cancelar</button><button class="primary">Salvar</button></div>
+    </form>`;
+    const fechar = r => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(r); };
+    const tecla = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(null); } else e.stopImmediatePropagation(); };
+    const form = fundo.querySelector('form');
+    fundo.addEventListener('click', e => { e.stopPropagation(); if (e.target.closest('button[data-r="0"]')) fechar(null); });
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const marca = form.marca.value.trim().toUpperCase();
+      if (!marca) return form.marca.focus();
+      let de = form.de.value, ate = form.ate.value;
+      if (de && ate && de > ate) [de, ate] = [ate, de];
+      fechar({ marca, fornecedorId: form.forn.value, de, ate, meta: parseNum(form.meta.value) || null });
+    });
+    document.addEventListener('keydown', tecla, true);
+    document.body.appendChild(fundo);
+    form.marca.focus();
+  });
+}
+
 /** Os preços de um item, em texto: a conferência de uma diferença vale enquanto eles não mudarem. */
 const assinaturaPrecos = precos => precos.map(x => (x == null ? '' : Math.round(x * 100))).join('|');
 
@@ -1856,6 +1959,7 @@ function duvidasPorItem(c) {
 
 function compararCalculo(c) {
   const porLoja = temQtdLojas(c);
+  const camps = campanhasAtivas(c);
   const duvidas = duvidasPorItem(c);
   const linhas = c.itens.map((it, i) => {
     const precos = c.fornecedores.map(f => {
@@ -1867,6 +1971,9 @@ function compararCalculo(c) {
     const recusas = c.fornecedores.map(f => recusada(c, i, f));
     // marca errada permitida só nesta cotação: disputa o preço normalmente
     const permitidas = c.fornecedores.map((f, j) => marcas[j] === 'errada' && permitida(c, i, f));
+    // preço da campanha de marca (só para mostrar: não muda o vencedor)
+    const campanhas = c.fornecedores.map((f, j) => (precos[j] == null || !camps.length ? null
+      : camps.find(k => (!k.fornecedorId || k.fornecedorId === f.fornecedorId) && marcaDaCampanha(k, f.respostas?.[i]?.marca)) || null));
     // preço com marca diferente da pedida não ganha sozinho (a não ser que só haja esses)
     let aptos = precos.map((p, j) => (recusas[j] ? null : p));
     // só há preços com a marca recusada: o mais barato ganha mesmo assim (com aviso), até chegar outro preço
@@ -1908,7 +2015,7 @@ function compararCalculo(c) {
     const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
     const difConferida = !!c.difConferida?.[i] && c.difConferida[i] === assinaturaPrecos(precos);
     const duvida = duvidas.get(i) || null; // lojas com o item em Dúvidas
-    return { it, i, q, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
+    return { it, i, q, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, campanhas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -5547,6 +5654,8 @@ function htmlResumoFornCot(c) {
 function atualizarResumosCot(c) {
   const r = document.getElementById('resumoCot');
   if (r) { const novo = htmlResumoCot(c); if (r.innerHTML !== novo) r.innerHTML = novo; }
+  const rc = document.getElementById('campanhasCot');
+  if (rc) { const novo = htmlCampanhasCot(c); if (rc.innerHTML !== novo) rc.innerHTML = novo; }
   const rf = htmlResumoFornCot(c);
   const t = document.querySelector('.resumo-recolhe');
   if (t && t.textContent !== rf.texto) t.textContent = rf.texto;
@@ -5783,6 +5892,7 @@ function renderCotacao(id) {
   let qtdAlertas = 0;
   const qtdMarcas = { errada: 0, duvida: 0 };
   let qtdDemora = 0; // Rio Juntas com marca GO
+  let qtdCamp = 0, qtdForaCamp = 0; // itens com preço de campanha / em que outro está escolhido
   const ordemForn = fornecedoresVisiveisComp(c); // colunas de fornecedores em ordem alfabética (sem quem não respondeu)
   const escondidos = c.fornecedores.length - ordemForn.length;
   const tabelaComp = `
@@ -5801,6 +5911,9 @@ function renderCotacao(id) {
           if (difSuspeita(l)) avisosLinha.add('dif');
           if (l.preferencia) avisosLinha.add('regra');
           if (l.duvida) avisosLinha.add('duvida');
+          const jCamp = campanhaMelhor(l);
+          const campVenc = l.vencedor >= 0 && !!l.campanhas[l.vencedor];
+          if (jCamp >= 0) { avisosLinha.add('campanha'); qtdCamp++; if (!campVenc && !l.duvida) qtdForaCamp++; }
           const celulas = ordemForn.map(j => {
             const p = l.precos[j];
             const o = c.fornecedores[j].respostas?.[l.i];
@@ -5818,11 +5931,11 @@ function renderCotacao(id) {
             if (demora) { qtdDemora++; avisosLinha.add('demora'); }
             const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? (l.permitidas[j] ? 'marca-permitida' : 'marca-errada') : '', l.recusas[j] && p != null ? (j === l.vencedor ? 'recusada-venc' : 'recusada') : ''].filter(Boolean).join(' ');
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
+            return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${p != null && l.campanhas[j] ? '<br>' + chipCampanha(l.campanhas[j]) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
           }).join('');
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
-          const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra') ? 'conferir' : 'ok';
+          const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra' && a !== 'campanha') ? 'conferir' : 'ok';
           return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
           <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
@@ -5839,13 +5952,18 @@ function renderCotacao(id) {
               entregaDemorada(fv, fv.respostas?.[l.i]) ? chipDemora : '',
               l.preferencia ? `<span class="chip-regra" title="O menor preço é ${fmtMoeda(l.min)} (${esc(c.fornecedores[l.minIdx].nome)})">pela regra dos 5% (+${fmtPct(l.preco / l.min - 1)} do 1º)</span>` : '',
               l.manual ? `<span class="small muted">+${fmtMoeda(l.preco - l.min)}/un. vs menor</span>` : '',
+              campVenc ? chipCampanha(l.campanhas[l.vencedor]) : '',
             ].filter(Boolean).join('<br>');
+            // há preço da campanha, mas outro fornecedor está escolhido: mostra (você decide)
+            const dCamp = jCamp >= 0 && l.preco > 0 ? l.precos[jCamp] / l.preco - 1 : null;
+            const campMini = jCamp >= 0 && !campVenc
+              ? `<button type="button" class="camp-mini" data-act="escolherVencedor" data-i="${l.i}" data-f="${jCamp}" title="Campanha ${esc(l.campanhas[jCamp].marca)}: clique para comprar de ${esc(c.fornecedores[jCamp].nome)} (${fmtMoeda(l.precos[jCamp])})">🏷️ ${esc(l.campanhas[jCamp].marca)} ${fmtMoeda(l.precos[jCamp])} · ${esc(c.fornecedores[jCamp].nome)}${dCamp != null ? ` · ${dCamp >= 0 ? '+' : '−'}${fmtPct(Math.abs(dCamp))}` : ''}</button>` : '';
             // 2º lugar (ou o mais barato, se você escolheu outro) numa linha: aparece no lugar da coluna Dif. em tela estreita
             const alvoS = (l.manual || l.preferencia) && l.minIdx >= 0 ? l.minIdx : l.segundoIdx;
             const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
             const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
               ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${fmtMoeda(l.precos[alvoS])} · ${esc(c.fornecedores[alvoS].nome)}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
-            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}</td>`;
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}${campMini}</td>`;
           })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
@@ -5875,6 +5993,7 @@ function renderCotacao(id) {
       </div>
       <div class="cab-cot-acoes">
         ${podeVerRelatorios() ? `<button type="button" class="sm" data-act="analiseCot" data-id="${esc(c.id)}" title="Nota dos fornecedores só nesta cotação">📊 Análise</button>` : ''}
+        <button type="button" class="sm" data-act="novaCampanha" title="Campanha de marca (ex.: este mês, ENVIA PEÇAS com PERFECT): o sistema mostra onde há preço dela">🏷️ Campanha</button>
         ${seletorStatusCot(c)}
       </div>
     </div>
@@ -5887,6 +6006,7 @@ function renderCotacao(id) {
       <button class="sm" data-act="cobrarPendentes">📣 Cobrar quem falta</button></p>` : ''}
     ${c.obs ? `<p class="small" style="margin:6px 0 0;white-space:pre-wrap">${esc(c.obs)}</p>` : ''}
     <div id="resumoCot">${temResposta ? htmlResumoCot(c, comp) : ''}</div>
+    <div id="campanhasCot">${htmlCampanhasCot(c)}</div>
   </section>
 
   <section class="card">
@@ -5949,6 +6069,7 @@ function renderCotacao(id) {
       if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} marca diferente` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abrev. a conferir` : ''].filter(Boolean).join(' · ')}</button>`);
       const nRegra = comp.linhas.filter(l => l.preferencia).length;
       if (nRegra) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso regra" data-tipo="regra" title="Clique para ver só esses itens. A Comando ganha quando está até 5% acima do 1º lugar. Em cada item, clique no preço do mais barato para escolher ele.">⭐ ${nRegra} regra Comando</button>`);
+      if (qtdCamp) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso campanha" data-tipo="campanha" title="Clique para ver só esses itens. Itens com preço de uma campanha de marca: você decide se compra por ela.">🏷️ ${qtdCamp} com campanha${qtdForaCamp ? ` · ${qtdForaCamp} fora` : ''}</button>`);
       if (qtdDemora) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso demora" data-tipo="demora" title="Clique para ver só esses itens. Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} GO (demora)</button>`);
       if (qtdAlertas) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso atencao aviso-alertas" data-tipo="alertas" title="Clique para ver só esses itens. Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} fora do normal</button>`);
       const fa = filtroAviso(c);
@@ -8062,6 +8183,35 @@ const acoes = {
 
   escolherVencedor: el => escolherVencedorItem(cotAtual(), +el.dataset.i, +el.dataset.f),
 
+  novaCampanha: async () => {
+    const c = cotAtual();
+    const k = await dialogoCampanha(c);
+    if (!k) return;
+    db.config.campanhas = [...(db.config.campanhas || []), { id: uid(), ...k }];
+    salvar();
+    render();
+    const n = c ? comparar(c).linhas.filter(l => campanhaMelhor(l) >= 0).length : 0;
+    toast(`Campanha ${k.marca} (${nomeFornCampanha(k)}) salva.${c && dentroCampanha(k, c.data) ? ` ${n} item(ns) desta cotação têm preço dela.` : ' Não vale para a data desta cotação.'}`, 5000);
+  },
+  editarCampanha: async el => {
+    const lista = db.config.campanhas || [];
+    const k0 = lista.find(x => x.id === el.dataset.id);
+    if (!k0) return;
+    const k = await dialogoCampanha(cotAtual(), k0);
+    if (!k) return;
+    db.config.campanhas = lista.map(x => (x.id === k0.id ? { ...x, ...k } : x));
+    salvar();
+    render();
+    toast('Campanha atualizada.');
+  },
+  excluirCampanha: async el => {
+    const k = (db.config.campanhas || []).find(x => x.id === el.dataset.id);
+    if (!k || !(await confirmar(`Excluir a campanha ${k.marca} (${nomeFornCampanha(k)})?\n\nAs escolhas que você já fez não mudam.`, 'Excluir'))) return;
+    db.config.campanhas = db.config.campanhas.filter(x => x.id !== k.id);
+    salvar();
+    render();
+    toast('Campanha excluída.');
+  },
   marcaResposta: async el => {
     const c = cotAtual();
     const i = +el.dataset.i, fi = +el.dataset.f;
@@ -9871,6 +10021,7 @@ function desenharPip(focar) {
           const tags = [
             l.recusadaGanhou ? '<span class="pip-tag recusada">⚠ marca recusada</span>' : '',
             l.manual ? '<span class="pip-tag">escolhido por você</span>' : '',
+            l.campanhas[l.vencedor] ? `<span class="pip-tag campanha">🏷️ campanha ${esc(l.campanhas[l.vencedor].marca)}</span>` : '',
             l.preferencia ? `<span class="pip-tag regra">⭐ regra 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',
             entregaDemorada(f, f.respostas?.[l.i]) ? '<span class="pip-tag">🐢 GO demora</span>' : '',
           ].filter(Boolean).join('');
@@ -9887,11 +10038,17 @@ function desenharPip(focar) {
               <span class="pip-seg-info"><span class="pip-seg-rot">${trocou ? '1º · menor preço' : '2º lugar'}</span><span class="pip-seg-preco">${fmtMoeda(pa)}</span>${marcaAlternativa(c, l, alvo).replace('<br>', '')}<span class="pip-seg-forn">${esc(fa.nome)}</span>${txtDif ? `<span class="pip-seg-dif">${txtDif}</span>` : ''}</span><span class="pip-seg-acao">Escolher ›</span>
             </button>`;
           }
+          // preço da campanha de marca, quando outro está escolhido (você decide)
+          const jc = campanhaMelhor(l);
+          const dc = jc >= 0 && l.preco > 0 ? l.precos[jc] / l.preco - 1 : null;
+          const campPip = jc >= 0 && !l.campanhas[l.vencedor] ? `<button type="button" class="pip-campanha" data-pip="escolher" data-f="${jc}" title="Campanha ${esc(l.campanhas[jc].marca)}: clique para comprar de ${esc(c.fornecedores[jc].nome)} por ${fmtMoeda(l.precos[jc])}">
+              <span class="pip-seg-info"><span class="pip-seg-rot">🏷️ campanha ${esc(l.campanhas[jc].marca)}</span><span class="pip-seg-preco">${fmtMoeda(l.precos[jc])}</span><span class="pip-seg-forn">${esc(c.fornecedores[jc].nome)}</span>${dc != null ? `<span class="pip-seg-dif">${dc >= 0 ? '+' : '−'}${fmtPct(Math.abs(dc))} vs escolhido</span>` : ''}</span><span class="pip-seg-acao">Escolher ›</span>
+            </button>` : '';
           return `<div class="pip-ganhador">
             <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span><span class="pip-forn">🏆 ${esc(f.nome)}</span><button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja) · tecla D">❓</button></div>
             ${marcasPip(l, marcaVenc)}
             ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
-          </div>${seg}`;
+          </div>${campPip}${seg}`;
         })() : `<div class="pip-ganhador vazio">${l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>`}
       </div>
       <div class="pip-col-qtd">
