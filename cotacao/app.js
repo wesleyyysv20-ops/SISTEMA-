@@ -408,6 +408,7 @@ async function sincronizar() {
       juntou = true;
     }
     anotarPendentes();
+    guardarCacheDocs();
     mostrarStatus('salvo');
     if (nuvem.puxarDepois && !nuvem.timer) setTimeout(puxarNuvem, 0);
     if (juntou) {
@@ -445,21 +446,36 @@ async function apagarDoc(caminho) {
  * Traz as alterações feitas em outro computador (ao voltar para a aba e a cada minuto).
  * Não mexe na tela enquanto a pessoa está digitando: tenta de novo depois.
  */
-async function puxarNuvem() {
-  if (!nuvem.db?.versoes || document.hidden) return;
+async function puxarNuvem(soAvisos = false) {
+  if (!nuvem.db?.versoes) return;
+  if (document.hidden) { if (soAvisos === true) nuvem.precisaPuxar = true; return; } // aba escondida: puxa ao voltar
   // salvando agora: puxa logo depois (o aviso em tempo real não se perde)
   if (nuvem.gravando || nuvem.timer) { nuvem.puxarDepois = true; return; }
   nuvem.puxarDepois = false;
   try {
-    const remotas = await nuvem.db.versoes();
-    const mudaram = Object.keys(remotas).filter(c => remotas[c] !== nuvem.versao[c]);
-    const sumiram = Object.keys(nuvem.versao).filter(c => !(c in remotas));
-    if (!mudaram.length && !sumiram.length) return;
-    if (nuvem.gravando || nuvem.timer) return; // começou a salvar: o salvamento junta
-    const lidos = mudaram.length ? await nuvem.db.buscar(mudaram) : {};
+    const rec = soAvisos === true && !nuvem.precisaPuxar ? nuvem.recebidos : null;
+    nuvem.recebidos = null;
+    let mudaram, sumiram, lidos;
+    if (rec) {
+      // o aviso em tempo real já trouxe o documento: não precisa baixar de novo
+      mudaram = Object.keys(rec).filter(c => rec[c].existe && !mesmaVersao(rec[c].versao, nuvem.versao[c]));
+      sumiram = Object.keys(rec).filter(c => !rec[c].existe && c in nuvem.versao);
+      lidos = rec;
+      if (!mudaram.length && !sumiram.length) return;
+      if (nuvem.gravando || nuvem.timer) { nuvem.puxarDepois = true; return; }
+    } else {
+      nuvem.precisaPuxar = false;
+      const remotas = await nuvem.db.versoes();
+      mudaram = Object.keys(remotas).filter(c => !mesmaVersao(remotas[c], nuvem.versao[c]));
+      sumiram = Object.keys(nuvem.versao).filter(c => !(c in remotas));
+      if (!mudaram.length && !sumiram.length) return;
+      if (nuvem.gravando || nuvem.timer) return; // começou a salvar: o salvamento junta
+      lidos = mudaram.length ? await nuvem.db.buscar(mudaram) : {};
+    }
     for (const c of mudaram) await juntarComRemoto(c, lidos[c] || { existe: false });
     for (const c of sumiram) await juntarComRemoto(c, { existe: false });
     renderSeguro([...mudaram, ...sumiram]);
+    guardarCacheDocs();
     if (docsMudaramAqui()) agendarSincronia();
   } catch (e) {
     console.error(e);
@@ -663,7 +679,9 @@ function renderSeguro(caminhos = null) {
   } else if (!document.querySelector('.dlg-fundo')) render();
 }
 
-setInterval(puxarNuvem, 60000);
+let voltasPuxar = 0;
+setInterval(() => { if (!nuvem.tempoReal || ++voltasPuxar % 5 === 0 || nuvem.precisaPuxar) puxarNuvem(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && nuvem.precisaPuxar) puxarNuvem(); });
 
 /* ---------------- versão nova do sistema ----------------
  * Uma aba aberta antes de publicar continua com o sistema antigo. Confere de tempos em tempos
@@ -718,7 +736,95 @@ async function comRetentativa(fn) {
   }
 }
 
+/* ---------- cópia dos documentos da nuvem neste computador ----------
+ * Ao abrir o sistema, só baixa do Supabase os documentos que mudaram desde a última vez
+ * (antes baixava tudo, todas as cotações, a cada abertura: era o que mais gastava o tráfego). */
+const cacheDocs = { gravado: {}, timer: null };
+function abrirCacheDocs() {
+  return new Promise(resolve => {
+    try {
+      if (!window.indexedDB) return resolve(null);
+      const r = indexedDB.open('cotacao-docs', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('docs', { keyPath: 'caminho' });
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => resolve(null);
+      r.onblocked = () => resolve(null);
+    } catch (e) { resolve(null); }
+  });
+}
+async function lerCacheDocs() {
+  const idb = await abrirCacheDocs();
+  if (!idb) return {};
+  return new Promise(resolve => {
+    try {
+      const r = idb.transaction('docs').objectStore('docs').getAll();
+      r.onsuccess = () => { idb.close(); resolve(Object.fromEntries((r.result || []).filter(x => x && x.json && x.versao).map(x => [x.caminho, x]))); };
+      r.onerror = () => { idb.close(); resolve({}); };
+    } catch (e) { idb.close(); resolve({}); }
+  });
+}
+/** Grava (com uma pausa) só os documentos que mudaram desde a última gravação da cópia. */
+function guardarCacheDocs() {
+  clearTimeout(cacheDocs.timer);
+  cacheDocs.timer = setTimeout(async () => {
+    const idb = await abrirCacheDocs();
+    if (!idb) return;
+    try {
+      const t = idb.transaction('docs', 'readwrite');
+      const loja = t.objectStore('docs');
+      const feito = { ...cacheDocs.gravado };
+      for (const [c, v] of Object.entries(nuvem.versao)) {
+        if (feito[c] === v || nuvem.enviado[c] == null) continue;
+        loja.put({ caminho: c, json: nuvem.enviado[c], versao: v });
+        feito[c] = v;
+      }
+      for (const c of Object.keys(feito)) if (!(c in nuvem.versao)) { loja.delete(c); delete feito[c]; }
+      t.oncomplete = () => { cacheDocs.gravado = feito; idb.close(); };
+      t.onerror = () => idb.close();
+    } catch (e) { idb.close(); }
+  }, 3000);
+}
+function limparCacheDocs() {
+  try { indexedDB.deleteDatabase('cotacao-docs'); } catch (e) { /* sem cópia */ }
+}
+/** Mesma versão? (o aviso em tempo real e a leitura normal escrevem a data de jeitos diferentes) */
+function normVersao(v) {
+  const m = /^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d(?::?\d\d)?)?$/.exec(String(v || ''));
+  if (!m) return String(v || '');
+  const off = !m[4] || /^(Z|[+-]00(:?00)?)$/.test(m[4]) ? 'Z' : m[4];
+  return `${m[1]}T${m[2]}.${(m[3] || '').padEnd(6, '0').slice(0, 6)}${off}`;
+}
+const mesmaVersao = (a, b) => a === b || (a != null && b != null && normVersao(a) === normVersao(b));
+
+/** Abre com a cópia deste computador: baixa só as versões (leve) e os documentos que mudaram. */
+async function carregarComCache() {
+  if (!nuvem.db?.versoes || !nuvem.db.buscar) return null;
+  const cache = await lerCacheDocs();
+  if (!Object.keys(cache).length) return null;
+  const remotas = await nuvem.db.versoes();
+  const precisa = Object.keys(remotas).filter(c => !cache[c] || !mesmaVersao(cache[c].versao, remotas[c]));
+  const lidos = precisa.length ? await nuvem.db.buscar(precisa) : {};
+  const docs = [];
+  for (const c of Object.keys(remotas).sort()) {
+    if (lidos[c]) docs.push([c, lidos[c].dados, lidos[c].versao]);
+    else if (!precisa.includes(c)) docs.push([c, JSON.parse(cache[c].json), cache[c].versao]);
+  }
+  cacheDocs.gravado = Object.fromEntries(Object.keys(cache).filter(c => c in remotas && !precisa.includes(c)).map(c => [c, cache[c].versao]));
+  return docs;
+}
+
 async function carregarNuvem() {
+  let docs = null;
+  try { docs = await carregarComCache(); } catch (e) { console.error(e); docs = null; }
+  if (docs && docs.length) {
+    for (const [path, data, versao] of docs) {
+      nuvem.enviado[path] = JSON.stringify(data);
+      if (versao) nuvem.versao[path] = versao;
+    }
+    guardarCacheDocs();
+    const de = col => docs.filter(([c]) => c.startsWith(col + '/')).map(([c, d]) => [c, d]);
+    return estadoDeDocs(de('sistema'), de('produtos'), de('fornecedores'), de('cotacoes'));
+  }
   const ler = async col => (await nuvem.db.collection(col).limit(1000).get()).docs.filter(d => d.exists).map(d => [`${col}/${d.id}`, d.data(), d.versao]);
   const [sis, prods, forns, cots] = await Promise.all(['sistema', 'produtos', 'fornecedores', 'cotacoes'].map(ler));
   const todos = [...sis, ...prods, ...forns, ...cots];
@@ -727,6 +833,7 @@ async function carregarNuvem() {
     nuvem.enviado[path] = JSON.stringify(data);
     if (versao) nuvem.versao[path] = versao;
   }
+  guardarCacheDocs();
   return estadoDeDocs(sis, prods, forns, cots);
 }
 
@@ -1071,9 +1178,14 @@ function assinarMudancas(cli) {
   let timer = null;
   try {
     nuvem.canal = cli.channel('cotacao-documentos')
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABELA_SUPABASE }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABELA_SUPABASE }, payload => {
+        const novo = payload?.new, velho = payload?.old;
+        nuvem.recebidos = nuvem.recebidos || {};
+        if (novo?.caminho && novo.dados != null && novo.atualizado_em && !payload.errors) nuvem.recebidos[novo.caminho] = { existe: true, dados: novo.dados, versao: novo.atualizado_em };
+        else if (payload?.eventType === 'DELETE' && velho?.caminho) nuvem.recebidos[velho.caminho] = { existe: false };
+        else nuvem.precisaPuxar = true; // aviso sem o documento (grande demais): baixa pelo caminho de sempre
         clearTimeout(timer);
-        timer = setTimeout(() => puxarNuvem(), 700); // junta vários avisos seguidos
+        timer = setTimeout(() => puxarNuvem(true), 700); // junta vários avisos seguidos
       })
       .subscribe(status => { nuvem.tempoReal = status === 'SUBSCRIBED'; });
   } catch (e) {
@@ -1241,6 +1353,7 @@ async function sairSupabase() {
   if (nuvem.timer || nuvem.gravando) await sincronizar();
   await nuvem.supabase.auth.signOut();
   try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(CHAVE_PENDENTES); } catch (e) { /* sem acesso */ }
+  limparCacheDocs();
   location.reload();
 }
 

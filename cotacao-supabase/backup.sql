@@ -41,10 +41,14 @@ begin
   select coalesce(nullif(trim(p_motivo), ''), 'automático'), count(*), coalesce(jsonb_object_agg(caminho, dados), '{}'::jsonb)
   from public.cotacao_documentos
   returning id into v_id;
-  -- guarda 30 dias, e sempre as 7 cópias mais novas
-  delete from public.cotacao_backups
-  where criado_em < now() - interval '30 days'
-    and id not in (select id from public.cotacao_backups order by criado_em desc limit 7);
+  -- guarda as 6 mais novas + 1 por dia (14 dias) + 1 por semana (8 semanas): função em otimizar.sql
+  if to_regprocedure('public.cotacao_limpar_backups()') is not null then
+    perform public.cotacao_limpar_backups();
+  else
+    delete from public.cotacao_backups
+    where criado_em < now() - interval '30 days'
+      and id not in (select id from public.cotacao_backups order by criado_em desc limit 7);
+  end if;
   return v_id;
 end;
 $$;
