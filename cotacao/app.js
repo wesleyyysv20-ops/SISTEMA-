@@ -4778,8 +4778,8 @@ function renderNova() {
 
   return `
   <section class="card nova-cab">
-    <div class="nova-cab-topo">
-      <h2>Nova cotação</h2>
+    <div class="nova-cab-topo cab-pagina">
+      <div class="cab-tit"><h2>Nova cotação</h2><p class="cab-sub">Itens do DataCar, papelzinhos e os fornecedores que vão receber</p></div>
       ${!r.titulo || !r.prazoResposta || (!r.obs && ultimaCotacao()?.obs) ? `<button type="button" class="sm nc-padrao" data-act="preencherPadraoNova" title="Preenche só o que está vazio: título do dia, prazo no próximo dia útil e as observações da última cotação. Os itens e fornecedores continuam.">↺ Preencher padrão</button>` : ''}
     </div>
     <div class="nova-cab-linha">
@@ -4932,8 +4932,8 @@ function renderCotacoes() {
   const aguardando = abertas.reduce((s, c) => s + c.fornecedores.filter(f => !f.respondidoEm).length, 0);
   return `
   <section class="card">
-    <div class="row-between">
-      <h2>Cotações</h2>
+    <div class="row-between cab-pagina">
+      <div class="cab-tit"><h2>Cotações</h2><p class="cab-sub">Acompanhe as respostas, os pedidos e o andamento de cada cotação</p></div>
       <div class="row">
         ${abertas.length ? '<label class="btn" style="margin:0" title="Importar as planilhas que os fornecedores devolveram (o sistema acha a cotação e o fornecedor de cada uma)">📥 Importar respostas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>' : ''}
         <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido de compra">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
@@ -6408,7 +6408,7 @@ function renderProdutos() {
   const v = p || { unidade: 'UN' };
   return `
   <section class="card cab-cadastro">
-    <div class="row-between"><h2 style="margin:0">${p ? 'Editar produto' : 'Produtos'} <span class="badge">${db.produtos.length}</span></h2></div>
+    <div class="row-between cab-pagina"><div class="cab-tit"><h2>${p ? 'Editar produto' : 'Produtos'} <span class="badge conta">${db.produtos.length}</span></h2><p class="cab-sub">Cadastro de peças com a marca exigida e o histórico de preços</p></div></div>
     <details class="form-novo"${p ? ' open' : ''}>
     <summary class="btn${p ? '' : ' btn-primary'}">${p ? '✎ Editando: ' + esc(p.codigo || p.descricao) : '+ Adicionar produto'}</summary>
     <form data-form="produto" class="grid">
@@ -6608,8 +6608,8 @@ function renderRelatorios() {
   const o = ui.ordemRelForn;
   return `
   <section class="card">
-    <div class="row-between">
-      <h2>Relatórios</h2>
+    <div class="row-between cab-pagina">
+      <div class="cab-tit"><h2>Relatórios</h2><p class="cab-sub">Compras, economia e desempenho dos fornecedores</p></div>
       <div class="row">
         <select id="periodoRel" style="width:auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${ui.periodoRel === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
         ${res.cotacoes ? '<button type="button" class="sm" data-act="exportarRelatorio" title="Resumo, fornecedores, por cotação e a nota dos fornecedores numa planilha">⬇ Excel</button>' : ''}
@@ -7110,8 +7110,8 @@ function renderInicio() {
   const nDuv = gruposDuvidas(duvidasPendentes()).length;
   return `
   <section class="card">
-    <div class="row-between">
-      <div><h2 style="margin:0">Início</h2><p class="small muted saudacao">${esc(saudacaoInicio())}</p></div>
+    <div class="row-between cab-pagina">
+      <div class="cab-tit"><h2>Início</h2><p class="cab-sub saudacao">${esc(saudacaoInicio())}</p></div>
       <div class="row">
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
         <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
@@ -7431,8 +7431,7 @@ function renderDuvidas() {
   const contaForn = fo => todosGrupos.filter(g => fornDuvida(g[0]) === fo).length;
   return `
   <section class="card cab-cadastro">
-    <div class="row-between"><h2 style="margin:0">Dúvidas <span class="badge">${duvidasDaTela().length}</span></h2></div>
-    <p class="muted small" style="margin-top:0">Itens que dependem da confirmação da loja (marca diferente, preço estranho…). No comparativo, o botão ❓ manda o item para cá; depois é só copiar o texto para o WhatsApp.</p>
+    <div class="row-between cab-pagina"><div class="cab-tit"><h2>Dúvidas <span class="badge conta">${duvidasDaTela().length}</span></h2><p class="cab-sub">Itens que dependem da confirmação da loja (marca diferente, preço estranho…). No comparativo, o botão ❓ manda o item para cá; depois é só copiar o texto para o WhatsApp.</p></div></div>
     <details class="form-novo"${ed ? ' open' : ''}>
     <summary class="btn${ed ? '' : ' btn-primary'}">${ed ? '✎ Editando a dúvida' : '+ Inserir item à mão'}</summary>
     <form data-form="duvida" class="grid form-duvida">
@@ -7483,7 +7482,7 @@ function renderFornecedores() {
   const v = f || {};
   return `
   <section class="card cab-cadastro">
-    <div class="row-between"><h2 style="margin:0">${f ? 'Editar fornecedor' : 'Fornecedores'} <span class="badge">${db.fornecedores.length}</span></h2></div>
+    <div class="row-between cab-pagina"><div class="cab-tit"><h2>${f ? 'Editar fornecedor' : 'Fornecedores'} <span class="badge conta">${db.fornecedores.length}</span></h2><p class="cab-sub">Contatos, condições de compra e a nota de cada fornecedor</p></div></div>
     <details class="form-novo"${f ? ' open' : ''}>
     <summary class="btn${f ? '' : ' btn-primary'}">${f ? '✎ Editando: ' + esc(f.nome) : '+ Adicionar fornecedor'}</summary>
     <form data-form="fornecedor" class="grid">
@@ -7561,7 +7560,7 @@ function renderConfig() {
   const aba = abaConfig();
   const ver = k => (aba === k ? '' : ' hidden');
   return `
-  <nav class="abas-cfg" role="tablist" aria-label="Configurações">${ABAS_CONFIG.map(([k, rot]) => `<button type="button" role="tab" class="aba-cfg${aba === k ? ' ativa' : ''}" data-act="abaConfig" data-aba="${k}" aria-selected="${aba === k}">${rot}</button>`).join('')}</nav>
+  <div class="barra-cfg"><h2 class="cfg-titulo">Configurações</h2><nav class="abas-cfg" role="tablist" aria-label="Configurações">${ABAS_CONFIG.map(([k, rot]) => `<button type="button" role="tab" class="aba-cfg${aba === k ? ' ativa' : ''}" data-act="abaConfig" data-aba="${k}" aria-selected="${aba === k}">${rot}</button>`).join('')}</nav></div>
   <section class="card" data-aba-cfg="aparencia"${ver('aparencia')}>
     <h2>Aparência</h2>
     <p class="muted small" style="margin-top:0">Escolha o tema deste computador (cada pessoa escolhe o seu). Também dá para trocar pelo botão 🎨 no topo.</p>
