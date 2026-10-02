@@ -1707,6 +1707,7 @@ function chipMarca(l, j, o) {
   const m = o?.marca || '';
   const at = `data-act="marcaResposta" data-i="${l.i}" data-f="${j}"`;
   if (l.recusas?.[j]) return `<span class="chip-marca recusada" ${at} title="Marca recusada por você (pedida: ${esc(l.it.marca)}). Este preço não entra. Clique para desfazer.">✗ ${esc(m)}</span>`;
+  if (st === 'errada' && l.permitidas?.[j]) return `<span class="chip-marca errada permitida" ${at} title="Marca errada (pedida: ${esc(l.it.marca)}), mas PERMITIDA só nesta cotação: o preço disputa normalmente. Clique para mudar.">⚠ ${esc(m)} ≠ ${esc(l.it.marca)} <b>· permitida</b></span>`;
   if (st === 'errada') return `<span class="chip-marca errada" ${at} title="Pedida: ${esc(l.it.marca)}. Clique para confirmar ou corrigir.">⚠ ${esc(m)} ≠ ${esc(l.it.marca)}</span>`;
   if (st === 'duvida') return `<span class="chip-marca duvida" ${at} title="Pode ser abreviação de ${esc(l.it.marca)}. Clique para confirmar.">? ${esc(m)} — confira</span>`;
   if (st === 'abrev') return `<span class="chip-marca ok" ${at} title="Reconhecida como ${esc(l.it.marca)}">✓ ${esc(m)}</span>`;
@@ -1792,6 +1793,29 @@ function desfazerRecusa(c, i, f) {
   if (!Object.keys(c.recusadas[i]).length) delete c.recusadas[i];
 }
 
+/**
+ * Marca errada permitida só nesta cotação ("Permitir marca"): c.permitidas[i][fornecedorId] = marca (normalizada).
+ * Continua contando como marca errada (relatórios, nota do fornecedor), mas o preço disputa normalmente
+ * e deixa de ser aviso pendente. Não vale para as próximas cotações.
+ */
+function permitida(c, i, f) {
+  const m = c.permitidas?.[i]?.[f.fornecedorId];
+  return m != null && m === normMarca(f.respostas?.[i]?.marca);
+}
+
+function permitirMarca(c, i, f) {
+  versaoDados++;
+  c.permitidas = { ...(c.permitidas || {}), [i]: { ...(c.permitidas?.[i] || {}), [f.fornecedorId]: normMarca(f.respostas?.[i]?.marca) } };
+}
+
+function desfazerPermissao(c, i, f) {
+  if (c.permitidas?.[i]?.[f.fornecedorId] == null) return;
+  versaoDados++;
+  c.permitidas = { ...c.permitidas, [i]: { ...c.permitidas[i] } };
+  delete c.permitidas[i][f.fornecedorId];
+  if (!Object.keys(c.permitidas[i]).length) delete c.permitidas[i];
+}
+
 /** Os preços de um item, em texto: a conferência de uma diferença vale enquanto eles não mudarem. */
 const assinaturaPrecos = precos => precos.map(x => (x == null ? '' : Math.round(x * 100))).join('|');
 
@@ -1841,13 +1865,15 @@ function compararCalculo(c) {
     const marcas = c.fornecedores.map(f => statusMarca(it.marca, f.respostas?.[i]?.marca));
     // marca recusada por você: esse preço não ganha nunca (o item espera outro preço)
     const recusas = c.fornecedores.map(f => recusada(c, i, f));
+    // marca errada permitida só nesta cotação: disputa o preço normalmente
+    const permitidas = c.fornecedores.map((f, j) => marcas[j] === 'errada' && permitida(c, i, f));
     // preço com marca diferente da pedida não ganha sozinho (a não ser que só haja esses)
     let aptos = precos.map((p, j) => (recusas[j] ? null : p));
     // só há preços com a marca recusada: o mais barato ganha mesmo assim (com aviso), até chegar outro preço
     const soRecusados = !aptos.some(p => p != null) && precos.some((p, j) => p != null && recusas[j]);
     if (soRecusados) aptos = precos.map((p, j) => (recusas[j] ? p : null));
     if (db.config.marcaErradaNaoGanha !== false) {
-      const filtrados = aptos.map((p, j) => (marcas[j] === 'errada' ? null : p));
+      const filtrados = aptos.map((p, j) => (marcas[j] === 'errada' && !permitidas[j] ? null : p));
       if (filtrados.some(p => p != null)) aptos = filtrados;
     }
     // classificação: menor preço; no empate (mesmo valor em centavos), quem respondeu primeiro
@@ -1882,7 +1908,7 @@ function compararCalculo(c) {
     const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
     const difConferida = !!c.difConferida?.[i] && c.difConferida[i] === assinaturaPrecos(precos);
     const duvida = duvidas.get(i) || null; // lojas com o item em Dúvidas
-    return { it, i, q, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
+    return { it, i, q, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -5028,7 +5054,7 @@ function checklistPedido(c, fi) {
   }
   add('erro', '📦', 'acima do estoque informado', itens(l => l.estoque != null && l.q > l.estoque));
   add('erro', '✗', 'com a marca recusada (comprando por não haver outro preço)', itens(l => l.recusadaGanhou));
-  add('aviso', '🏷️', 'marca diferente da pedida ou para conferir', itens(l => (l.marcas[fi] === 'errada' || l.marcas[fi] === 'duvida') && !l.recusas[fi]));
+  add('aviso', '🏷️', 'marca diferente da pedida ou para conferir', itens(l => (l.marcas[fi] === 'errada' || l.marcas[fi] === 'duvida') && !l.recusas[fi] && !l.permitidas[fi]));
   add('aviso', '⚠', 'preço fora do normal (último preço pago ou os outros fornecedores)', itens(l => {
     const o = f.respostas?.[l.i];
     const p = l.precos[fi];
@@ -5276,7 +5302,7 @@ function custoFrete(r, total) {
 /** 2º colocado de um item, sem contar o fornecedor `fi` (evita marca errada quando dá). */
 function alternativaItem(l, fi) {
   const cands = l.precos.map((p, j) => ({ j, preco: p })).filter(x => x.j !== fi && x.preco != null && !l.recusas?.[x.j]);
-  const boas = cands.filter(x => l.marcas[x.j] !== 'errada');
+  const boas = cands.filter(x => l.marcas[x.j] !== 'errada' || l.permitidas?.[x.j]);
   const lista = (boas.length ? boas : cands).sort((a, b) => a.preco - b.preco);
   return lista[0] || null;
 }
@@ -5779,7 +5805,7 @@ function renderCotacao(id) {
             const p = l.precos[j];
             const o = c.fornecedores[j].respostas?.[l.i];
             const st = l.marcas[j];
-            if (p != null && (st === 'errada' || st === 'duvida') && !l.recusas[j]) { qtdMarcas[st]++; avisosLinha.add('marca'); }
+            if (p != null && (st === 'errada' || st === 'duvida') && !l.recusas[j] && !l.permitidas[j]) { qtdMarcas[st]++; avisosLinha.add('marca'); }
             const extra = p == null ? '' : [o?.prazo, o?.obs].filter(Boolean).join(' · '); // sem preço: desconsidera a resposta
             const avsTodos = alertasPreco(p, ult, l.precos);
             const conferido = avsTodos.length && o?.precoConferido != null && o.precoConferido === p; // confirmado por você
@@ -5790,7 +5816,7 @@ function renderCotacao(id) {
             const demora = p != null && entregaDemorada(c.fornecedores[j], o);
             const pelaRegra = j === l.vencedor && l.preferencia;
             if (demora) { qtdDemora++; avisosLinha.add('demora'); }
-            const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? 'marca-errada' : '', l.recusas[j] && p != null ? (j === l.vencedor ? 'recusada-venc' : 'recusada') : ''].filter(Boolean).join(' ');
+            const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? (l.permitidas[j] ? 'marca-permitida' : 'marca-errada') : '', l.recusas[j] && p != null ? (j === l.vencedor ? 'recusada-venc' : 'recusada') : ''].filter(Boolean).join(' ');
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
             return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
           }).join('');
@@ -8043,16 +8069,29 @@ const acoes = {
     const o = f.respostas?.[i];
     if (!o) return;
     const jaRecusada = recusada(c, i, f);
+    const jaPermitida = permitida(c, i, f);
+    const errada = statusMarca(it.marca, o.marca) === 'errada';
     const escolha = await abrirDialogo(
-      `${it.descricao}\nMarca pedida: ${it.marca}\n${f.nome} respondeu: ${o.marca}${jaRecusada ? '\n\n✗ Você recusou esta marca: o preço não entra neste item.' : ''}\n\n"${o.marca}" é a marca ${it.marca}?`,
+      `${it.descricao}\nMarca pedida: ${it.marca}\n${f.nome} respondeu: ${o.marca}${jaRecusada ? '\n\n✗ Você recusou esta marca: o preço não entra neste item.' : ''}${jaPermitida ? '\n\n✓ Marca errada, mas PERMITIDA nesta cotação: o preço disputa normalmente.' : errada ? '\n\n"Permitir marca" aceita este preço só nesta cotação; a marca continua contando como errada.' : ''}\n\n"${o.marca}" é a marca ${it.marca}?`,
       [
         { txt: 'Cancelar', valor: undefined },
         { txt: 'Corrigir a marca…', valor: 'corrigir' },
         { txt: '❓ Perguntar à loja', valor: 'duvida' },
+        ...(jaPermitida ? [{ txt: 'Tirar a permissão', valor: 'tirarPermissao' }]
+          : errada ? [{ txt: '✓ Permitir marca', valor: 'permitir', cls: 'btn-permitir' }] : []),
         { txt: 'Não, é outra marca', valor: 'diferente', cls: 'danger' },
         { txt: `Sim, é ${it.marca}`, valor: 'igual', cls: 'primary' },
       ]);
     if (!escolha) return;
+    if (escolha === 'permitir' || escolha === 'tirarPermissao') {
+      if (escolha === 'permitir') { desfazerRecusa(c, i, f); permitirMarca(c, i, f); } else desfazerPermissao(c, i, f);
+      salvar();
+      render();
+      toast(escolha === 'permitir'
+        ? `Marca "${o.marca}" permitida só nesta cotação. Continua contando como marca errada de ${f.nome}.`
+        : `Permissão tirada: "${o.marca}" volta a ser marca errada nesta cotação.`, 5000);
+      return;
+    }
     if (escolha === 'duvida') {
       const n = await duvidasDoItem(c, i, fi, 'MARCA DIFERENTE');
       if (n <= 0) return;
@@ -8071,6 +8110,7 @@ const acoes = {
       toast(`Anotado: "${o.marca}" = ${it.marca}. Vale para as próximas cotações.`);
     } else {
       aprenderMarca(it.marca, o.marca, escolha);
+      desfazerPermissao(c, i, f);
       recusarMarca(c, i, f);
       const l = comparar(c).linhas[i];
       toast(l.recusadaGanhou
@@ -9555,7 +9595,7 @@ function estadoPip(c, l) {
   const st = l.vencedor >= 0 ? l.marcas[l.vencedor] : null;
   if (l.duvida) return ['duvida', '❓ em dúvida · fora do pedido'];
   if (!pendentesPip(c, [l.i]).length) return ['ok', '✓ informado'];
-  if (st === 'errada' || l.recusadaGanhou) return ['marca', '✗ marca diferente'];
+  if ((st === 'errada' && !l.permitidas?.[l.vencedor]) || l.recusadaGanhou) return ['marca', '✗ marca diferente'];
   if (st === 'duvida' || st === 'sem') return ['marca', '? conferir marca'];
   return ['falta', 'falta quantidade'];
 }
@@ -9571,7 +9611,8 @@ function estoquePip(c, l) {
 /** Marca pedida × marca do ganhador, lado a lado. */
 function marcasPip(l, marcaVenc) {
   const st = l.marcas[l.vencedor];
-  const [cls, ic, tit] = st === 'errada' ? ['errada', '✗', 'marca diferente da pedida'] : st === 'duvida' ? ['conferir', '?', 'abreviação: confira']
+  const [cls, ic, tit] = st === 'errada' && l.permitidas?.[l.vencedor] ? ['errada permitida', '✓', 'marca diferente da pedida, mas permitida nesta cotação']
+    : st === 'errada' ? ['errada', '✗', 'marca diferente da pedida'] : st === 'duvida' ? ['conferir', '?', 'abreviação: confira']
     : st === 'sem' ? ['conferir', '?', 'não informou a marca'] : st === 'ok' || st === 'abrev' ? ['ok', '✓', 'marca pedida'] : ['', '', 'sem exigência de marca'];
   return `<div class="pip-marcas" title="${tit}"><span class="pip-marca-pedida"><small>pedida</small><b>${esc(l.it.marca || 'qualquer')}</b></span><span class="pip-seta">→</span><span class="pip-marca ${cls}">${esc(marcaVenc || 'sem marca')}${ic ? ` <i>${ic}</i>` : ''}</span></div>`;
 }
