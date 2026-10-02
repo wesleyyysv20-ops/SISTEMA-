@@ -219,7 +219,13 @@ function docsDe(estado) {
     for (const x of estado[col]) (baldes[baldeDe(col, x.id)] ||= []).push(x);
     for (const [caminho, itens] of Object.entries(baldes)) docs[caminho] = { itens: itens.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) };
   }
-  for (const c of estado.cotacoes) docs[`cotacoes/${c.id}`] = c;
+  // as quantidades das lojas ficam num documento próprio (qtds/<id>): digitar uma quantidade
+  // envia só ele (poucos KB) para os outros computadores, e não a cotação inteira (centenas de KB)
+  for (const c of estado.cotacoes) {
+    const { qtds, ...resto } = c;
+    docs[`cotacoes/${c.id}`] = resto;
+    docs[`qtds/${c.id}`] = { qtds: qtds || {} };
+  }
   return docs;
 }
 
@@ -312,6 +318,9 @@ function mesclarDoc(caminho, base, local, remoto) {
   return mesclarObjeto(base, local, remoto);
 }
 
+/** Quantidades que chegaram antes da cotação (documento qtds/<id>). */
+const qtdsSoltas = {};
+
 /** Põe no estado atual (db) o valor juntado de um documento. */
 function aplicarDoc(caminho, valor, antes = []) {
   const [col, id] = caminho.split(/\/(.*)/s);
@@ -319,9 +328,25 @@ function aplicarDoc(caminho, valor, antes = []) {
     // tira os itens que este documento tinha (em qualquer versão) e põe os juntados
     const ids = new Set([...antes.flatMap(d => (d?.itens || []).map(x => x.id)), ...(valor?.itens || []).map(x => x.id)]);
     db[col] = db[col].filter(x => !ids.has(x.id)).concat(structuredClone(valor?.itens || []));
+  } else if (col === 'qtds') {
+    const c = db.cotacoes.find(x => x.id === id);
+    // documento apagado com a cotação ainda aqui (versão antiga do sistema em outro computador): mantém
+    // as quantidades e o documento é gravado de novo
+    if (valor === undefined) { if (!c) delete qtdsSoltas[id]; return; }
+    if (c) c.qtds = structuredClone(valor.qtds || {});
+    else qtdsSoltas[id] = structuredClone(valor.qtds || {}); // chegou antes da cotação
   } else if (col === 'cotacoes') {
     const i = db.cotacoes.findIndex(c => c.id === id);
     const cot = valor === undefined ? undefined : structuredClone(valor);
+    if (cot) {
+      // as quantidades vêm do documento qtds/<id>; as que vierem dentro da cotação só valem
+      // enquanto esse documento ainda não existe (cotação gravada pela versão antiga)
+      const temDocQtds = nuvem.enviado[`qtds/${id}`] != null || id in qtdsSoltas;
+      cot.qtds = i >= 0 ? (temDocQtds || !valor.qtds ? db.cotacoes[i].qtds : structuredClone(valor.qtds))
+        : (qtdsSoltas[id] ?? (valor.qtds ? structuredClone(valor.qtds) : {}));
+      if (!cot.qtds) cot.qtds = {};
+      delete qtdsSoltas[id];
+    }
     if (cot) ajustarKaizen(cot);
     if (cot === undefined) { if (i >= 0) db.cotacoes.splice(i, 1); } else if (i >= 0) db.cotacoes[i] = cot;
     else db.cotacoes.push(cot);
@@ -497,7 +522,7 @@ function afetaTela(caminhos) {
   if (nome !== 'cotacao') return true;
   const abertas = new Set([id, pip.win && !pip.win.closed ? pip.cotId : null]);
   // no comparativo: só a cotação aberta (e a da janela flutuante), as configurações e os fornecedores
-  return caminhos.some(k => (k.startsWith('cotacoes/') ? abertas.has(k.slice('cotacoes/'.length)) : !k.startsWith('produtos/')));
+  return caminhos.some(k => (/^(cotacoes|qtds)\//.test(k) ? abertas.has(k.split('/')[1]) : !k.startsWith('produtos/')));
 }
 
 /** Enquanto a pessoa digita quantidades: só os números dos outros campos e os totais (sem redesenhar tudo). */
@@ -823,22 +848,23 @@ async function carregarNuvem() {
     }
     guardarCacheDocs();
     const de = col => docs.filter(([c]) => c.startsWith(col + '/')).map(([c, d]) => [c, d]);
-    return estadoDeDocs(de('sistema'), de('produtos'), de('fornecedores'), de('cotacoes'));
+    return estadoDeDocs(de('sistema'), de('produtos'), de('fornecedores'), de('cotacoes'), de('qtds'));
   }
   const ler = async col => (await nuvem.db.collection(col).limit(1000).get()).docs.filter(d => d.exists).map(d => [`${col}/${d.id}`, d.data(), d.versao]);
-  const [sis, prods, forns, cots] = await Promise.all(['sistema', 'produtos', 'fornecedores', 'cotacoes'].map(ler));
-  const todos = [...sis, ...prods, ...forns, ...cots];
+  const [sis, prods, forns, cots, qts] = await Promise.all(['sistema', 'produtos', 'fornecedores', 'cotacoes', 'qtds'].map(ler));
+  const todos = [...sis, ...prods, ...forns, ...cots, ...qts];
   if (!todos.length) return null;
   for (const [path, data, versao] of todos) {
     nuvem.enviado[path] = JSON.stringify(data);
     if (versao) nuvem.versao[path] = versao;
   }
   guardarCacheDocs();
-  return estadoDeDocs(sis, prods, forns, cots);
+  return estadoDeDocs(sis, prods, forns, cots, qts);
 }
 
 /** Monta o estado do sistema a partir dos documentos ([caminho, dados] de cada coleção). */
-function estadoDeDocs(sis, prods, forns, cots) {
+function estadoDeDocs(sis, prods, forns, cots, qts = []) {
+  const qtdsDe = Object.fromEntries(qts.map(([c, d]) => [c.slice('qtds/'.length), d?.qtds || {}]));
   // mesmo item em dois documentos (lotes antigos + baldes novos): fica um só (os baldes vêm primeiro)
   const semRepetir = lista => { const vistos = new Set(); return lista.filter(x => x && !vistos.has(x.id) && vistos.add(x.id)); };
   const emOrdem = docs => [...docs].sort((a, b) => (a[0].includes('/b-') ? 0 : 1) - (b[0].includes('/b-') ? 0 : 1));
@@ -852,7 +878,12 @@ function estadoDeDocs(sis, prods, forns, cots) {
     backupAdiadoAte: mapa['sistema/extra']?.backupAdiadoAte || null,
     produtos: structuredClone(semRepetir(emOrdem(prods).flatMap(([, d]) => d.itens || []))),
     fornecedores: structuredClone(semRepetir(emOrdem(forns).flatMap(([, d]) => d.itens || []))),
-    cotacoes: cots.map(([, d]) => structuredClone(d)),
+    cotacoes: cots.map(([c, d]) => {
+      const cot = structuredClone(d);
+      const id = c.slice('cotacoes/'.length);
+      if (qtdsDe[id]) cot.qtds = structuredClone(qtdsDe[id]); // senão: as que vieram dentro (versão antiga)
+      return cot;
+    }),
   });
 }
 
@@ -876,7 +907,7 @@ function pintarStatus(s) {
 function estadoDeBackup(mapa) {
   const e = Object.entries(mapa || {});
   const de = col => e.filter(([k]) => k.startsWith(col + '/'));
-  return estadoDeDocs(de('sistema'), de('produtos'), de('fornecedores'), de('cotacoes'));
+  return estadoDeDocs(de('sistema'), de('produtos'), de('fornecedores'), de('cotacoes'), de('qtds'));
 }
 
 /** Carrega os dados de um armazenamento na nuvem (página do Claude ou Supabase) e passa a sincronizar. */

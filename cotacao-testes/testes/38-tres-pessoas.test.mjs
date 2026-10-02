@@ -57,8 +57,9 @@ test('3 pessoas ao mesmo tempo: quem digita não é interrompido, recebe os núm
   await esperarSalvo(A.page);
 
   // no banco: tudo junto, nada perdido
-  assert.deepEqual(sb.docs.get('cotacoes/c1').qtds, { 0: { paranoa: 50 }, 2: { 'sao-sebastiao': 7 } });
-  assert.deepEqual(sb.docs.get('cotacoes/c2').qtds, { 1: { paranoa: 3 } });
+  assert.deepEqual(sb.docs.get('qtds/c1').qtds, { 0: { paranoa: 50 }, 2: { 'sao-sebastiao': 7 } });
+  assert.deepEqual(sb.docs.get('qtds/c2').qtds, { 1: { paranoa: 3 } });
+  assert.equal(sb.docs.get('cotacoes/c1').qtds, undefined, 'as quantidades não vão mais dentro da cotação');
   // B recebe o que A digitou
   await B.page.evaluate(() => puxarNuvem());
   await B.page.waitForFunction(() => document.querySelector('.tab-comp [data-qtd-loja=paranoa][data-i="0"]').value === '50');

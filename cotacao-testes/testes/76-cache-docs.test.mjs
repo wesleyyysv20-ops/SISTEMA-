@@ -36,3 +36,28 @@ test('ao abrir de novo, só baixa do Supabase o que mudou (cópia neste computad
   assert.deepEqual(erros, []);
   await context.close();
 });
+
+test('quantidades num documento próprio: migra as cotações antigas sem perder nada', async () => {
+  const sb = supabaseFalso({ docs: new Map([
+    ['sistema/config', { loja: 'DISPPAR' }],
+    ['cotacoes/c1', { ...cot('c1', '0001'), qtds: { 0: { paranoa: 5 } } }], // gravada pela versão antiga
+  ]) });
+  const { page, context, erros } = await abrirSite(sb);
+  await entrar(page, 'wes@loja.com', '123456');
+  await page.waitForFunction(() => document.querySelector('#statusNuvem')?.dataset.s === 'salvo');
+  assert.deepEqual(await page.evaluate(() => db.cotacoes[0].qtds), { 0: { paranoa: 5 } }, 'leu as quantidades de dentro da cotação');
+  await page.evaluate(() => { db.cotacoes[0].qtds[1] = { paranoa: 2 }; salvar(); });
+  await page.waitForFunction(() => document.querySelector('#statusNuvem')?.dataset.s === 'salvo' && !nuvem.gravando && !nuvem.timer);
+  await page.waitForTimeout(1500);
+  assert.deepEqual(sb.docs.get('qtds/c1'), { qtds: { 0: { paranoa: 5 }, 1: { paranoa: 2 } } });
+  assert.equal(sb.docs.get('cotacoes/c1').qtds, undefined);
+  // uma versão antiga em outro computador apaga o documento das quantidades: ele volta e nada se perde
+  sb.docs.delete('qtds/c1'); sb.vers.delete('qtds/c1');
+  await page.evaluate(() => puxarNuvem());
+  await page.waitForFunction(() => !nuvem.gravando && !nuvem.timer);
+  await page.waitForTimeout(2000);
+  assert.deepEqual(await page.evaluate(() => db.cotacoes[0].qtds), { 0: { paranoa: 5 }, 1: { paranoa: 2 } });
+  assert.deepEqual(sb.docs.get('qtds/c1'), { qtds: { 0: { paranoa: 5 }, 1: { paranoa: 2 } } }, 'gravou de novo');
+  assert.deepEqual(erros, []);
+  await context.close();
+});
