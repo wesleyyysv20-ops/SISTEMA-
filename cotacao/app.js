@@ -1482,12 +1482,24 @@ async function baixarBlob(blob, nome) {
 
 /* ---------------- diálogos na própria página ---------------- */
 
-function abrirDialogo(msg, botoes, doc = document) {
+/**
+ * Separa o título da mensagem: uma pergunta curta no primeiro parágrafo ("Excluir a cotação nº 0059?\n\n…")
+ * vira o título da janela (todas as janelas com o mesmo formato: título, texto e botões).
+ */
+function tituloDaMensagem(msg, titulo) {
+  if (titulo) return [titulo, msg];
+  const m = /^([^\n]{3,90}\?)\n\n([\s\S]+)$/.exec(String(msg || ''));
+  return m ? [m[1], m[2]] : ['', msg];
+}
+
+function abrirDialogo(msg, botoes, doc = document, { titulo = '' } = {}) {
+  const [tit, corpo] = tituloDaMensagem(msg, titulo);
   return new Promise(resolve => {
     const fundo = doc.createElement('div');
     fundo.className = 'dlg-fundo';
-    fundo.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
-      <p>${esc(msg).replace(/\n/g, '<br>')}</p>
+    fundo.innerHTML = `<div class="dlg" role="dialog" aria-modal="true"${tit ? ` aria-label="${esc(tit)}"` : ''}>
+      ${tit ? `<h3 class="dlg-tit">${esc(tit)}</h3>` : ''}
+      <p>${esc(corpo).replace(/\n/g, '<br>')}</p>
       <div class="actions">${botoes.map((b, i) => `<button type="button" class="${b.cls || ''}" data-i="${i}">${esc(b.txt)}</button>`).join('')}</div>
     </div>`;
     const fechar = v => { fundo.remove(); doc.removeEventListener('keydown', tecla, true); resolve(v); };
@@ -1506,6 +1518,38 @@ function abrirDialogo(msg, botoes, doc = document) {
   });
 }
 
+/** Fecha a janela como o Esc faria (ou pelo botão Cancelar/Fechar, se ela não usar o Esc). */
+function fecharJanela(fundo) {
+  const doc = fundo.ownerDocument;
+  doc.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  if (!fundo.isConnected) return;
+  const b = [...fundo.querySelectorAll('button')].find(x => /^(cancelar|fechar|ok)$/i.test(x.textContent.trim()) || x.dataset.r === '0');
+  if (b) b.click();
+}
+/** Toda janela que abrir ganha o ✕ no canto (o mesmo padrão em todas). */
+function vigiarJanelas(doc = document) {
+  const porX = fundo => {
+    const dlg = fundo.querySelector('.dlg');
+    if (!dlg || dlg.querySelector('.dlg-x, .af-fechar')) return;
+    const x = doc.createElement('button');
+    x.type = 'button';
+    x.className = 'dlg-x';
+    x.title = 'Fechar (Esc)';
+    x.setAttribute('aria-label', 'Fechar');
+    x.textContent = '✕';
+    x.addEventListener('click', e => { e.stopPropagation(); fecharJanela(fundo); });
+    dlg.prepend(x);
+  };
+  new MutationObserver(lista => {
+    for (const m of lista) for (const n of m.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      if (n.classList.contains('dlg-fundo')) porX(n);
+      else if (n.firstElementChild) n.querySelectorAll('.dlg-fundo').forEach(porX); // janelas desenhadas junto com a tela (DataCar)
+    }
+  }).observe(doc.body, { childList: true, subtree: true });
+}
+vigiarJanelas();
+
 /** Diálogo com um campo (texto com sugestões ou lista). Devolve o valor, ou null se cancelar. */
 function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK', doc = document } = {}) {
   return new Promise(resolve => {
@@ -1514,8 +1558,9 @@ function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK', d
     const campo = tipo === 'lista'
       ? `<select id="dlgCampo">${opcoes.map(o => `<option value="${esc(o.valor)}">${esc(o.texto)}</option>`).join('')}</select>`
       : `<input id="dlgCampo" list="dlgOpcoes" value="${esc(valor)}" autocomplete="off"><datalist id="dlgOpcoes">${opcoes.map(o => `<option value="${esc(o)}">`).join('')}</datalist>`;
+    const curto = !/\n/.test(msg) && msg.length <= 90;
     fundo.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
-      <p>${esc(msg).replace(/\n/g, '<br>')}</p>
+      ${curto ? `<h3 class="dlg-tit">${esc(msg)}</h3>` : `<p>${esc(msg).replace(/\n/g, '<br>')}</p>`}
       ${campo}
       <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" class="primary" data-r="1">${esc(ok)}</button></div>
     </div>`;
@@ -2036,7 +2081,7 @@ function dialogoCampanha(c, k = null) {
     const fundo = document.createElement('div');
     fundo.className = 'dlg-fundo';
     fundo.innerHTML = `<form class="dlg dlg-campanha" role="dialog" aria-modal="true">
-      <h3>🏷️ ${k ? 'Editar campanha' : 'Nova campanha de marca'}</h3>
+      <h3 class="dlg-tit">🏷️ ${k ? 'Editar campanha' : 'Nova campanha de marca'}</h3>
       <p class="small muted">O sistema mostra no comparativo e na janela flutuante onde há preço da campanha. Quem escolhe o fornecedor é você.</p>
       <label>Marca<input name="marca" list="campMarcas" value="${esc(v.marca)}" autocomplete="off" required placeholder="ex.: PERFECT"><datalist id="campMarcas">${marcas.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
       <label>Fornecedor<select name="forn"><option value="">Qualquer fornecedor</option>${forns.map(f => `<option value="${esc(f.id)}" ${f.id === v.fornecedorId ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}</select></label>
@@ -5340,7 +5385,7 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos
     const fundo = doc.createElement('div');
     fundo.className = 'dlg-fundo';
     fundo.innerHTML = `<div class="dlg dlg-formato" role="dialog" aria-modal="true" aria-label="Exportar pedido">
-      <h3 style="margin:0 0 4px">⬇ Exportar pedido — ${esc(f.nome)}</h3>
+      <h3 class="dlg-tit">⬇ Exportar pedido — ${esc(f.nome)}</h3>
       ${checklist}
       <p class="small muted" style="margin:0 0 10px">Como ${esc(f.nome)} recebe o pedido?${padrao ? ' (marcado: a forma usada da última vez)' : ''}</p>
       ${opcoes.map(o => `<label class="formato-opcao${o.desligada ? ' desligada' : ''}">
@@ -7339,7 +7384,7 @@ function dialogoDuvida({ titulo, detalhe, opcoes, obs = '', doc = document }) {
     const fundo = doc.createElement('div');
     fundo.className = 'dlg-fundo';
     fundo.innerHTML = `<div class="dlg dlg-duvida" role="dialog" aria-modal="true" aria-label="Pôr em Dúvidas">
-      <h3 style="margin:0 0 4px">❓ Pôr em Dúvidas</h3>
+      <h3 class="dlg-tit">❓ Pôr em Dúvidas</h3>
       <p style="margin:0"><b>${esc(titulo)}</b></p>
       <p class="small muted" style="margin:2px 0 12px">${esc(detalhe)}</p>
       <p class="small" style="margin:0 0 6px">Perguntar para qual loja? Pode marcar as duas.</p>
@@ -7565,6 +7610,7 @@ function renderConfig() {
     <h2>Aparência</h2>
     <p class="muted small" style="margin-top:0">Escolha o tema deste computador (cada pessoa escolhe o seu). Também dá para trocar pelo botão 🎨 no topo.</p>
     ${htmlTemas()}
+    ${htmlGuiaVisual()}
   </section>
   <form data-form="config" class="form-cfg">
   <section class="card" data-aba-cfg="loja"${ver('loja')}>
@@ -8374,7 +8420,7 @@ const acoes = {
           : errada ? [{ txt: '✓ Permitir marca', valor: 'permitir', cls: 'btn-permitir' }] : []),
         { txt: 'Não, é outra marca', valor: 'diferente', cls: 'danger' },
         { txt: `Sim, é ${it.marca}`, valor: 'igual', cls: 'primary' },
-      ]);
+      ], document, { titulo: '🏷️ Conferir a marca' });
     if (!escolha) return;
     if (escolha === 'permitir' || escolha === 'tirarPermissao') {
       if (escolha === 'permitir') { desfazerRecusa(c, i, f); permitirMarca(c, i, f); } else desfazerPermissao(c, i, f);
@@ -9132,11 +9178,26 @@ function htmlTemas() {
     <span class="tema-nome">${nome}</span><span class="tema-desc">${desc}</span>
   </button>`).join('')}</div>`;
 }
+/** Guia da identidade visual: as cores (do tema escolhido), as etiquetas e os tamanhos de campo e botão. */
+function htmlGuiaVisual() {
+  const cores = [
+    ['--primary', 'Azul DISPPAR', 'ações e destaques'], ['--logo-vermelho', 'Vermelho da marca', 'avisos de topo e contadores'],
+    ['--ok', 'Verde', 'certo, vencedor, economia'], ['--warn', 'Âmbar', 'atenção, prazo'], ['--danger', 'Vermelho', 'erro, marca errada'],
+    ['--roxo-forte', 'Roxo', 'dúvidas'], ['--campanha-forte', 'Laranja', 'campanha e demora'], ['--muted', 'Cinza', 'textos de apoio'],
+  ];
+  return `<div class="guia-visual">
+    <h3>Identidade visual</h3>
+    <p class="muted small" style="margin:0 0 10px">As cores e os tamanhos que todas as telas usam (as cores acompanham o tema escolhido).</p>
+    <div class="guia-cores">${cores.map(([v, nome, uso]) => `<div class="guia-cor"><i style="background:var(${v})"></i><span><b>${nome}</b>${uso}</span></div>`).join('')}</div>
+    <div class="guia-linha"><span class="badge ok">certo</span><span class="badge warn">atenção</span><span class="badge danger">problema</span><span class="badge blue">informação</span><span class="chip-campanha">🏷️ campanha</span><span class="tag-papel">PAPELZINHOS</span><span class="cod-comp">GP33264</span></div>
+    <div class="guia-linha"><button type="button" class="primary" tabindex="-1">Botão principal</button><button type="button" tabindex="-1">Botão</button><button type="button" class="sm" tabindex="-1">Botão pequeno</button><input style="width:200px" placeholder="Campo (36px)" tabindex="-1" aria-label="Exemplo de campo"></div>
+  </div>`;
+}
 function abrirTemas() {
   abrirDialogo('', [{ txt: 'Fechar', valor: null, cls: 'primary' }]);
   const dlg = [...document.querySelectorAll('.dlg')].at(-1);
   dlg.classList.add('dlg-temas');
-  dlg.querySelector('p').outerHTML = `<h3 style="margin:0 0 4px">🎨 Tema</h3><p class="small muted" style="margin:0 0 12px">Vale só para este computador: cada pessoa escolhe o seu.</p>${htmlTemas()}`;
+  dlg.querySelector('p').outerHTML = `<h3 class="dlg-tit">🎨 Tema</h3><p class="small muted" style="margin:0 0 12px">Vale só para este computador: cada pessoa escolhe o seu.</p>${htmlTemas()}`;
   // a janela não repassa os cliques para o resto do sistema: escolhe o tema aqui mesmo
   dlg.addEventListener('click', e => { const b = e.target.closest('.tema-opcao'); if (b) aplicarTema(b.dataset.tema); });
 }
@@ -9261,7 +9322,7 @@ function abrirAtalhos() {
   abrirDialogo('', [{ txt: 'Fechar', valor: null, cls: 'primary' }]);
   const dlg = [...document.querySelectorAll('.dlg')].at(-1);
   dlg.classList.add('dlg-atalhos');
-  dlg.querySelector('p').outerHTML = `<h3 style="margin:0 0 10px">⌨ Atalhos do teclado</h3><div class="atalhos-grade">
+  dlg.querySelector('p').outerHTML = `<h3 class="dlg-tit">⌨ Atalhos do teclado</h3><div class="atalhos-grade">
     ${grupo('Em qualquer tela', [['Ctrl+K', 'Busca rápida: código, descrição, cotação, fornecedor ou tela'], ['?', 'Esta lista de atalhos'], ['Alt+Tab', 'Sair e voltar para o sistema: o cursor continua no mesmo campo']])}
     ${grupo('Nova cotação (lista de itens)', [['↑ / ↓', 'Anda pelos itens (mesmo com o cursor fora da lista)'], ['Home / End', 'Primeiro / último item'], ['qualquer letra', 'Começa a preencher a marca do item'], ['Enter', 'Salva a marca só nesta cotação e desce'], ['Enter+Enter', 'Enter duas vezes: grava a marca como padrão no cadastro'], ['F2', 'Editar a marca do item'], ['Backspace', 'Limpar a marca'], ['Esc', 'Desfaz a edição do campo'], ['Ctrl+Delete', 'Tirar o item da cotação']])}
     ${grupo('Comparativo (quantidades)', [['Enter / ↓', 'Mesma loja, próximo item'], ['↑', 'Item anterior'], ['← / →', 'Troca de loja na mesma linha'], ['Tab', 'Próxima loja; na última, o próximo item'], ['número', 'Fora dos campos: vai direto para a quantidade da linha marcada'], ['0', 'Não comprar nesta loja']])}
