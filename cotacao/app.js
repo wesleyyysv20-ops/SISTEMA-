@@ -4479,6 +4479,19 @@ function abrirLote(c, fis, tipo) {
   $('#painelLote')?.scrollIntoView({ behavior: 'smooth' });
 }
 
+/** Lista das marcas erradas de um fornecedor, separada por cotação, pronta para o WhatsApp do vendedor. */
+function textoMarcasErradas(nome, erradas) {
+  const grupos = new Map();
+  for (const e of erradas) {
+    if (!grupos.has(e.c)) grupos.set(e.c, []);
+    grupos.get(e.c).push(e);
+  }
+  const blocos = [...grupos].map(([c, lista]) => [`*Cotação nº ${c.numero}* (${fmtData(c.data)})`,
+    ...lista.map(e => `• ${e.it.codigo || '—'} — ${e.it.descricao || ''}\n   pedida: ${e.pedida || '—'} | enviada: ${e.mandou || '—'}`)].join('\n'));
+  return [`*${nome} — itens com marca diferente da pedida (${erradas.length})*`,
+    'Por favor, confira e nos envie os preços na marca pedida.', ...blocos].join('\n\n');
+}
+
 async function copiar(texto, el) {
   try {
     await navigator.clipboard.writeText(texto);
@@ -7039,7 +7052,8 @@ async function abrirAnaliseFornecedor(id) {
         <h4 style="margin-top:12px">Marcas que mais manda</h4>
         ${marcas.length ? `<p class="af-marcas">${marcas.map(([m, q]) => `<span class="af-chip">${esc(m)} <b>${q}</b></span>`).join('')}</p>` : '<p class="small muted">—</p>'}
         <p class="small">Marca errada: <b>${x.marcaErrada}</b>${x.comExigencia ? ` de ${x.comExigencia}` : ''} · sem marca: <b>${x.semMarca}</b></p>
-        ${a.erradas.length ? `<details><summary class="small">ver itens com marca errada (${a.erradas.length})</summary><ul class="small af-mini">${a.erradas.slice(0, 15).map(e => `<li>nº ${esc(e.c.numero)} · <b>${esc(e.it.codigo || e.it.descricao)}</b>: pedida ${esc(e.pedida || '—')}, mandou ${esc(e.mandou || '—')}</li>`).join('')}</ul></details>` : ''}
+        ${a.erradas.length ? `<div class="af-erradas-acoes"><button type="button" class="sm af-copiar-erradas" title="Copia a lista completa (${a.erradas.length} itens), separada por cotação, para mandar ao vendedor no WhatsApp ou e-mail">📋 Copiar as ${a.erradas.length} para o vendedor</button></div>
+        <details><summary class="small">ver itens com marca errada (${a.erradas.length})</summary><ul class="small af-mini af-rolar">${a.erradas.map(e => `<li>nº ${esc(e.c.numero)} · <b>${esc(e.it.codigo || e.it.descricao)}</b>: pedida ${esc(e.pedida || '—')}, mandou ${esc(e.mandou || '—')}</li>`).join('')}</ul></details>` : ''}
       </section>
       <section><h4>Notas fiscais</h4>
         ${x.notas ? `<p class="small">Notas recebidas: <b>${x.notas}</b> · com divergência: <b>${x.notasDiv}</b><br>Cobrado a mais: <b class="${x.cobrado ? 'txt-ruim' : ''}">${fmtMoeda(x.cobrado)}</b> · itens que não vieram: <b>${x.faltas}</b></p>` : '<p class="small muted">Nenhuma nota fiscal conferida no período.</p>'}
@@ -7062,6 +7076,8 @@ async function abrirAnaliseFornecedor(id) {
   dlg.querySelector('p').outerHTML = `<div class="af-corpo">${html}</div>`;
   dlg.addEventListener('click', e => {
     if (e.target.closest('.af-fechar')) { dlg.querySelector('.actions button').click(); return; }
+    const cp = e.target.closest('.af-copiar-erradas');
+    if (cp) { copiar(textoMarcasErradas(x.nome, a.erradas), cp); return; }
     // abrir uma cotação do histórico fecha a análise
     const lk = e.target.closest('.af-abrir');
     if (!lk) return;

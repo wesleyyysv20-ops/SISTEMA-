@@ -2382,3 +2382,5 @@ td input.qtd-loja { height: var(--campo-h-xs); }
   #app table:not(.tab-comp) td:first-child:has(> input[type=checkbox]:only-child) + td::before { display: none; }
   #app table:not(.tab-comp) td:first-child:has(> input[type=checkbox]:only-child) + td { font-size: var(--fs-base); }
 }
+.af-erradas-acoes { margin: 6px 0; }
+.af-mini.af-rolar { max-height: 240px; overflow-y: auto; padding-right: 6px; }
