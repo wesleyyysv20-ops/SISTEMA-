@@ -2,7 +2,14 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#253d83">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Cotações">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icone-180.png">
   <title>Sistema de Cotação</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='158 164 314 196'%3E%3Cpath fill='%23253d83' d='M277 168H432C452 168 468 186 461 206L413 330C407 346 395 356 378 356H209L225 313H352C358 313 362 310 364 305L393 226C396 218 392 213 385 213H261Z'/%3E%3Cpath fill='%23ce0704' d='M175 246H326C330 246 332 249 330 253L319 279H163Z'/%3E%3C/svg%3E">
   <script>try { var t = localStorage.getItem('cotacao.tema'); if (t && t !== 'auto') document.documentElement.dataset.theme = t; } catch (e) {}</script>
@@ -35,6 +42,13 @@
     </div>
   </header>
   <main id="app"></main>
+  <div id="navMovel" class="nav-movel" role="navigation" aria-label="Menu">
+    <a href="#" data-route="inicio"><i>🏠</i><span>Início</span></a>
+    <a href="#" data-route="nova"><i>➕</i><span>Nova</span></a>
+    <a href="#" data-route="cotacoes"><i>📋</i><span>Cotações</span><b class="nm-alerta" hidden></b></a>
+    <a href="#" data-route="duvidas"><i>❓</i><span>Dúvidas</span><b class="nm-alerta nm-info" hidden></b></a>
+    <button type="button" data-act="menuMais"><i>☰</i><span>Mais</span></button>
+  </div>
   <div id="toast" role="status"></div>
   <button type="button" id="voltarTopo" class="voltar-topo" title="Voltar ao topo da página" aria-label="Voltar ao topo" hidden>↑</button>
   <script src="config.js"></script>

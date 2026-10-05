@@ -1,0 +1,11 @@
+{
+  "name": "Cotações DISPPAR",
+  "short_name": "Cotações",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6fa",
+  "theme_color": "#253d83",
+  "lang": "pt-BR",
+  "icons": [{ "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }, { "src": "icone-180.png", "sizes": "180x180", "type": "image/png" }, { "src": "icone.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

@@ -2236,3 +2236,149 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 
 /* descrição do DataCar diferente da do cadastro (o código manda) */
 .desc-diverge { display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: var(--r-xs); font-size: var(--fs-xs); font-weight: 700; background: var(--warn-bg); color: var(--warn); }
+
+/* =====================================================================
+ * Celular (até 760px): menu embaixo, topo numa linha, tabelas em cartões,
+ * comparativo em cartões por item, janelas abrindo de baixo, alvos de toque maiores.
+ * ===================================================================== */
+.nav-movel { display: none; }
+@media (max-width: 760px) {
+  :root { --campo-h: 42px; --campo-h-sm: 38px; --campo-h-xs: 36px; --altura-menu: 60px; }
+  body { padding-bottom: calc(var(--altura-menu) + env(safe-area-inset-bottom, 0px)); }
+  input, select, textarea { font-size: 16px; } /* sem zoom automático do iPhone */
+
+  /* topo: marca + estado + busca + tema numa linha só */
+  .topbar { flex-wrap: nowrap; gap: 8px; padding: 8px 12px; min-height: 52px; }
+  .topbar #nav, .btn-atalhos { display: none; }
+  .brand { font-size: var(--fs-base); min-width: 0; flex: 1 1 auto; }
+  .brand #brand { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-nuvem { flex: none; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
+  .topo-atalhos { margin-left: 0; flex: none; gap: 6px; }
+  .topo-atalhos button { width: 40px; height: 40px; min-height: 40px; padding: 0; }
+
+  /* menu de baixo */
+  .nav-movel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; display: grid; grid-template-columns: repeat(5, 1fr); height: calc(var(--altura-menu) + env(safe-area-inset-bottom, 0px)); padding-bottom: env(safe-area-inset-bottom, 0px); background: color-mix(in srgb, var(--bar) 96%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-top: 1px solid var(--line); box-shadow: 0 -4px 16px rgba(10, 18, 40, .06); }
+  .nav-movel > a, .nav-movel > button { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 0; padding: 4px 0; border: 0; border-radius: 0; background: none; box-shadow: none; color: var(--muted); font: 600 11px/1.2 var(--font); text-decoration: none; }
+  .nav-movel i { font-style: normal; font-size: 20px; line-height: 1; filter: grayscale(.6); opacity: .8; }
+  .nav-movel .active { color: var(--primary); }
+  .nav-movel .active i { filter: none; opacity: 1; }
+  .nav-movel .active::before { content: ""; position: absolute; top: 0; left: 28%; right: 28%; height: 3px; border-radius: 0 0 3px 3px; background: var(--logo-vermelho); }
+  .nm-alerta { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 17px; height: 17px; padding: 0 4px; border-radius: var(--r-pill); background: var(--accent); color: var(--on-cor); font: 700 10px/17px var(--font); text-align: center; }
+  .nm-alerta.nm-info { background: var(--primary-2); }
+  .nm-alerta[hidden] { display: none; }
+  #toast { bottom: calc(var(--altura-menu) + 12px + env(safe-area-inset-bottom, 0px)); }
+  .voltar-topo { bottom: calc(var(--altura-menu) + 14px + env(safe-area-inset-bottom, 0px)); right: 12px; }
+
+  /* página */
+  main, main[data-tela] { padding: 10px 10px 20px; }
+  .card { padding: 14px; border-radius: var(--r-md); margin-bottom: 10px; }
+  .cab-pagina { margin-bottom: 10px; }
+  .cab-pagina .cab-sub { margin-left: 12px; font-size: var(--fs-xs); }
+  .cab-pagina > .row { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-left: 0; }
+  .cab-pagina > .row > * { width: 100%; margin: 0; }
+  .cab-pagina > .row > .btn-primary, .cab-pagina > .row > .primary { grid-column: 1 / -1; order: -1; }
+  .aviso-backup { padding: 10px 12px; font-size: var(--fs-sm); }
+  .aviso-backup .row { width: 100%; }
+  .aviso-backup .row button { flex: 1; }
+  .stats, .stats-inicio, .stats-rel { grid-template-columns: 1fr 1fr !important; gap: 8px; }
+  .stat { padding: 10px 12px; }
+  .stat b { font-size: var(--fs-2xl); }
+  .grid, .form-duvida { grid-template-columns: 1fr !important; }
+  .grid > label[style*="grid-column"] { grid-column: auto !important; }
+  .actions > button, .actions > .btn { flex: 1 1 auto; }
+  button, .btn { min-height: 40px; }
+  button.sm, .btn.sm { min-height: 36px; }
+  button.link { min-height: 0; }
+  .btn-pip, .btn-compacto, .ajuda-comp, kbd { display: none !important; } /* janela flutuante e atalhos de teclado são do computador */
+
+  /* tabelas em cartões (cada célula com o nome da coluna) */
+  #app .table-wrap { overflow: visible; border: 0; }
+  #app table:not(.tab-comp) { display: block; width: 100%; min-width: 0 !important; }
+  #app table:not(.tab-comp) thead { display: none; }
+  #app table:not(.tab-comp) tbody, #app table:not(.tab-comp) tfoot { display: block; }
+  #app table:not(.tab-comp) tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--card); }
+  #app table:not(.tab-comp) td { display: block; min-width: 0; padding: 0; border: 0; text-align: left !important; white-space: normal !important; width: auto !important; }
+  #app table:not(.tab-comp) td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 1px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  #app table:not(.tab-comp) td:first-child { grid-column: 1 / -1; font-size: var(--fs-base); }
+  #app table:not(.tab-comp) td:first-child::before { display: none; }
+  #app table:not(.tab-comp) td:empty, #app table:not(.tab-comp) td[data-label=""]::before { display: none; }
+  #app table:not(.tab-comp) td[colspan] { grid-column: 1 / -1; }
+  #app table:not(.tab-comp) td.actions-cell, #app table:not(.tab-comp) td:last-child:has(button) { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
+  #app table:not(.tab-comp) td.actions-cell::before, #app table:not(.tab-comp) td:last-child:has(button)::before { display: none; }
+  #app table:not(.tab-comp) td input:not([type=checkbox]), #app table:not(.tab-comp) td select { width: 100% !important; }
+
+  /* comparativo: um cartão por item (preço escolhido, 2º lugar, quantidades e total) */
+  .painel-comp { max-height: none; overflow: visible; border: 0; }
+  .tab-comp { display: block; min-width: 0 !important; width: 100%; }
+  .tab-comp thead { display: none; }
+  .tab-comp tbody { display: block; }
+  .tab-comp > tbody > tr { display: grid !important; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; padding: 12px; margin-bottom: 10px; border: 1px solid var(--line); border-left: 4px solid var(--faixa, var(--line)); border-radius: var(--r-md); background: var(--card); }
+  .tab-comp > tbody > tr[hidden] { display: none !important; }
+  .tab-comp td { display: none; position: static !important; padding: 0 !important; border: 0 !important; background: none !important; box-shadow: none !important; min-width: 0 !important; width: auto !important; text-align: left; }
+  .tab-comp td:nth-child(2), .tab-comp td.fd { display: block; }
+  .tab-comp td:nth-child(2), .tab-comp td.col-escolhido, .tab-comp td.col-dif { grid-column: 1 / -1; }
+  .tab-comp td.col-escolhido { text-align: left !important; padding-top: 8px !important; border-top: 1px solid var(--line) !important; }
+  .tab-comp td.col-escolhido .esc-linha { justify-content: flex-start; }
+  .tab-comp td.col-escolhido .seg-mini, .tab-comp td.col-escolhido .camp-mini { margin-left: 0; }
+  .tab-comp td.col-dif { text-align: left !important; font-size: var(--fs-sm); }
+  .tab-comp td.col-dif:empty { display: none; }
+  .tab-comp td.col-qtd::before, .tab-comp td[id^="tot-"]::before, .tab-comp td.col-dif::before { content: attr(data-label); display: block; margin-bottom: 2px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .tab-comp td.col-qtd input.qtd-loja { width: 100%; height: 42px; font-size: 18px; }
+  .tab-comp td[id^="tot-"] { text-align: right !important; font-weight: 700; }
+  .tab-comp .desc-comp { white-space: normal !important; }
+  /* todos os preços do item marcado (toque no cartão) */
+  .tab-comp > tbody > tr.linha-atual td[data-dica] { display: block; padding: 6px 8px !important; border: 1px solid var(--line) !important; border-radius: var(--r-sm); text-align: left !important; }
+  .tab-comp > tbody > tr.linha-atual td[data-dica]::before { content: attr(data-label); display: block; font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+  .tab-comp > tbody > tr.linha-atual td.best { border-color: var(--ok) !important; background: var(--ok-bg) !important; }
+  .tab-comp > tbody > tr:not([data-comp-linha]) td { display: block; }
+  .tab-comp > tbody > tr:not([data-comp-linha]) td:empty { display: none; }
+  .tab-comp > tbody > tr:not([data-comp-linha]):not(:has(#totalComp)) { display: none !important; }
+
+  /* cabeçalho da cotação e barra do comparativo */
+  .cab-cot { flex-direction: column; align-items: stretch; gap: 8px; }
+  .cab-cot-acoes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .resumo-cot { grid-template-columns: 1fr 1fr !important; }
+  .card > .row-between > .row { width: 100%; display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .busca-comp-caixa, .busca-comp, .filtro-venc, #filtroVencedor { width: 100% !important; max-width: none !important; }
+
+  /* nova cotação: barra de criar acima do menu de baixo */
+  .barra-criar { bottom: calc(var(--altura-menu) + env(safe-area-inset-bottom, 0px)); flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
+  .barra-criar-acoes { display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+  .barra-criar-acoes > span { display: none; }
+  .fontes-itens { grid-template-columns: 1fr !important; }
+
+  /* janelas abrem de baixo, na largura da tela */
+  .dlg-fundo { place-items: end center; padding: 0; }
+  .dlg, .dlg.dlg-conf, .dlg.dlg-largo, .dlg.dlg-atalhos, .dlg.dlg-analise-forn, .dlg.dlg-temas, .dlg.busca-rapida, .dlg-formato, .dlg-duvida, .dlg-campanha { width: 100% !important; max-width: none; max-height: 92vh; border-radius: 18px 18px 0 0; padding: 16px 16px 0; }
+  .dlg::before { content: ""; display: block; width: 40px; height: 4px; margin: -6px auto 10px; border-radius: var(--r-pill); background: var(--line); }
+  .dlg .actions { margin: 14px -16px 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); bottom: 0; }
+  .dlg .actions > button { flex: 1 1 auto; min-height: 44px; }
+  @keyframes subir { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .dlg { animation: subir .2s ease; }
+  .temas { grid-template-columns: 1fr 1fr !important; }
+
+  /* menu "Mais" */
+  .menu-mais-grade { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .menu-mais-grade button { flex-direction: column; gap: 6px; min-height: 84px; font-weight: 700; }
+  .menu-mais-grade button i { font-style: normal; font-size: 26px; }
+  .menu-mais-grade button.ativo { border-color: var(--primary); color: var(--primary); background: var(--blue-bg); }
+  .barra-cfg { position: static; }
+  .abas-cfg { flex-wrap: nowrap; overflow-x: auto; }
+  .aba-cfg { flex: none; }
+}
+
+@media (max-width: 760px) {
+  label.check-inline { flex-wrap: wrap; width: 100%; }
+  label.check-inline select { width: 100% !important; max-width: none; }
+  .tab-comp td.col-qtd, .tab-comp td[id^="tot-"] { align-self: end; }
+  .tab-comp td.col-dif, .tab-comp td.col-dif * { text-align: left !important; justify-content: flex-start !important; margin-left: 0 !important; }
+  .tab-comp td.col-escolhido > * { margin-left: 0; }
+  #app table:not(.tab-comp) tr { position: relative; }
+  #app table:not(.tab-comp) td:first-child:has(> input[type=checkbox]:only-child) { position: absolute; top: 10px; right: 12px; grid-column: auto; }
+  #app table:not(.tab-comp) td:first-child:has(> input[type=checkbox]:only-child) + td { grid-column: 1 / -1; padding-right: 32px; }
+  #app table:not(.tab-comp) td input[type=checkbox] { width: 22px; height: 22px; }
+  .nc-obs > summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #app { overflow-x: clip; }
+  #app table:not(.tab-comp) td:first-child:has(> input[type=checkbox]:only-child) + td::before { display: none; }
+  #app table:not(.tab-comp) td:first-child:has(> input[type=checkbox]:only-child) + td { font-size: var(--fs-base); }
+}

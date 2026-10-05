@@ -7848,6 +7848,67 @@ function voltarFoco(f) {
   try { if (f.ini != null) el.setSelectionRange(f.ini, f.fim); } catch (e) { /* campo sem seleção */ }
 }
 
+/**
+ * Celular: as tabelas viram cartões (uma linha = um cartão). Cada célula leva o nome da sua coluna
+ * (data-label), que aparece em cima do valor. Também vale para linhas que entram depois (filtros, busca).
+ */
+function rotularTabelas(raiz = document.getElementById('app')) {
+  if (!raiz) return;
+  for (const t of raiz.querySelectorAll('table')) {
+    const ths = t.tHead?.rows[0]?.cells;
+    if (!ths?.length) continue;
+    const nomes = [];
+    for (const th of ths) for (let k = 0; k < (th.colSpan || 1); k++) nomes.push(th.textContent.replace(/\s+/g, ' ').trim());
+    for (const tb of t.tBodies) for (const tr of tb.rows) {
+      if (tr.dataset.rot === '1') continue;
+      let col = 0;
+      for (const td of tr.cells) {
+        const nome = nomes[col] || '';
+        if (nome && !td.hasAttribute('data-label')) td.setAttribute('data-label', nome);
+        col += td.colSpan || 1;
+      }
+      tr.dataset.rot = '1';
+    }
+  }
+}
+const celular = window.matchMedia('(max-width: 760px)');
+let timerRotulos = null;
+new MutationObserver(() => {
+  if (!celular.matches) return;
+  clearTimeout(timerRotulos);
+  timerRotulos = setTimeout(() => rotularTabelas(), 60);
+}).observe(document.getElementById('app') || document.body, { childList: true, subtree: true });
+
+/** Menu "Mais" do celular: as telas que não cabem no menu de baixo, a busca e o tema. */
+function abrirMenuMais() {
+  if (document.querySelector('.menu-mais')) return;
+  const itens = [['produtos', '📦', 'Produtos'], ['fornecedores', '🏭', 'Fornecedores'], ...(podeVerRelatorios() ? [['relatorios', '📊', 'Relatórios']] : []), ['config', '⚙️', 'Configurações']];
+  const fundo = document.createElement('div');
+  fundo.className = 'dlg-fundo menu-mais-fundo';
+  fundo.innerHTML = `<div class="dlg menu-mais" role="dialog" aria-modal="true" aria-label="Mais opções">
+    <h3 class="dlg-tit">Mais</h3>
+    <div class="menu-mais-grade">${itens.map(([r, ic, nome]) => `<button type="button" data-ir="${r}" class="${rota().nome === r ? 'ativo' : ''}"><i>${ic}</i>${nome}</button>`).join('')}
+      <button type="button" data-mm="busca"><i>🔎</i>Buscar</button>
+      <button type="button" data-mm="tema"><i>🎨</i>Tema</button>
+    </div>
+    <div class="actions"><button type="button" data-mm="fechar">Fechar</button></div>
+  </div>`;
+  const fechar = () => { fundo.remove(); document.removeEventListener('keydown', tecla, true); };
+  const tecla = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(); } };
+  fundo.addEventListener('click', e => {
+    e.stopPropagation();
+    const b = e.target.closest('button');
+    if (e.target === fundo) return fechar();
+    if (!b) return;
+    if (b.dataset.ir) { fechar(); ir(b.dataset.ir); window.scrollTo(0, 0); }
+    else if (b.dataset.mm === 'busca') { fechar(); abrirBusca(); }
+    else if (b.dataset.mm === 'tema') { fechar(); abrirTemas(); }
+    else if (b.dataset.mm === 'fechar') fechar();
+  });
+  document.addEventListener('keydown', tecla, true);
+  document.body.appendChild(fundo);
+}
+
 function render() {
   const { nome, id } = rota();
   const app = $('#app');
@@ -7890,16 +7951,23 @@ function render() {
   const cotTela = nome === 'cotacao' ? db.cotacoes.find(x => x.id === id) : null;
   ui.telaCot = cotTela ? { cotId: cotTela.id, sig: assinaturaSemQtd(cotTela) } : null;
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
-  document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
+  document.querySelectorAll('#nav a, #navMovel a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
+  const maisAtivo = ['produtos', 'fornecedores', 'relatorios', 'config'].includes(ativo);
+  $('#navMovel [data-act=menuMais]')?.classList.toggle('active', maisAtivo);
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
   const navDuv = $('#nav a[data-route="duvidas"]');
   const nDuv = gruposDuvidas(duvidasPendentes()).length;
   if (navDuv) navDuv.innerHTML = `Dúvidas${nDuv ? ` <span class="nav-alerta nav-info">${nDuv}</span>` : ''}`;
+  const movDuv = $('#navMovel a[data-route="duvidas"] .nm-alerta');
+  if (movDuv) { movDuv.textContent = nDuv || ''; movDuv.hidden = !nDuv; }
   const navCot = $('#nav a[data-route="cotacoes"]');
   if (navCot) {
     const n = cotacoesComPrazo().length;
     navCot.innerHTML = `Cotações${n ? ` <span class="nav-alerta" title="${n} cotação(ões) com resposta atrasada ou perto do prazo">${n}</span>` : ''}`;
+    const movCot = $('#navMovel a[data-route="cotacoes"] .nm-alerta');
+    if (movCot) { movCot.textContent = n || ''; movCot.hidden = !n; }
   }
+  rotularTabelas();
 }
 
 document.addEventListener('click', e => {
@@ -8089,6 +8157,7 @@ const acoes = {
     toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação` : ''}.${novosSemMarca ? ` ${novosSemMarca} sem marca: preencha a marca na lista (campos amarelos).` : ''}`, 7000);
   },
 
+  menuMais: () => abrirMenuMais(),
   corrigirDescCadastro: el => {
     const r = rascunho();
     const x = r.itens[+el.dataset.i];
