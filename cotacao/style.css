@@ -2233,3 +2233,6 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 .guia-cor i { flex: none; width: 26px; height: 26px; border-radius: var(--r-xs); border: 1px solid var(--line); }
 .guia-cor b { display: block; font-size: var(--fs-sm); }
 .guia-linha { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 12px; }
+
+/* descrição do DataCar diferente da do cadastro (o código manda) */
+.desc-diverge { display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: var(--r-xs); font-size: var(--fs-xs); font-weight: 700; background: var(--warn-bg); color: var(--warn); }

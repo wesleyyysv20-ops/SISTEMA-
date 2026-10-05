@@ -3485,22 +3485,76 @@ function indiceProdutos() {
   return mapa;
 }
 
+/** Palavras que dizem o que é a peça (sem lado, posição, medidas e ligações). */
+const PALAVRAS_SEM_PESO = new Set(['PARA', 'COM', 'SEM', 'DIANT', 'DIANTEIRO', 'DIANTEIRA', 'TRAS', 'TRASEIRO', 'TRASEIRA', 'DIR', 'ESQ', 'DIREITO', 'DIREITA', 'ESQUERDO', 'ESQUERDA', 'SUP', 'INF', 'JOGO', 'PECA', 'PECAS', 'UNID', 'CADA']);
+function palavrasDescricao(t) {
+  return semAcento(t).toUpperCase().split(/[^A-Z0-9]+/).filter(w => w.length >= 3 && !/^\d+$/.test(w) && !PALAVRAS_SEM_PESO.has(w));
+}
+/**
+ * As duas descrições falam da mesma peça? ("AMORT DIANT" e "AMORTECEDOR DIANT DIR" sim; "PORCA FLANGE" e
+ * "FILTRO DE AR" não). Vazia ou sem palavras para comparar: não dá para dizer que não combinam.
+ */
+function descricoesCombinam(a, b) {
+  const A = palavrasDescricao(a), B = palavrasDescricao(b);
+  if (!A.length || !B.length) return true;
+  const raiz = w => w.slice(0, 4);
+  const rb = new Set(B.map(raiz));
+  return A.some(w => rb.has(raiz(w)));
+}
+
+/** Todos os produtos de cada código (código, partes do código, similares e OBS do DataCar), em ordem de confiança. */
+function indiceProdutosLista() {
+  const mapa = new Map();
+  const add = (k, p, nivel) => {
+    k = semAcento(k).replace(/\s+/g, '');
+    if (!k) return;
+    const l = mapa.get(k) || [];
+    if (!l.some(x => x.p === p)) l.push({ p, nivel });
+    mapa.set(k, l);
+  };
+  for (const p of db.produtos) add(p.codigo, p, 'codigo');
+  for (const p of db.produtos) for (const parte of String(p.codigo || '').split(/[\/,;]+/)) add(parte, p, 'codigo');
+  for (const p of db.produtos) {
+    for (const parte of String(p.similar || '').split(/[\/,;\s]+/)) add(parte, p, 'similar');
+    if (p.obsDataCar) add(p.obsDataCar, p, 'similar');
+  }
+  for (const l of mapa.values()) l.sort((a, b) => (a.nivel === 'codigo' ? 0 : 1) - (b.nivel === 'codigo' ? 0 : 1));
+  return mapa;
+}
+
+/**
+ * Produto do cadastro para um código do arquivo, conferindo a descrição: um similar (ou pedaço do código) só vale
+ * se a descrição for da mesma peça. Código igual com descrição diferente: liga ao produto, mas avisa (descDiverge).
+ */
+function produtoDoArquivo(mapa, busca, descArquivo) {
+  if (!busca) return { p: null };
+  const k = v => semAcento(v).replace(/\s+/g, '');
+  const cands = [...(mapa.get(k(busca)) || [])];
+  for (const parte of busca.split(/[\/,;]+/)) for (const c of mapa.get(k(parte)) || []) if (!cands.some(x => x.p === c.p)) cands.push(c);
+  if (!cands.length) return { p: null };
+  if (!String(descArquivo || '').trim()) return { p: cands[0].p };
+  const bom = cands.find(c => descricoesCombinam(descArquivo, c.p.descricao));
+  if (bom) return { p: bom.p };
+  // nenhum combina: código igual ao do cadastro liga com aviso; similar/pedaço de código não liga (é outra peça)
+  const igual = cands.find(c => c.nivel === 'codigo' && k(c.p.codigo) === k(busca));
+  return igual ? { p: igual.p, diverge: true } : { p: null, rejeitado: cands[0].p };
+}
+
 function casarLinhasDataCar() {
   const d = ui.datacar;
-  const mapa = indiceProdutos();
+  const mapa = indiceProdutosLista();
   d.linhas.forEach(l => {
-    // OBS (chave) agrupa os itens; o código do arquivo identifica o produto.
+    // OBS (chave) agrupa os itens; o código do arquivo identifica o produto (e a descrição do arquivo confere).
     const chave = String(l.cels[d.col] ?? '').trim();
     const codigo = d.colCod >= 0 && d.colCod !== d.col ? String(l.cels[d.colCod] ?? '').trim() : '';
     const busca = codigo || chave;
-    let p = null;
-    if (busca) {
-      p = mapa.get(semAcento(busca).replace(/\s+/g, '')) || null;
-      if (!p) for (const parte of busca.split(/[\/,;]+/)) { p = mapa.get(semAcento(parte).replace(/\s+/g, '')); if (p) break; }
-    }
+    const descArq = d.colDesc >= 0 ? String(l.cels[d.colDesc] ?? '').trim() : '';
+    const r = produtoDoArquivo(mapa, busca, descArq);
     l.chave = chave;
     l.codigo = codigo;
-    l.produtoId = p ? p.id : null;
+    l.produtoId = r.p ? r.p.id : null;
+    l.descDiverge = r.diverge ? descArq : '';
+    l.descRejeitada = r.rejeitado ? r.rejeitado.id : null;
     if (!busca) l.sel = false;
     else if (l.sel === undefined) l.sel = false; // começam todos desmarcados
   });
@@ -4146,7 +4200,7 @@ function conteudoItem() {
       <div class="conf-codigo">${esc(l.codigo || l.chave)}</div>
       <div class="conf-desc">${esc(txt(d.colDesc) || (p ? p.descricao : ''))}</div>
       <div class="conf-cadastro small">${p
-        ? `Cadastro: <b>${esc(p.codigo)}</b> · ${esc(p.descricao)}${p.similar ? ` · sim. ${esc(p.similar)}` : ''}`
+        ? `Cadastro: <b>${esc(p.codigo)}</b> · ${esc(p.descricao)}${p.similar ? ` · sim. ${esc(p.similar)}` : ''}${l.descDiverge ? ' <span class="badge warn" title="O código é o mesmo, mas a descrição do cadastro é de outra peça. Na cotação vai a descrição do arquivo.">⚠ descrição do cadastro diferente</span>' : ''}`
         : `<span class="badge warn">não cadastrado · será cadastrado ao adicionar</span>
           <label class="conf-desc-novo">Descrição para o cadastro <input data-dc-desc="1" value="${esc(l.desc ?? (txt(d.colDesc) || ''))}" placeholder="Ex.: SPRAY SELANTE 300ML" autocomplete="off"></label>`}</div>
       <div class="conf-observacoes">
@@ -4774,7 +4828,7 @@ function linhaItemNova(ctx, x, i) {
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}
         ${textoObs.length || dup ? '' : '<br>'}<details class="sim-item"><summary title="Códigos similares (ficam no cadastro)">${p.similar ? `<b>${esc(p.similar)}</b> ✎` : '+ similar'}</summary><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Códigos similares" aria-label="Códigos similares de ${esc(p.descricao)}"></details></td>
       <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação (Enter duas vezes grava como padrão no cadastro).` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
-      <td>${esc(p.descricao)}</td>
+      <td>${x.descricaoArquivo ? `${esc(x.descricaoArquivo)}<br><span class="desc-diverge" title="O código ${esc(x.codigoArquivo || p.codigo)} veio do DataCar como &quot;${esc(x.descricaoArquivo)}&quot;, mas o cadastro diz &quot;${esc(p.descricao)}&quot;. Na cotação vai a do DataCar.">⚠ cadastro: ${esc(p.descricao)}</span> <button type="button" class="link small" data-act="corrigirDescCadastro" data-i="${i}" title="Grava a descrição do DataCar no cadastro deste código">corrigir o cadastro</button>` : esc(p.descricao)}</td>
       <td class="c" style="white-space:nowrap">${dup ? `<button class="sm" data-act="manterItem" data-i="${i}" title="Manter na cotação e tirar o destaque">✓ Manter</button> ` : ''}<button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
     </tr>`;
 }
@@ -8022,7 +8076,7 @@ const acoes = {
         if (l.marca !== undefined) ja.marca = marcaCotacao;
         somados++;
       } else {
-        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao, obsArquivo: papel ? [] : [l.chave || ''], ...(papel ? { papelzinho: true } : {}), ...(l.produtoId ? {} : { novoCadastro: true }) });
+        r.itens.push({ produtoId: id, quantidade: qtd, codigoArquivo, marca: marcaCotacao, ...(l.descDiverge ? { descricaoArquivo: l.descDiverge } : {}), obsArquivo: papel ? [] : [l.chave || ''], ...(papel ? { papelzinho: true } : {}), ...(l.produtoId ? {} : { novoCadastro: true }) });
       }
     }
     if (papel) {
@@ -8035,6 +8089,18 @@ const acoes = {
     toast(`${escolhidas.length} item(ns) adicionado(s)${novos ? `, ${novos} produto(s) novo(s) cadastrado(s)` : ''}${somados ? `, ${somados} já estava(m) na cotação` : ''}.${novosSemMarca ? ` ${novosSemMarca} sem marca: preencha a marca na lista (campos amarelos).` : ''}`, 7000);
   },
 
+  corrigirDescCadastro: el => {
+    const r = rascunho();
+    const x = r.itens[+el.dataset.i];
+    const p = x && db.produtos.find(pp => pp.id === x.produtoId);
+    if (!x?.descricaoArquivo || !p) return;
+    const antes = p.descricao;
+    p.descricao = x.descricaoArquivo;
+    for (const y of r.itens) if (y.produtoId === p.id) delete y.descricaoArquivo;
+    salvar();
+    render();
+    toast(`Cadastro de ${p.codigo} corrigido: "${antes}" → "${p.descricao}".`, 6000);
+  },
   irNovoSemMarca: () => {
     const pend = novosSemMarcaNaLista();
     if (!pend.length) return;
@@ -8215,7 +8281,7 @@ const acoes = {
       criadoEm: new Date().toISOString(),
       itens: itens.map(x => {
         const p = prod[x.produtoId];
-        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: p.descricao, unidade: p.unidade, marca: x.marca || p.marca, marcaCotacao: x.marca || '', quantidade: 1, ...(lojaPelaObs(x.obsArquivo) ? { lojaObs: lojaPelaObs(x.obsArquivo) } : {}), ...(x.papelzinho ? { papelzinho: true } : {}) };
+        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: x.descricaoArquivo || p.descricao, unidade: p.unidade, marca: x.marca || p.marca, marcaCotacao: x.marca || '', quantidade: 1, ...(lojaPelaObs(x.obsArquivo) ? { lojaObs: lojaPelaObs(x.obsArquivo) } : {}), ...(x.papelzinho ? { papelzinho: true } : {}) };
       }),
       fornecedores: fornecedores.map(novoFornCot),
     };
