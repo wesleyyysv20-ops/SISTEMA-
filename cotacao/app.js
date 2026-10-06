@@ -222,9 +222,9 @@ function docsDe(estado) {
   // as quantidades das lojas ficam num documento próprio (qtds/<id>): digitar uma quantidade
   // envia só ele (poucos KB) para os outros computadores, e não a cotação inteira (centenas de KB)
   for (const c of estado.cotacoes) {
-    const { qtds, ...resto } = c;
+    const { qtds, divisoes, ...resto } = c;
     docs[`cotacoes/${c.id}`] = resto;
-    docs[`qtds/${c.id}`] = { qtds: qtds || {} };
+    docs[`qtds/${c.id}`] = { qtds: qtds || {}, ...(divisoes && Object.keys(divisoes).length ? { divisoes } : {}) };
   }
   return docs;
 }
@@ -333,8 +333,11 @@ function aplicarDoc(caminho, valor, antes = []) {
     // documento apagado com a cotação ainda aqui (versão antiga do sistema em outro computador): mantém
     // as quantidades e o documento é gravado de novo
     if (valor === undefined) { if (!c) delete qtdsSoltas[id]; return; }
-    if (c) c.qtds = structuredClone(valor.qtds || {});
-    else qtdsSoltas[id] = structuredClone(valor.qtds || {}); // chegou antes da cotação
+    if (c) {
+      c.qtds = structuredClone(valor.qtds || {});
+      if (valor.divisoes) c.divisoes = structuredClone(valor.divisoes); else delete c.divisoes;
+    }
+    else qtdsSoltas[id] = { qtds: structuredClone(valor.qtds || {}), divisoes: structuredClone(valor.divisoes || {}) }; // chegou antes da cotação
   } else if (col === 'cotacoes') {
     const i = db.cotacoes.findIndex(c => c.id === id);
     const cot = valor === undefined ? undefined : structuredClone(valor);
@@ -343,8 +346,10 @@ function aplicarDoc(caminho, valor, antes = []) {
       // enquanto esse documento ainda não existe (cotação gravada pela versão antiga)
       const temDocQtds = nuvem.enviado[`qtds/${id}`] != null || id in qtdsSoltas;
       cot.qtds = i >= 0 ? (temDocQtds || !valor.qtds ? db.cotacoes[i].qtds : structuredClone(valor.qtds))
-        : (qtdsSoltas[id] ?? (valor.qtds ? structuredClone(valor.qtds) : {}));
+        : (qtdsSoltas[id]?.qtds ?? (valor.qtds ? structuredClone(valor.qtds) : {}));
       if (!cot.qtds) cot.qtds = {};
+      const dv = i >= 0 ? db.cotacoes[i].divisoes : qtdsSoltas[id]?.divisoes;
+      if (dv && Object.keys(dv).length) cot.divisoes = dv; else delete cot.divisoes;
       delete qtdsSoltas[id];
     }
     if (cot) ajustarKaizen(cot);
@@ -876,6 +881,7 @@ async function carregarNuvem() {
 /** Monta o estado do sistema a partir dos documentos ([caminho, dados] de cada coleção). */
 function estadoDeDocs(sis, prods, forns, cots, qts = []) {
   const qtdsDe = Object.fromEntries(qts.map(([c, d]) => [c.slice('qtds/'.length), d?.qtds || {}]));
+  const divDe = Object.fromEntries(qts.map(([c, d]) => [c.slice('qtds/'.length), d?.divisoes || {}]));
   // mesmo item em dois documentos (lotes antigos + baldes novos): fica um só (os baldes vêm primeiro)
   const semRepetir = lista => { const vistos = new Set(); return lista.filter(x => x && !vistos.has(x.id) && vistos.add(x.id)); };
   const emOrdem = docs => [...docs].sort((a, b) => (a[0].includes('/b-') ? 0 : 1) - (b[0].includes('/b-') ? 0 : 1));
@@ -893,6 +899,7 @@ function estadoDeDocs(sis, prods, forns, cots, qts = []) {
       const cot = structuredClone(d);
       const id = c.slice('cotacoes/'.length);
       if (qtdsDe[id]) cot.qtds = structuredClone(qtdsDe[id]); // senão: as que vieram dentro (versão antiga)
+      if (divDe[id] && Object.keys(divDe[id]).length) cot.divisoes = structuredClone(divDe[id]);
       return cot;
     }),
   });
@@ -2215,7 +2222,15 @@ function compararCalculo(c) {
     const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
     const difConferida = !!c.difConferida?.[i] && c.difConferida[i] === assinaturaPrecos(precos);
     const duvida = duvidas.get(i) || null; // lojas com o item em Dúvidas
-    return { it, i, q, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, campanhas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
+    // compra dividida: parte do item comprada de outra(s) empresa(s), pelo preço delas (c.divisoes[i][fornecedorId][loja])
+    const extras = Object.entries(c.divisoes?.[i] || {}).map(([fid, qs]) => {
+      const fi = c.fornecedores.findIndex(f => f.fornecedorId === fid);
+      if (fi < 0 || precos[fi] == null) return null;
+      const qtdsX = Object.fromEntries(lojas().map(lj => [lj.id, Number(qs?.[lj.id]) || 0]));
+      const qx = Object.values(qtdsX).reduce((a, b) => a + b, 0);
+      return qx > 0 ? { fi, preco: precos[fi], qtds: qtdsX, q: qx } : null;
+    }).filter(Boolean);
+    return { it, i, q, extras, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, campanhas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -2228,12 +2243,13 @@ function compararCalculo(c) {
     }
     return { total, cotados, vencidos, valorVencido };
   });
-  const melhor = linhas.reduce((s, l) => s + (l.preco != null ? l.preco * l.q : 0), 0);
+  const valorExtras = l => l.extras.reduce((t, x) => t + x.preco * x.q, 0);
+  const melhor = linhas.reduce((s, l) => s + (l.preco != null ? l.preco * l.q : 0) + valorExtras(l), 0);
   const menorPossivel = linhas.reduce((s, l) => s + (l.min != null ? l.min * l.q : 0), 0);
   const itensCotados = linhas.filter(l => l.min != null).length;
   const escolhasManuais = linhas.filter(l => l.manual).length;
   const porLojaTotal = Object.fromEntries(lojas().map(lj => [lj.id,
-    linhas.reduce((s, l) => s + (l.preco != null ? l.preco * qtdLoja(c, l.i, lj.id) : 0), 0)]));
+    linhas.reduce((s, l) => s + (l.preco != null ? l.preco * qtdLoja(c, l.i, lj.id) : 0) + l.extras.reduce((t, x) => t + x.preco * (x.qtds[lj.id] || 0), 0), 0)]));
   return { linhas, totais, melhor, menorPossivel, itensCotados, escolhasManuais, porLoja, porLojaTotal };
 }
 
@@ -2776,17 +2792,125 @@ function qtdComprada(c, l, porLoja = temQtdLojas(c)) {
   return porLoja ? lojas().reduce((s, lj) => s + (l.duvida.has(lj.id) ? 0 : qtdLoja(c, l.i, lj.id)), 0) : 0;
 }
 
+/** Etiquetas da compra dividida (comparativo e janela flutuante): empresa, quantidade por loja e valor. */
+function htmlDivisoes(c, l, { pip = false } = {}) {
+  const outros = l.precos.some((p, j) => p != null && j !== l.vencedor);
+  if (l.vencedor < 0 || !outros) return '';
+  const LJ = lojas();
+  const chips = (l.extras || []).map(x => {
+    const porLoja = LJ.filter(lj => x.qtds[lj.id]).map(lj => `${siglaLoja(lj)} ${fmtNum(x.qtds[lj.id])}`).join(' · ');
+    return `<button type="button" class="div-chip" ${pip ? `data-pip="dividir" data-f="${x.fi}"` : `data-act="dividirCompra" data-i="${l.i}" data-f="${x.fi}"`} title="Parte comprada de ${esc(c.fornecedores[x.fi].nome)} por ${fmtMoeda(x.preco)}/un. Clique para mudar ou tirar.">➗ ${esc(c.fornecedores[x.fi].nome)} · ${fmtNum(x.q)} un.${LJ.length > 1 && porLoja ? ` (${porLoja})` : ''} · ${fmtMoeda(x.preco * x.q)}</button>`;
+  }).join('');
+  const botao = `<button type="button" class="link small div-add" ${pip ? 'data-pip="dividir"' : `data-act="dividirCompra" data-i="${l.i}"`} title="Comprar uma parte deste item em outra empresa (pelo preço dela)">➗ dividir compra</button>`;
+  return `<span class="divisoes">${chips}${botao}</span>`;
+}
+
+/**
+ * Janela da compra dividida: de qual empresa (entre as que mandaram preço) e quanto de cada loja.
+ * Devolve { fornecedorId, qtds } (qtds vazias = tirar a divisão) ou null se cancelar.
+ */
+function dialogoDivisao(c, l, fiInicial = null, doc = document) {
+  const LJ = lojas();
+  const opcoes = l.precos.map((p, j) => ({ j, p })).filter(x => x.p != null && x.j !== l.vencedor).sort((a, b) => a.p - b.p);
+  if (!opcoes.length) return Promise.resolve(null);
+  const ini = opcoes.find(o => o.j === fiInicial) ? fiInicial : (l.extras?.[0]?.fi ?? opcoes[0].j);
+  return new Promise(resolve => {
+    const fundo = doc.createElement('div');
+    fundo.className = 'dlg-fundo';
+    const venc = c.fornecedores[l.vencedor];
+    fundo.innerHTML = `<form class="dlg dlg-dividir" role="dialog" aria-modal="true" aria-label="Dividir a compra">
+      <h3 class="dlg-tit">➗ Dividir a compra</h3>
+      <p class="small"><b>${esc(l.it.codigo || '')}</b> · ${esc(l.it.descricao || '')}<br>
+        <span class="muted">Ganhou: <b>${esc(venc.nome)}</b> ${fmtMoeda(l.preco)} — a quantidade dele continua nos campos de cada loja.</span></p>
+      <label>Comprar também de
+        <select name="forn">${opcoes.map(o => `<option value="${o.j}" ${o.j === ini ? 'selected' : ''}>${esc(c.fornecedores[o.j].nome)} — ${fmtMoeda(o.p)}${c.fornecedores[o.j].respostas?.[l.i]?.marca ? ' · ' + esc(c.fornecedores[o.j].respostas[l.i].marca) : ''}</option>`).join('')}</select></label>
+      <div class="div-qtds">${LJ.map(lj => `<label>${esc(lj.nome)}<input name="q_${esc(lj.id)}" inputmode="numeric" autocomplete="off" placeholder="0"></label>`).join('')}</div>
+      <p class="small muted div-total"></p>
+      <div class="actions"><button type="button" data-r="0">Cancelar</button><button type="button" data-r="tirar" class="danger">Tirar a divisão</button><button class="primary">Salvar</button></div>
+    </form>`;
+    const form = fundo.querySelector('form');
+    const fid = () => c.fornecedores[+form.forn.value].fornecedorId;
+    const preencher = () => {
+      const atual = c.divisoes?.[l.i]?.[fid()] || {};
+      for (const lj of LJ) form[`q_${lj.id}`].value = atual[lj.id] || '';
+      form.querySelector('[data-r=tirar]').hidden = !Object.values(atual).some(v => v > 0);
+      total();
+    };
+    const total = () => {
+      const p = l.precos[+form.forn.value];
+      const q = LJ.reduce((t, lj) => t + (parseInt(form[`q_${lj.id}`].value, 10) || 0), 0);
+      form.querySelector('.div-total').textContent = q ? `${fmtNum(q)} un. × ${fmtMoeda(p)} = ${fmtMoeda(p * q)}` : 'Digite a quantidade de cada loja para esta empresa.';
+    };
+    const fechar = v => { fundo.remove(); doc.removeEventListener('keydown', tecla, true); resolve(v); };
+    const tecla = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(null); } else e.stopImmediatePropagation(); };
+    form.forn.addEventListener('change', preencher);
+    form.addEventListener('input', total);
+    fundo.addEventListener('click', e => {
+      e.stopPropagation();
+      const b = e.target.closest('button[data-r]');
+      if (!b) return;
+      if (b.dataset.r === '0') fechar(null);
+      else fechar({ fornecedorId: fid(), qtds: {} });
+    });
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const qtds = {};
+      for (const lj of LJ) { const v = parseInt(form[`q_${lj.id}`].value, 10); if (v > 0) qtds[lj.id] = v; }
+      fechar({ fornecedorId: fid(), qtds });
+    });
+    doc.addEventListener('keydown', tecla, true);
+    doc.body.appendChild(fundo);
+    preencher();
+    form[`q_${LJ[0].id}`].focus();
+  });
+}
+
+/** Abre a janela da compra dividida do item i e grava (comparativo ou janela flutuante). */
+async function dividirCompraItem(c, i, fi = null, doc = document) {
+  if (cotTravada(c)) { avisarTravada(); return; }
+  const l = comparar(c).linhas[i];
+  if (!l || l.vencedor < 0) return;
+  const r = await dialogoDivisao(c, l, fi, doc);
+  if (!r) return;
+  c.divisoes = { ...(c.divisoes || {}) };
+  const item = { ...(c.divisoes[i] || {}) };
+  if (Object.keys(r.qtds).length) item[r.fornecedorId] = r.qtds; else delete item[r.fornecedorId];
+  if (Object.keys(item).length) c.divisoes[i] = item; else delete c.divisoes[i];
+  salvar();
+  render();
+  if (pip.win && !pip.win.closed) desenharPip(true);
+  const nome = c.fornecedores.find(f => f.fornecedorId === r.fornecedorId)?.nome || '';
+  toast(Object.keys(r.qtds).length ? `Compra dividida: parte de ${l.it.codigo || 'item'} vai no pedido de ${nome}.` : `Divisão com ${nome} retirada.`);
+}
+
+/** Partes do item compradas de outras empresas (compra dividida), sem as lojas em Dúvidas. */
+function extrasComprados(l) {
+  return (l.extras || []).map(x => {
+    const qtds = Object.fromEntries(Object.entries(x.qtds).map(([k, v]) => [k, l.duvida?.has(k) ? 0 : v]));
+    return { ...x, qtds, q: Object.values(qtds).reduce((a, b) => a + b, 0) };
+  }).filter(x => x.q > 0);
+}
+
 function pedidosPorFornecedor(c, lojaId = null) {
   const { linhas, porLoja } = comparar(c);
   const LJ = lojas();
   return c.fornecedores.map((f, fi) => {
-    const itens = linhas.filter(l => l.vencedor === fi).map(l => {
+    const itens = linhas.filter(l => l.vencedor === fi || l.extras.some(x => x.fi === fi)).map(l => {
       // item em Dúvidas: fica fora do pedido da loja da dúvida até sair da fila
-      const qtds = Object.fromEntries(LJ.map(lj => [lj.id, l.duvida?.has(lj.id) ? 0 : qtdLoja(c, l.i, lj.id)]));
-      const soma = !l.duvida ? l.q : porLoja ? LJ.reduce((s, lj) => s + qtds[lj.id], 0) : 0;
+      const ganhou = l.vencedor === fi;
+      const qtds = Object.fromEntries(LJ.map(lj => [lj.id, !ganhou || l.duvida?.has(lj.id) ? 0 : qtdLoja(c, l.i, lj.id)]));
+      let soma = !ganhou ? 0 : !l.duvida ? l.q : porLoja ? LJ.reduce((s, lj) => s + qtds[lj.id], 0) : 0;
+      // compra dividida: a parte desta empresa entra no pedido dela (pelo preço dela)
+      const ex = extrasComprados(l).find(x => x.fi === fi);
+      if (ex) {
+        if (ganhou && !porLoja) soma = 0; // com divisão, valem as quantidades digitadas
+        for (const lj of LJ) qtds[lj.id] += ex.qtds[lj.id] || 0;
+        soma += ex.q;
+      }
       return {
-        it: l.it, i: l.i, preco: l.preco, marca: marcaPedido(l.it.marca, f.respostas?.[l.i]?.marca, l.marcas[fi]),
-        qtds, qtd: lojaId ? qtds[lojaId] : soma,
+        it: l.it, i: l.i, preco: l.precos[fi], marca: marcaPedido(l.it.marca, f.respostas?.[l.i]?.marca, l.marcas[fi]),
+        qtds, qtd: lojaId ? qtds[lojaId] : soma, dividido: !!ex,
       };
     }).filter(x => x.qtd > 0);
     return { fi, f, itens, porLoja, total: itens.reduce((s, x) => s + x.preco * x.qtd, 0) };
@@ -5285,8 +5409,10 @@ function celTotal(l) {
   const a = ui.alertaEstoque;
   const alerta = a && a.it === l.it && l.estoque != null
     ? `<div class="alerta-estoque" role="alert">⚠ <b>Estoque insuficiente</b>: você digitou <b>${fmtNum(a.digitado)}</b>${a.nomeLoja ? ` para ${esc(a.nomeLoja)}` : ''}, mas ${esc(a.forn)} informou só <b>${fmtNum(a.estoque)}</b> em estoque${a.outras ? ` (${fmtNum(a.outras)} já na outra loja)` : ''}. Ficou <b>${fmtNum(a.max)}</b>.</div>` : '';
-  if (!l.q) return (l.naoComprar ? '<span class="nao-comprar" title="0 nas duas lojas: não vai em nenhum pedido">não comprar</span>' : '<span class="muted small">sem qtd.</span>') + est + alerta;
-  return `${fmtMoeda(l.preco * l.q)}${l.q !== 1 ? `<br><span class="small muted">${fmtNum(l.q)} un.</span>` : ''}${acima}${est}${alerta}`;
+  if (!l.q && !(l.extras || []).length) return (l.naoComprar ? '<span class="nao-comprar" title="0 nas duas lojas: não vai em nenhum pedido">não comprar</span>' : '<span class="muted small">sem qtd.</span>') + est + alerta;
+  const vx = (l.extras || []).reduce((t, x) => t + x.preco * x.q, 0);
+  const qx = (l.extras || []).reduce((t, x) => t + x.q, 0);
+  return `${fmtMoeda(l.preco * l.q + vx)}${l.q + qx !== 1 ? `<br><span class="small muted">${fmtNum(l.q + qx)} un.${qx ? ` (${fmtNum(qx)} dividida${qx > 1 ? 's' : ''})` : ''}</span>` : ''}${acima}${est}${alerta}`;
 }
 
 /** Posições dos fornecedores da cotação em ordem alfabética (só a exibição muda; os dados continuam no lugar). */
@@ -5864,7 +5990,7 @@ function numeroRepetidoCot(c) {
 function cotTravada(c) {
   return !!c && c.status === 'finalizada' && !ui.destravadas?.has(c.id);
 }
-const ACOES_TRAVADAS = new Set(['escolherVencedor', 'duvidaItem', 'marcaResposta', 'removerPreco', 'limparEscolhas', 'conferirPreco', 'conferirDif']);
+const ACOES_TRAVADAS = new Set(['dividirCompra', 'escolherVencedor', 'duvidaItem', 'marcaResposta', 'removerPreco', 'limparEscolhas', 'conferirPreco', 'conferirDif']);
 function avisarTravada() {
   toast(ehAdmin() ? '🔒 Cotação finalizada: só para consulta. Para mudar algo, clique em "Editar mesmo assim" no comparativo.'
     : '🔒 Cotação finalizada: só para consulta. Para mudar algo, peça a um administrador.');
@@ -6230,7 +6356,7 @@ function renderCotacao(id) {
             const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
             const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
               ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${fmtMoeda(l.precos[alvoS])} · ${esc(c.fornecedores[alvoS].nome)}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
-            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}${campMini}</td>`;
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}${campMini}${htmlDivisoes(c, l)}</td>`;
           })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
@@ -6640,7 +6766,7 @@ function dadosRelatorio() {
       if (!q) continue; // sem quantidade ou todo em Dúvidas: não foi comprado
       const validos = l.precos.filter(p => p != null);
       r.itens++;
-      r.total += l.preco * q;
+      r.total += l.preco * q + extrasComprados(l).reduce((t, x) => t + x.preco * x.q, 0);
       if (validos.length > 1) {
         // economia só faz sentido onde houve concorrência (2 ou mais preços)
         r.comparaveis++;
@@ -6656,7 +6782,8 @@ function dadosRelatorio() {
       if (f.respondidoEm || comp.totais[fi].cotados) x.respondeu++;
       x.cotados += comp.totais[fi].cotados;
       x.ganhos += comp.totais[fi].vencidos;
-      x.valor += comp.linhas.reduce((t, l) => t + (l.vencedor === fi && l.preco != null ? l.preco * qtdComprada(c, l, comp.porLoja) : 0), 0);
+      x.valor += comp.linhas.reduce((t, l) => t + (l.vencedor === fi && l.preco != null ? l.preco * qtdComprada(c, l, comp.porLoja) : 0)
+        + extrasComprados(l).filter(e => e.fi === fi).reduce((a, e) => a + e.preco * e.q, 0), 0);
       for (const l of comp.linhas) if (l.vencedor === fi && !l.manual && !l.preferencia && l.difSegundo != null) x.difs.push(l.difSegundo);
     });
     porCot.push(r);
@@ -6942,6 +7069,9 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
         if (l.vencedor === j) {
           h.ganhos++;
           h.valor += p * qtdComprada(c, l, comp.porLoja);
+        }
+        for (const e of extrasComprados(l)) if (e.fi === j) h.valor += e.preco * e.q;
+        if (l.vencedor === j) {
           if (l.minIdx === j) r.ganhosPreco++;
           if (m) { const k = String(m).trim().toUpperCase(); r.marcasGanhas[k] = (r.marcasGanhas[k] || 0) + 1; }
         }
@@ -8185,6 +8315,7 @@ const acoes = {
   },
 
   menuMais: () => abrirMenuMais(),
+  dividirCompra: el => dividirCompraItem(cotAtual(), +el.dataset.i, el.dataset.f != null ? +el.dataset.f : null),
   corrigirDescCadastro: el => {
     const r = rascunho();
     const x = r.itens[+el.dataset.i];
@@ -10022,6 +10153,7 @@ async function abrirPip() {
     else if (acao === 'copiar') copiarCodigoPip(b);
     else if (acao === 'duvida') duvidaPip();
     else if (acao === 'escolher') escolherPip(+b.dataset.f);
+    else if (acao === 'dividir') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) dividirCompraItem(cot, pip.i, b.dataset.f != null ? +b.dataset.f : null, pip.win.document); }
     else if (acao === 'exportar') exportarPip(+b.dataset.f);
     else if (acao === 'ir') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) irParaItemPip(cot, +b.dataset.i); }
   });
@@ -10103,7 +10235,8 @@ function teclaPip(e, d) {
 /** Itens da lista ainda sem quantidade em nenhuma loja (0 conta como informado: "não comprar"). */
 function pendentesPip(c, lista) {
   const LJ = lojas();
-  return lista.filter(i => !LJ.some(lj => c.qtds?.[i]?.[lj.id] != null));
+  // compra dividida também conta como quantidade informada
+  return lista.filter(i => !LJ.some(lj => c.qtds?.[i]?.[lj.id] != null) && !Object.keys(c.divisoes?.[i] || {}).length);
 }
 
 /** Situação do item na janela flutuante (cor do cartão): dúvida, quantidade informada, marca diferente ou falta. */
@@ -10414,6 +10547,7 @@ function desenharPip(focar) {
             <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span><span class="pip-forn">🏆 ${esc(f.nome)}</span><button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja) · tecla D">❓</button></div>
             ${marcasPip(l, marcaVenc)}
             ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
+            ${htmlDivisoes(c, l, { pip: true })}
           </div>${campPip}${seg}`;
         })() : `<div class="pip-ganhador vazio">${l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>`}
       </div>

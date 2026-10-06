@@ -2384,3 +2384,12 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 }
 .af-erradas-acoes { margin: 6px 0; }
 .af-mini.af-rolar { max-height: 240px; overflow-y: auto; padding-right: 6px; }
+
+/* compra dividida: parte do item em outra empresa */
+.divisoes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-top: 4px; }
+.div-chip { min-height: 0; padding: 1px 8px; border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, var(--primary-2) 35%, var(--line)); background: var(--blue-bg); color: var(--primary-2); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; box-shadow: none; }
+.div-add { font-size: var(--fs-xs); }
+.pip-ganhador .divisoes { justify-content: flex-start; }
+.dlg-dividir label { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-sm); margin-top: 8px; }
+.div-qtds { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.div-total { margin: 8px 0 0; font-weight: 700; }
