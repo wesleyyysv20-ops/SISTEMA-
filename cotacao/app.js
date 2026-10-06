@@ -483,7 +483,9 @@ async function puxarNuvem(soAvisos = false) {
     let mudaram, sumiram, lidos;
     if (rec) {
       // o aviso em tempo real já trouxe o documento: não precisa baixar de novo
-      mudaram = Object.keys(rec).filter(c => rec[c].existe && !mesmaVersao(rec[c].versao, nuvem.versao[c]));
+      // só vale aviso MAIS NOVO que a versão que já temos: os avisos do tempo real podem chegar atrasados e fora
+      // de ordem (o eco de uma gravação nossa antiga não pode desfazer as quantidades digitadas depois)
+      mudaram = Object.keys(rec).filter(c => rec[c].existe && versaoMaisNova(rec[c].versao, nuvem.versao[c]));
       sumiram = Object.keys(rec).filter(c => !rec[c].existe && c in nuvem.versao);
       lidos = rec;
       if (!mudaram.length && !sumiram.length) return;
@@ -736,6 +738,13 @@ function mostrarVersaoNova() {
   faixa.setAttribute('role', 'status');
   faixa.innerHTML = '🔄 Saiu uma versão nova do sistema. <button type="button" class="sm primary" data-act="atualizarSistema">Atualizar agora</button>';
   document.body.appendChild(faixa);
+  // computador parado com a versão antiga aberta: atualiza sozinho (versões diferentes juntas podem
+  // gravar os dados de jeitos diferentes). Só quando ninguém está mexendo e não há nada por salvar.
+  setInterval(() => {
+    const parado = Date.now() - Math.max(ultimaTecla, ultimoClique) > 3 * 60000;
+    const livre = !nuvem.timer && !nuvem.gravando && !document.querySelector('.dlg-fundo') && !(pip.win && !pip.win.closed) && !ui.digitando && !ui.cfgSujo;
+    if (parado && livre) atualizarSistema();
+  }, 30000);
 }
 async function atualizarSistema() {
   // antes de recarregar, termina de salvar o que estiver pendente
@@ -820,6 +829,8 @@ function normVersao(v) {
   return `${m[1]}T${m[2]}.${(m[3] || '').padEnd(6, '0').slice(0, 6)}${off}`;
 }
 const mesmaVersao = (a, b) => a === b || (a != null && b != null && normVersao(a) === normVersao(b));
+/** A versão `a` (de um aviso) é mais nova que a `b` (a que este computador já tem)? */
+const versaoMaisNova = (a, b) => b == null || (a != null && normVersao(a) > normVersao(b));
 
 /** Abre com a cópia deste computador: baixa só as versões (leve) e os documentos que mudaram. */
 async function carregarComCache() {
