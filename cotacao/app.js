@@ -28,7 +28,7 @@ const DEFAULT_DB = {
     duvidasCabecalho: 'Segue a relação dos itens em dúvida para avaliação:',
     backupDias: 7, // lembrar do backup a cada N dias (0 = não lembrar)
     arquivarDias: 60, // sugerir arquivar finalizadas com mais de N dias
-    assuntoPedido: 'Pedido de compra - cotação nº {numero} - {loja}',
+    assuntoPedido: 'Pedido de compra - cotação nº {numero} - {loja} - {itensPedido} itens / {unidades} un. - {totalPedido}',
     corpoPedido:
       'Olá, {fornecedor}!\n\n' +
       'Segue em anexo o nosso pedido de compra da cotação nº {numero}: {itensPedido} item(ns), total de {totalPedido}.\n\n' +
@@ -2217,20 +2217,22 @@ function compararCalculo(c) {
     // segundo colocado (de outro fornecedor) e a diferença em % para o melhor
     const [seg, segIdx] = ordem.length > 1 ? ordem[1] : [null, -1];
     const difSegundo = seg != null && min > 0 ? seg / min - 1 : null;
-    const q = qtdItem(c, i, porLoja);
+    // já comprado por fora (ex.: o chefe comprou e avisou no grupo): sai dos pedidos e dos totais
+    const comprado = !!c.comprados?.[i];
+    const q = comprado ? 0 : qtdItem(c, i, porLoja);
     // estoque informado pelo vencedor (Kaizen: "MARCA/estoque"): limite de quantidade
     const estoque = vencedor >= 0 ? (c.fornecedores[vencedor].respostas?.[i]?.estoque ?? null) : null;
     const difConferida = !!c.difConferida?.[i] && c.difConferida[i] === assinaturaPrecos(precos);
     const duvida = duvidas.get(i) || null; // lojas com o item em Dúvidas
     // compra dividida: parte do item comprada de outra(s) empresa(s), pelo preço delas (c.divisoes[i][fornecedorId][loja])
-    const extras = Object.entries(c.divisoes?.[i] || {}).map(([fid, qs]) => {
+    const extras = comprado ? [] : Object.entries(c.divisoes?.[i] || {}).map(([fid, qs]) => {
       const fi = c.fornecedores.findIndex(f => f.fornecedorId === fid);
       if (fi < 0 || precos[fi] == null) return null;
       const qtdsX = Object.fromEntries(lojas().map(lj => [lj.id, Number(qs?.[lj.id]) || 0]));
       const qx = Object.values(qtdsX).reduce((a, b) => a + b, 0);
       return qx > 0 ? { fi, preco: precos[fi], qtds: qtdsX, q: qx } : null;
     }).filter(Boolean);
-    return { it, i, q, extras, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, campanhas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
+    return { it, i, q, extras, comprado, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, campanhas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -2799,7 +2801,7 @@ function htmlDivisoes(c, l, { pip = false } = {}) {
   const LJ = lojas();
   const chips = (l.extras || []).map(x => {
     const porLoja = LJ.filter(lj => x.qtds[lj.id]).map(lj => `${siglaLoja(lj)} ${fmtNum(x.qtds[lj.id])}`).join(' · ');
-    return `<button type="button" class="div-chip" ${pip ? `data-pip="dividir" data-f="${x.fi}"` : `data-act="dividirCompra" data-i="${l.i}" data-f="${x.fi}"`} title="Parte comprada de ${esc(c.fornecedores[x.fi].nome)} por ${fmtMoeda(x.preco)}/un. Clique para mudar ou tirar.">➗ ${esc(c.fornecedores[x.fi].nome)} · ${fmtNum(x.q)} un.${LJ.length > 1 && porLoja ? ` (${porLoja})` : ''} · ${fmtMoeda(x.preco * x.q)}</button>`;
+    return `<button type="button" class="div-chip${filtroVencedor(c) === c.fornecedores[x.fi].fornecedorId ? ' div-destaque' : ''}" data-forn="${esc(c.fornecedores[x.fi].fornecedorId)}" ${pip ? `data-pip="dividir" data-f="${x.fi}"` : `data-act="dividirCompra" data-i="${l.i}" data-f="${x.fi}"`} title="Parte comprada de ${esc(c.fornecedores[x.fi].nome)} por ${fmtMoeda(x.preco)}/un. Clique para mudar ou tirar.">➗ ${esc(c.fornecedores[x.fi].nome)} · ${fmtNum(x.q)} un.${LJ.length > 1 && porLoja ? ` (${porLoja})` : ''} · ${fmtMoeda(x.preco * x.q)}</button>`;
   }).join('');
   const botao = `<button type="button" class="link small div-add" ${pip ? 'data-pip="dividir"' : `data-act="dividirCompra" data-i="${l.i}"`} title="Comprar uma parte deste item em outra empresa (pelo preço dela)">➗ dividir compra</button>`;
   return `<span class="divisoes">${chips}${botao}</span>`;
@@ -2864,6 +2866,20 @@ function dialogoDivisao(c, l, fiInicial = null, doc = document) {
     preencher();
     form[`q_${LJ[0].id}`].focus();
   });
+}
+
+/** Marca (ou desmarca) o item como já comprado por fora: sai de todos os pedidos e totais. */
+function alternarComprado(c, i) {
+  if (!c) return;
+  if (cotTravada(c)) { avisarTravada(); return; }
+  c.comprados = { ...(c.comprados || {}) };
+  const vira = !c.comprados[i];
+  if (vira) c.comprados[i] = { em: new Date().toISOString(), por: nuvem.usuario || '' }; else delete c.comprados[i];
+  if (!Object.keys(c.comprados).length) delete c.comprados;
+  salvar();
+  render();
+  if (pip.win && !pip.win.closed) desenharPip(false);
+  toast(vira ? `${c.itens[i].codigo || 'Item'} marcado como já comprado: saiu dos pedidos.` : `${c.itens[i].codigo || 'Item'} volta a ser comprado pela cotação.`);
 }
 
 /** Abre a janela da compra dividida do item i e grava (comparativo ou janela flutuante). */
@@ -4481,7 +4497,7 @@ function dadosEmail(c, f, tipo = 'cotacao', formato = 'lojas') {
   const cfg = db.config;
   const D = DEFAULT_DB.config;
   const [tplA, tplC] = tipo === 'cobranca' ? [cfg.assuntoCobranca || D.assuntoCobranca, cfg.corpoCobranca || D.corpoCobranca]
-    : tipo === 'pedido' ? [cfg.assuntoPedido || D.assuntoPedido, cfg.corpoPedido || D.corpoPedido]
+    : tipo === 'pedido' ? [(!cfg.assuntoPedido || cfg.assuntoPedido === 'Pedido de compra - cotação nº {numero} - {loja}') ? D.assuntoPedido : cfg.assuntoPedido, cfg.corpoPedido || D.corpoPedido]
       : [cfg.assuntoEmail, cfg.corpoEmail];
   const extra = tipo === 'pedido' && f ? varsPedido(c, f.fornecedorId, formato) : {};
   const assunto = preencherModelo(tplA, c, f, extra);
@@ -4793,7 +4809,7 @@ const codigoSoNaCotacao = p => /\bKIT (CORREIA|TENSOR)\b/.test(normMarca(p && p.
 /** Itens da cotação sempre em ordem alfabética (A-Z) pela descrição. */
 /** Ordem da lista da nova cotação: 'desc' (descrição A→Z, a da planilha), 'obs' (OBS do DataCar) ou 'cod' (código). */
 function ordenarItensRascunho(r, prod, ordem = 'desc') {
-  const desc = (a, b) => COLLATOR.compare(prod[a.produtoId]?.descricao || '', prod[b.produtoId]?.descricao || '');
+  const desc = (a, b) => COLLATOR.compare(a.descricaoArquivo || prod[a.produtoId]?.descricao || '', b.descricaoArquivo || prod[b.produtoId]?.descricao || '');
   const cod = (a, b) => COLLATOR.compare(a.codigoArquivo || prod[a.produtoId]?.codigo || '', b.codigoArquivo || prod[b.produtoId]?.codigo || '');
   const obs = x => tirarXX((x.obsArquivo || [])[0] || '') || '\uffff'; // sem OBS vai para o fim
   r.itens.sort(ordem === 'cod' ? (a, b) => cod(a, b) || desc(a, b)
@@ -5253,25 +5269,29 @@ async function gerarPedidoFornecedor(c, fornecedorId, formato = 'lojas') {
   return wb.worksheets.length ? { wb, nome: nomePedido(c, f) } : null;
 }
 
-/** Campos do e-mail do pedido: {totalPedido} {itensPedido} {entrega} {pagamento}. */
+/** Campos do e-mail do pedido: {totalPedido} {itensPedido} {unidades} {entrega} {pagamento}. */
 function varsPedido(c, fornecedorId, formato = 'lojas') {
   const ped = pedidosPorFornecedor(c).find(p => p.f.fornecedorId === fornecedorId);
-  if (!ped) return { totalPedido: fmtMoeda(0), itensPedido: '0', entrega: '', pagamento: '' };
+  if (!ped) return { totalPedido: fmtMoeda(0), itensPedido: '0', unidades: '0', entrega: '', pagamento: '' };
+  const unidades = ped.itens.reduce((t, x) => t + x.qtd, 0);
   let entrega = '';
-  if (ped.porLoja) {
+  if (ped.porLoja && formato !== 'lojas') {
+    // lojas juntas numa planilha só: o total é um só (sem repartir o valor por loja)
+    entrega = `Pedido com as lojas juntas: ${ped.itens.length} item(ns), ${fmtNum(unidades)} unidade(s), total de ${fmtMoeda(ped.total)}.\nA quantidade de cada loja está na planilha.`;
+  } else if (ped.porLoja) {
     const linhas = lojas().map(lj => {
       const itens = ped.itens.filter(x => x.qtds[lj.id] > 0);
       if (!itens.length) return '';
       const total = itens.reduce((s, x) => s + x.preco * x.qtds[lj.id], 0);
-      return `- ${lj.nome}${lj.endereco ? ' (' + lj.endereco + ')' : ''}: ${itens.length} item(ns), ${fmtMoeda(total)}`;
+      const un = itens.reduce((s, x) => s + x.qtds[lj.id], 0);
+      return `- ${lj.nome}${lj.endereco ? ' (' + lj.endereco + ')' : ''}: ${itens.length} item(ns), ${fmtNum(un)} un., ${fmtMoeda(total)}`;
     }).filter(Boolean);
-    entrega = (formato === 'juntas'
-      ? 'Entregar nas lojas (a quantidade de cada loja está na planilha):\n'
-      : 'O pedido está separado por loja, uma aba para cada:\n') + linhas.join('\n');
+    entrega = 'O pedido está separado por loja, uma aba para cada:\n' + linhas.join('\n');
   } else if (db.config.endereco) entrega = `Entregar em: ${db.config.endereco}`;
   return {
     totalPedido: fmtMoeda(ped.total),
     itensPedido: String(ped.itens.length),
+    unidades: fmtNum(unidades),
     entrega,
     pagamento: ped.f.cond?.pagamento || '',
   };
@@ -5409,6 +5429,7 @@ function celTotal(l) {
   const a = ui.alertaEstoque;
   const alerta = a && a.it === l.it && l.estoque != null
     ? `<div class="alerta-estoque" role="alert">⚠ <b>Estoque insuficiente</b>: você digitou <b>${fmtNum(a.digitado)}</b>${a.nomeLoja ? ` para ${esc(a.nomeLoja)}` : ''}, mas ${esc(a.forn)} informou só <b>${fmtNum(a.estoque)}</b> em estoque${a.outras ? ` (${fmtNum(a.outras)} já na outra loja)` : ''}. Ficou <b>${fmtNum(a.max)}</b>.</div>` : '';
+  if (l.comprado) return '<span class="ja-comprado" title="Comprado por fora: não vai em nenhum pedido">✓ já comprado</span>';
   if (!l.q && !(l.extras || []).length) return (l.naoComprar ? '<span class="nao-comprar" title="0 nas duas lojas: não vai em nenhum pedido">não comprar</span>' : '<span class="muted small">sem qtd.</span>') + est + alerta;
   const vx = (l.extras || []).reduce((t, x) => t + x.preco * x.q, 0);
   const qx = (l.extras || []).reduce((t, x) => t + x.q, 0);
@@ -5443,7 +5464,36 @@ function filtroVencedor(c) {
 function linhaNoFiltroVenc(c, l, valor = filtroVencedor(c)) {
   if (!valor) return true;
   if (valor === '__sem') return l.vencedor < 0;
-  return l.vencedor >= 0 && c.fornecedores[l.vencedor].fornecedorId === valor;
+  // a empresa que recebeu parte do item (compra dividida) também vê o item
+  return (l.vencedor >= 0 && c.fornecedores[l.vencedor].fornecedorId === valor)
+    || (l.extras || []).some(x => c.fornecedores[x.fi]?.fornecedorId === valor);
+}
+/** Filtro por marca do comparativo ('' = todas): itens em que algum fornecedor mandou preço nessa marca. */
+function filtroMarcaComp(c) {
+  return ui.filtroMarca?.cotId === c.id ? ui.filtroMarca.marca : '';
+}
+function linhaNaMarca(c, l, alvo = filtroMarcaComp(c)) {
+  if (!alvo) return true;
+  return c.fornecedores.some((f, j) => l.precos[j] != null && normMarca(f.respostas?.[l.i]?.marca) === alvo);
+}
+function seletorMarca(c, comp) {
+  const cont = new Map();
+  for (const l of comp.linhas) {
+    const vistas = new Set();
+    c.fornecedores.forEach((f, j) => {
+      const m = f.respostas?.[l.i]?.marca;
+      const k = normMarca(m);
+      if (!k || l.precos[j] == null || vistas.has(k)) return;
+      vistas.add(k);
+      const x = cont.get(k) || { nome: String(m).trim().toUpperCase(), n: 0 };
+      x.n++;
+      cont.set(k, x);
+    });
+  }
+  if (!cont.size) return '';
+  const atual = filtroMarcaComp(c);
+  return `<label class="filtro-venc filtro-marca" title="Mostrar só os itens em que algum fornecedor mandou preço desta marca"><span class="filtro-venc-rot">Marca:</span>
+    <select id="filtroMarca"><option value="">Todas</option>${[...cont].sort((a, b) => b[1].n - a[1].n || COLLATOR.compare(a[1].nome, b[1].nome)).map(([k, x]) => `<option value="${esc(k)}" ${atual === k ? 'selected' : ''}>${esc(x.nome)} (${x.n})</option>`).join('')}</select></label>`;
 }
 /** Filtro pelas etiquetas de aviso ('aguardando', 'dif', 'marca', 'regra', 'demora', 'alertas'); '' = nenhum. */
 function filtroAviso(c) {
@@ -5493,11 +5543,14 @@ function aplicarFiltrosComp(c) {
   let vis = 0;
   for (const l of comp.linhas) {
     const tr = document.querySelector(`[data-comp-linha="${l.i}"]`);
-    if (tr) tr.hidden = !(linhaNoFiltroVenc(c, l) && (!fa || tr.dataset.avisos.split(' ').includes(fa)) && itemNaBuscaComp(l.it, q));
+    if (tr) tr.hidden = !(linhaNoFiltroVenc(c, l) && linhaNaMarca(c, l) && (!fa || tr.dataset.avisos.split(' ').includes(fa)) && itemNaBuscaComp(l.it, q));
     if (tr && !tr.hidden) vis++;
   }
   const cont = document.getElementById('buscaCompCont');
   if (cont) cont.textContent = q ? (vis ? `${vis} item(ns)` : 'nenhum item') : '';
+  // a empresa filtrada em "Itens de": a parte dividida dela em destaque
+  const fv = filtroVencedor(c);
+  document.querySelectorAll('.tab-comp .div-chip').forEach(b => b.classList.toggle('div-destaque', !!fv && b.dataset.forn === fv));
   const barra = $('.avisos-comp');
   if (barra) {
     barra.dataset.filtro = fa;
@@ -5516,7 +5569,10 @@ function aplicarFiltrosComp(c) {
 
 function opcoesVencedor(c, comp, atual = filtroVencedor(c)) {
   const cont = {};
-  for (const l of comp.linhas) if (l.vencedor >= 0) cont[c.fornecedores[l.vencedor].fornecedorId] = (cont[c.fornecedores[l.vencedor].fornecedorId] || 0) + 1;
+  for (const l of comp.linhas) {
+    const ids = new Set([...(l.vencedor >= 0 ? [c.fornecedores[l.vencedor].fornecedorId] : []), ...(l.extras || []).map(x => c.fornecedores[x.fi]?.fornecedorId)]);
+    for (const id of ids) if (id) cont[id] = (cont[id] || 0) + 1;
+  }
   const sem = comp.linhas.filter(l => l.vencedor < 0).length;
   const LJ = lojas();
   const falta = {};
@@ -5550,7 +5606,7 @@ function seletorVencedor(c, comp) {
   return `<label class="filtro-venc" title="Mostrar só os itens que um fornecedor ganhou"><span class="filtro-venc-rot">Itens de:</span>
     <select id="filtroVencedor" data-cot="${esc(c.id)}">
       ${opcoesVencedor(c, comp, atual)}
-    </select></label>${botaoPedidoFiltro(c, atual)}<button type="button" class="sm btn-pip" data-act="abrirPip" title="Abre uma janela pequena com o item e as quantidades das lojas, para usar ao lado do DataCar (no Chrome/Edge ela fica sempre por cima). Enter vai para o próximo item.">🗗 Janela flutuante</button>`;
+    </select></label>${seletorMarca(c, comp)}${botaoPedidoFiltro(c, atual)}<button type="button" class="sm btn-pip" data-act="abrirPip" title="Abre uma janela pequena com o item e as quantidades das lojas, para usar ao lado do DataCar (no Chrome/Edge ela fica sempre por cima). Enter vai para o próximo item.">🗗 Janela flutuante</button>`;
 }
 
 /**
@@ -6020,7 +6076,7 @@ function numeroRepetidoCot(c) {
 function cotTravada(c) {
   return !!c && c.status === 'finalizada' && !ui.destravadas?.has(c.id);
 }
-const ACOES_TRAVADAS = new Set(['dividirCompra', 'escolherVencedor', 'duvidaItem', 'marcaResposta', 'removerPreco', 'limparEscolhas', 'conferirPreco', 'conferirDif']);
+const ACOES_TRAVADAS = new Set(['marcarComprado', 'dividirCompra', 'escolherVencedor', 'duvidaItem', 'marcaResposta', 'removerPreco', 'limparEscolhas', 'conferirPreco', 'conferirDif']);
 function avisarTravada() {
   toast(ehAdmin() ? '🔒 Cotação finalizada: só para consulta. Para mudar algo, clique em "Editar mesmo assim" no comparativo.'
     : '🔒 Cotação finalizada: só para consulta. Para mudar algo, peça a um administrador.');
@@ -6162,6 +6218,16 @@ function ajustarColunasFixasDepois() {
 }
 let timerColFixas = null;
 window.addEventListener('resize', () => { clearTimeout(timerColFixas); timerColFixas = setTimeout(ajustarColunasFixas, 150); });
+// a largura do comparativo muda sem a janela mudar (barra de rolagem aparece, quadro abre/fecha): mede de novo
+const vigiaLarguraComp = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { clearTimeout(timerColFixas); timerColFixas = setTimeout(() => { ui.colFixas = null; ajustarColunasFixas(); }, 120); }) : null;
+let painelVigiado = null;
+function vigiarLarguraComp() {
+  const pc = document.querySelector('.painel-comp');
+  if (!vigiaLarguraComp || !pc || pc === painelVigiado) return;
+  if (painelVigiado) vigiaLarguraComp.unobserve(painelVigiado);
+  vigiaLarguraComp.observe(pc);
+  painelVigiado = pc;
+}
 
 function atualizarTotaisComp(c, i = null) {
   const comp = comparar(c);
@@ -6315,7 +6381,7 @@ function renderCotacao(id) {
   let qtdAlertas = 0;
   const qtdMarcas = { errada: 0, duvida: 0 };
   let qtdDemora = 0; // Rio Juntas com marca GO
-  let qtdCamp = 0, qtdForaCamp = 0; // itens com preço de campanha / em que outro está escolhido
+  let qtdCamp = 0, qtdForaCamp = 0, qtdComprados = 0; // itens com preço de campanha / em que outro está escolhido
   const ordemForn = fornecedoresVisiveisComp(c); // colunas de fornecedores em ordem alfabética (sem quem não respondeu)
   const escondidos = c.fornecedores.length - ordemForn.length;
   const tabelaComp = `
@@ -6334,6 +6400,7 @@ function renderCotacao(id) {
           if (difSuspeita(l)) avisosLinha.add('dif');
           if (l.preferencia) avisosLinha.add('regra');
           if (l.duvida) avisosLinha.add('duvida');
+          if (l.comprado) { avisosLinha.add('comprado'); qtdComprados++; }
           const jCamp = campanhaMelhor(l);
           const campVenc = l.vencedor >= 0 && !!l.campanhas[l.vencedor];
           if (jCamp >= 0) { avisosLinha.add('campanha'); qtdCamp++; if (!campVenc && !l.duvida) qtdForaCamp++; }
@@ -6352,14 +6419,14 @@ function renderCotacao(id) {
             const demora = p != null && entregaDemorada(c.fornecedores[j], o);
             const pelaRegra = j === l.vencedor && l.preferencia;
             if (demora) { qtdDemora++; avisosLinha.add('demora'); }
-            const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? (l.permitidas[j] ? 'marca-permitida' : 'marca-errada') : '', l.recusas[j] && p != null ? (j === l.vencedor ? 'recusada-venc' : 'recusada') : ''].filter(Boolean).join(' ');
+            const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? (l.permitidas[j] ? 'marca-permitida' : 'marca-errada') : '', p != null && filtroMarcaComp(c) && normMarca(o?.marca) === filtroMarcaComp(c) ? 'marca-filtrada' : '', l.recusas[j] && p != null ? (j === l.vencedor ? 'recusada-venc' : 'recusada') : ''].filter(Boolean).join(' ');
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
             return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${p != null && l.campanhas[j] ? '<br>' + chipCampanha(l.campanhas[j]) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
           }).join('');
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
-          const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => a !== 'regra' && a !== 'campanha') ? 'conferir' : 'ok';
-          return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
+          const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => !['regra', 'campanha', 'comprado'].includes(a)) ? 'conferir' : 'ok';
+          return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''}${l.comprado ? ' linha-comprada' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && linhaNaMarca(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
           <td class="c">${l.i + 1}</td>
           <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
             <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
@@ -6386,7 +6453,7 @@ function renderCotacao(id) {
             const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
             const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
               ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${fmtMoeda(l.precos[alvoS])} · ${esc(c.fornecedores[alvoS].nome)}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
-            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button>` : ''}</div>${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}${campMini}${htmlDivisoes(c, l)}</td>`;
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)">✎</button>` : ''}</div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}${campMini}${htmlDivisoes(c, l)}${l.preco != null || l.comprado ? `<button type="button" class="link small btn-comprado" data-act="marcarComprado" data-i="${l.i}" title="${l.comprado ? 'Voltar a comprar este item pela cotação' : 'O item já foi comprado por fora (ex.: o chefe comprou): sai de todos os pedidos'}">${l.comprado ? '↺ desfazer' : '🛒 já comprado'}</button>` : ''}</td>`;
           })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
@@ -6415,6 +6482,13 @@ function renderCotacao(id) {
         <span class="titulo-cot">${c.titulo ? `<b>${esc(c.titulo)}</b>` : '<span class="muted">Sem título</span>'} <button type="button" class="link editar-titulo" data-act="editarTituloCot" data-id="${esc(c.id)}" title="${c.titulo ? 'Editar o título da cotação' : 'Dar um título à cotação'}">✎</button></span>
       </div>
       <div class="cab-cot-acoes">
+        <details class="menu-acoes-cot"><summary class="btn sm" title="Duplicar, arquivar ou excluir a cotação">⋯ Mais</summary>
+          <div class="menu-pop">
+            <button type="button" data-act="duplicarCot">📄 Duplicar como nova cotação</button>
+            <button type="button" data-act="arquivarCot" title="${c.arquivada ? 'Volta para a lista de cotações' : 'Tira da lista de cotações (continua no histórico e nos relatórios)'}">${c.arquivada ? '↩ Desarquivar' : '🗂️ Arquivar'}</button>
+            <button type="button" class="danger" data-act="excluirCot">🗑 Excluir cotação</button>
+          </div>
+        </details>
         ${podeVerRelatorios() ? `<button type="button" class="sm" data-act="analiseCot" data-id="${esc(c.id)}" title="Nota dos fornecedores só nesta cotação">📊 Análise</button>` : ''}
         <button type="button" class="sm" data-act="novaCampanha" title="Campanha de marca (ex.: este mês, ENVIA PEÇAS com PERFECT): o sistema mostra onde há preço dela">🏷️ Campanha</button>
         ${seletorStatusCot(c)}
@@ -6432,7 +6506,14 @@ function renderCotacao(id) {
     <div id="campanhasCot">${htmlCampanhasCot(c)}</div>
   </section>
 
-  <section class="card">
+  <nav class="secoes-cot" aria-label="Partes da cotação">
+    <button type="button" data-act="irSecaoCot" data-alvo="secForn">🏭 Fornecedores <b>${c.fornecedores.filter(respondeu).length}/${nf}</b></button>
+    ${temResposta ? `<button type="button" data-act="irSecaoCot" data-alvo="secComp">⚖️ Comparativo <b>${c.itens.length}</b></button>
+    <button type="button" data-act="irSecaoCot" data-alvo="secPedidos">🧾 Pedidos <b>${pedidosPorFornecedor(c).length}</b></button>` : `<button type="button" data-act="irSecaoCot" data-alvo="secComp">📋 Itens <b>${c.itens.length}</b></button>`}
+    <button type="button" data-act="irSecaoCot" data-alvo="topo">↑ Topo</button>
+  </nav>
+
+  <section class="card" id="secForn">
     <h3 class="recolhe" data-act="recolherFornCot" role="button" tabindex="0" aria-expanded="${fornCotAberto() ? 'true' : 'false'}" title="Clique para ${fornCotAberto() ? 'fechar' : 'abrir'}">
       <span class="seta-recolhe">${fornCotAberto() ? '▾' : '▸'}</span> Fornecedores
       <span class="small muted resumo-recolhe">${htmlResumoFornCot(c).texto}</span>
@@ -6462,7 +6543,7 @@ function renderCotacao(id) {
 
   ${painel}
 
-  <section class="card">
+  <section class="card" id="secComp">
     <div class="row-between">
       <h3>${temResposta ? 'Comparativo de preços' : 'Itens da cotação'}</h3>
       ${temResposta ? `<div class="row"><span class="busca-comp-caixa"><input type="search" id="buscaComp" class="busca-comp" placeholder="🔎 Código ou descrição" value="${esc(buscaComp(c))}" autocomplete="off" aria-label="Buscar item no comparativo" title="Filtra as linhas enquanto você digita (Esc limpa)"><span id="buscaCompCont" class="small muted"></span></span>${seletorVencedor(c, comp)}<button type="button" class="sm btn-compacto${modoCompacto() ? ' ativo' : ''}" data-act="alternarCompacto" aria-pressed="${modoCompacto()}" title="${modoCompacto() ? 'Mostrar as colunas de todos os fornecedores' : 'Esconder as colunas de cada fornecedor: fica só o preço escolhido, o 2º lugar e as quantidades (bom para meia tela)'}">${modoCompacto() ? '▦ Compacto' : '▤ Compacto'}</button><button class="sm" data-act="exportarComparativo" title="Exportar o comparativo para o Excel">⬇ Excel</button></div>` : ''}
@@ -6492,6 +6573,7 @@ function renderCotacao(id) {
       if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} marca diferente` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abrev. a conferir` : ''].filter(Boolean).join(' · ')}</button>`);
       const nRegra = comp.linhas.filter(l => l.preferencia).length;
       if (nRegra) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso regra" data-tipo="regra" title="Clique para ver só esses itens. A Comando ganha quando está até 5% acima do 1º lugar. Em cada item, clique no preço do mais barato para escolher ele.">⭐ ${nRegra} regra Comando</button>`);
+      if (qtdComprados) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso comprado" data-tipo="comprado" title="Clique para ver só esses itens. Itens marcados como já comprados (por fora): não vão em nenhum pedido.">🛒 ${qtdComprados} já comprado(s)</button>`);
       if (qtdCamp) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso campanha" data-tipo="campanha" title="Clique para ver só esses itens. Itens com preço de uma campanha de marca: você decide se compra por ela.">🏷️ ${qtdCamp} com campanha${qtdForaCamp ? ` · ${qtdForaCamp} fora` : ''}</button>`);
       if (qtdDemora) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso demora" data-tipo="demora" title="Clique para ver só esses itens. Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} GO (demora)</button>`);
       if (qtdAlertas) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso atencao aviso-alertas" data-tipo="alertas" title="Clique para ver só esses itens. Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} fora do normal</button>`);
@@ -6508,13 +6590,7 @@ function renderCotacao(id) {
     ${tabelaComp}
   </section>
 
-  ${temResposta ? secaoPedidos(c, comp) : ''}
-
-  <div class="actions">
-    <button data-act="duplicarCot">Duplicar como nova cotação</button>
-    <button data-act="arquivarCot" title="${c.arquivada ? 'Volta para a lista de cotações' : 'Tira da lista de cotações (continua no histórico e nos relatórios)'}">${c.arquivada ? '↩ Desarquivar' : '🗂️ Arquivar'}</button>
-    <button class="danger" data-act="excluirCot">Excluir cotação</button>
-  </div>`;
+  ${temResposta ? secaoPedidos(c, comp) : ''}`;
 }
 
 function linhasProdutos() {
@@ -6523,10 +6599,11 @@ function linhasProdutos() {
   const termos = q ? q.split(/\s+/) : [];
   // o índice já vem em ordem de descrição: não precisa ordenar a cada tecla
   const lista = indiceBusca().filter(([p, t]) => (!ui.soComPreco || hist[p.id]) && termos.every(w => t.includes(w))).map(([p]) => p);
-  const LIMITE = 100;
+  const LIMITE = ui.limiteProd || 200;
   const extra = lista.length > LIMITE
-    ? `<tr><td colspan="7" class="empty">Mostrando ${LIMITE} de ${lista.length.toLocaleString('pt-BR')} produtos. Use a busca para encontrar o que precisa.</td></tr>`
-    : '';
+    ? `<tr class="mais-prod"><td colspan="7" class="empty">Mostrando <b>${LIMITE.toLocaleString('pt-BR')}</b> de <b>${lista.length.toLocaleString('pt-BR')}</b> produtos.
+      <button type="button" class="sm" data-act="maisProdutos">Mostrar mais 300</button> <button type="button" class="sm" data-act="todosProdutos">Mostrar todos (${lista.length.toLocaleString('pt-BR')})</button></td></tr>`
+    : lista.length > 200 ? `<tr><td colspan="7" class="empty small">Mostrando todos os ${lista.length.toLocaleString('pt-BR')} produtos.</td></tr>` : '';
   if (!lista.length) return `<tr><td colspan="7" class="empty">${db.produtos.length ? (ui.soComPreco ? 'Nenhum produto com preço nas cotações.' : 'Nenhum produto encontrado.') : 'Nenhum produto cadastrado. Cadastre acima ou importe de uma planilha.'}</td></tr>`;
   return lista.slice(0, LIMITE).map(p => {
     const h = hist[p.id];
@@ -6669,14 +6746,57 @@ function trocadorDeMarca(de, para) {
   return s => String(s || '').replace(re, (_, antes) => antes + para);
 }
 
+/** Redesenha só a lista de produtos (sem perder a busca). */
+function atualizarListaProdutos() {
+  const tb = document.getElementById('tbProd');
+  if (tb) tb.innerHTML = linhasProdutos(); else render();
+}
+
+/**
+ * Conferência do cadastro (de onde vêm todas as informações): códigos repetidos, similar que é o código de OUTRO
+ * produto (faz o arquivo do DataCar casar com a peça errada) e descrição vazia ou igual ao código.
+ */
+function problemasCadastro() {
+  const porCod = new Map();
+  for (const p of db.produtos) {
+    const k = chaveCodigo(p.codigo || '');
+    if (!k) continue;
+    if (!porCod.has(k)) porCod.set(k, []);
+    porCod.get(k).push(p);
+  }
+  const repetidos = [...porCod.values()].filter(l => l.length > 1);
+  const similarDeOutro = [];
+  for (const p of db.produtos) {
+    for (const t of String(p.similar || '').split(/[\/,;\s]+/).filter(Boolean)) {
+      const dono = porCod.get(chaveCodigo(t))?.find(o => o.id !== p.id);
+      if (dono && !descricoesCombinam(p.descricao, dono.descricao)) similarDeOutro.push({ p, t, dono });
+    }
+  }
+  const semDesc = db.produtos.filter(p => !String(p.descricao || '').trim() || chaveCodigo(p.descricao) === chaveCodigo(p.codigo || ''));
+  return { repetidos, similarDeOutro, semDesc, total: repetidos.length + similarDeOutro.length + semDesc.length };
+}
+
+function htmlProblemasCadastro(pc) {
+  if (!pc.total) return '<p class="small ok-cad">✓ Cadastro conferido: nenhum código repetido, nenhum similar apontando para outra peça e todas as descrições preenchidas.</p>';
+  const ed = p => `<button type="button" class="link small" data-act="editarProd" data-id="${esc(p.id)}">editar</button>`;
+  const bloco = (tit, linhas) => linhas.length ? `<div class="prob-cad"><b>${tit}</b><ul>${linhas.slice(0, 20).join('')}</ul>${linhas.length > 20 ? `<p class="small muted">… e mais ${linhas.length - 20}</p>` : ''}</div>` : '';
+  return `<div class="aviso-recusa small prob-cad-caixa">
+    ${bloco(`⚠ ${pc.repetidos.length} código(s) repetido(s) no cadastro`, pc.repetidos.map(l => `<li><b class="cod-comp">${esc(l[0].codigo)}</b>: ${l.map(p => `${esc(p.descricao)} ${ed(p)}`).join(' · ')}</li>`))}
+    ${bloco(`⚠ ${pc.similarDeOutro.length} similar(es) que é o código de outra peça (o DataCar pode casar com a peça errada)`, pc.similarDeOutro.map(x => `<li><b class="cod-comp">${esc(x.p.codigo)}</b> ${esc(x.p.descricao)} tem o similar <b>${esc(x.t)}</b>, que é <b>${esc(x.dono.descricao)}</b> ${ed(x.p)}</li>`))}
+    ${bloco(`⚠ ${pc.semDesc.length} produto(s) sem descrição (ou com a descrição igual ao código)`, pc.semDesc.map(p => `<li><b class="cod-comp">${esc(p.codigo || '—')}</b> ${esc(p.descricao || '')} ${ed(p)}</li>`))}
+  </div>`;
+}
+
 function cartaoLimpezaProdutos() {
   const sem = produtosSemMarca();
+  const pc = problemasCadastro();
   return `<section class="card">
-    <details class="limpeza-cad"><summary><b>🧹 Limpeza do cadastro</b> ${sem.length ? `<span class="badge warn">⚠ ${sem.length} sem marca exigida</span>` : '<span class="badge ok">✓ todos com marca</span>'} <span class="small muted">· trocar marca em todos os produtos</span></summary>
+    <details class="limpeza-cad"><summary><b>🧹 Conferência do cadastro</b> ${sem.length ? `<span class="badge warn">⚠ ${sem.length} sem marca exigida</span>` : '<span class="badge ok">✓ todos com marca</span>'}${pc.total ? ` <span class="badge danger">⚠ ${pc.total} problema(s) no cadastro</span>` : ' <span class="badge ok">✓ sem códigos repetidos</span>'} <span class="small muted">· trocar marca em todos os produtos</span></summary>
     ${sem.length ? `<div class="aviso-recusa small" style="margin-bottom:10px">⚠ <b>${sem.length} produto(s) sem marca exigida.</b> Preencha a marca na cotação (ela fica salva no cadastro) ou edite aqui (QUALQUER, SÓ COFAP…).
       <div style="margin:6px 0">${sem.slice(0, 10).map(p => `<span class="badge">${esc(p.codigo || '—')}</span> ${esc(p.descricao)}`).join('<br>')}${sem.length > 10 ? `<br>… e mais ${sem.length - 10}` : ''}</div>
       <button type="button" class="sm danger" data-act="excluirSemMarca">🗑 Excluir os ${sem.length} produto(s) sem marca</button>
       <span class="muted"> ou edite cada um e preencha a marca.</span></div>` : '<p class="small muted" style="margin-top:0">✓ Todos os produtos têm marca exigida.</p>'}
+    ${htmlProblemasCadastro(pc)}
     <form data-form="trocarMarca" class="row troca-marca">
       <b class="small">Trocar marca em todos os produtos:</b>
       <label>De<input name="de" required placeholder="Ex.: FREEMAX" autocomplete="off"></label>
@@ -6884,8 +7004,31 @@ async function exportarRelatorio() {
   await baixarWorkbook(wb, `Relatorio_${(per || '').replace(/\s+/g, '_')}_${hojeISO()}.xlsx`);
 }
 
+/** Itens que mais vão para as cotações do período: quantas vezes foram cotados, comprados e o último preço. */
+function itensMaisCotados() {
+  const desde = inicioPeriodo();
+  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde)).sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
+  const mapa = new Map();
+  for (const c of cots) {
+    const comp = comparar(c);
+    for (const l of comp.linhas) {
+      const k = l.it.produtoId || chaveCodigo(l.it.codigo || l.it.descricao || '');
+      if (!k) continue;
+      const x = mapa.get(k) || { it: l.it, vezes: 0, compras: 0, qtd: 0, ultimo: null };
+      x.vezes++;
+      x.it = l.it;
+      const q = l.preco == null ? 0 : qtdComprada(c, l, comp.porLoja) + extrasComprados(l).reduce((t, e) => t + e.q, 0);
+      if (q > 0 && comp.porLoja) { x.compras++; x.qtd += q; }
+      if (l.preco != null) x.ultimo = { preco: l.preco, forn: c.fornecedores[l.vencedor]?.nome || '', data: c.data };
+      mapa.set(k, x);
+    }
+  }
+  return [...mapa.values()].sort((a, b) => b.vezes - a.vezes || b.compras - a.compras).slice(0, 30);
+}
+
 function renderRelatorios() {
   const { res, porCot, fornecedores: fornBase } = dadosRelatorio();
+  const maisCot = itensMaisCotados();
   const fornecedores = ordenarRelForn(fornBase);
   const pct = (v, base) => base > 0 ? fmtPct(v / base) : '—';
   const top = fornBase[0];
@@ -6913,7 +7056,7 @@ function renderRelatorios() {
       ${melhorCot ? `<li>💰 Maior economia: <a href="#" data-route="cotacao" data-id="${esc(melhorCot.c.id)}"><b>cotação nº ${esc(melhorCot.c.numero)}</b></a>${melhorCot.c.titulo ? ` (${esc(melhorCot.c.titulo)})` : ''} — ${fmtMoeda(melhorCot.media)} abaixo da média</li>` : ''}
       <li>🧾 Média por cotação: ${fmtMoeda(res.total / res.cotacoes)} · ${Math.round(res.itens / res.cotacoes)} itens</li>
     </ul>
-    <nav class="atalhos-rel small"><span class="muted">Ir para:</span><a href="#" data-act="irSecaoRel" data-alvo="relForn">Fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relCot">Por cotação</a><a href="#" data-act="irSecaoRel" data-alvo="notaFornecedores">Nota dos fornecedores</a></nav>` : '<p class="empty">Ainda não há cotações com preços neste período. Os relatórios aparecem assim que os fornecedores responderem (as cotações canceladas não entram).</p>'}
+    <nav class="atalhos-rel small"><span class="muted">Ir para:</span><a href="#" data-act="irSecaoRel" data-alvo="relForn">Fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relCot">Por cotação</a><a href="#" data-act="irSecaoRel" data-alvo="notaFornecedores">Nota dos fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relMaisCotados">Itens mais cotados</a></nav>` : '<p class="empty">Ainda não há cotações com preços neste período. Os relatórios aparecem assim que os fornecedores responderem (as cotações canceladas não entram).</p>'}
   </section>
   ${fornecedores.length && res.cotacoes ? `<section class="card" id="relForn">
     <h3>Fornecedores</h3>
@@ -6943,6 +7086,14 @@ function renderRelatorios() {
         <td class="r">${r.comparaveis ? `${fmtMoeda(r.media)} <span class="small muted">(${pct(r.media, r.total + r.media)})</span>` : '—'}</td>
         <td class="r">${r.comparaveis ? `${fmtMoeda(r.maior)} <span class="small muted">(${pct(r.maior, r.total + r.maior)})</span>` : '—'}</td>
       </tr>`).join('')}</tbody>
+    </table></div>
+  </section>` : ''}
+  ${maisCot.length ? `<section class="card" id="relMaisCotados">
+    <h3>🔁 Itens mais cotados</h3>
+    <p class="small muted" style="margin-top:0">Os itens que mais vão para as cotações no período: quantas vezes foram cotados, em quantas foram comprados e o último preço escolhido.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Código</th><th>Descrição</th><th>Marca</th><th class="r">Cotado</th><th class="r">Comprado</th><th class="r">Qtd. comprada</th><th class="r">Último preço</th></tr></thead>
+      <tbody>${maisCot.map(x => `<tr><td><b class="cod-comp">${esc(x.it.codigo || '—')}</b></td><td>${esc(x.it.descricao || '')}</td><td class="small">${esc(x.it.marca || '')}</td><td class="r"><b>${x.vezes}×</b></td><td class="r">${x.compras}×</td><td class="r">${x.qtd ? fmtNum(x.qtd) : '—'}</td><td class="r">${x.ultimo ? `${fmtMoeda(x.ultimo.preco)}<br><span class="small muted">${esc(x.ultimo.forn)} · ${fmtData(x.ultimo.data)}</span>` : '—'}</td></tr>`).join('')}</tbody>
     </table></div>
   </section>` : ''}
   ${secaoNotaFornecedores()}`;
@@ -7264,12 +7415,45 @@ async function abrirAnaliseFornecedor(id) {
   await p;
 }
 
+/** Cotação escolhida na aba Fornecedores para enviar / importar respostas (a aberta mais nova, se nenhuma). */
+function cotacoesAbertasForn() {
+  return db.cotacoes.filter(c => c.status === 'aberta' && !c.arquivada).sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
+}
+function cotDaAbaForn() {
+  const abertas = cotacoesAbertasForn();
+  return abertas.find(c => c.id === ui.cotForn) || abertas[0] || null;
+}
+function barraCotForn() {
+  const abertas = cotacoesAbertasForn();
+  if (!abertas.length) return '<p class="small muted barra-cot-forn">Sem cotação aberta: crie uma em <a href="#" data-route="nova">Nova cotação</a> para enviar e receber respostas por aqui.</p>';
+  const c = cotDaAbaForn();
+  const resp = c.fornecedores.filter(respondeu).length;
+  return `<div class="barra-cot-forn">
+    <label>Cotação para enviar e receber respostas
+      <select id="cotForn">${abertas.map(x => `<option value="${esc(x.id)}" ${x.id === c.id ? 'selected' : ''}>nº ${esc(x.numero)}${x.titulo ? ' · ' + esc(x.titulo) : ''} (${fmtData(x.data)})</option>`).join('')}</select></label>
+    <span class="small muted">${c.fornecedores.length} fornecedor(es) nela · ${resp} responderam</span>
+    <a href="#" class="btn sm" data-route="cotacao" data-id="${esc(c.id)}">Abrir a cotação →</a>
+  </div>`;
+}
+/** Situação e ações do fornecedor na cotação escolhida (aba Fornecedores). */
+function acoesCotForn(f, c) {
+  if (!c) return '';
+  const fi = c.fornecedores.findIndex(x => x.fornecedorId === f.id);
+  if (fi < 0) return `<button type="button" class="sm" data-act="incluirFornCot" data-id="${esc(f.id)}" title="Colocar ${esc(f.nome)} na cotação nº ${esc(c.numero)}">+ incluir na nº ${esc(c.numero)}</button>`;
+  const fc = c.fornecedores[fi];
+  const sit = respondeu(fc) ? '<span class="badge ok">✓ respondeu</span>' : fc.enviadoEm ? `<span class="badge blue">enviada ${fmtData(fc.enviadoEm)}</span>` : '<span class="badge">não enviada</span>';
+  return `${sit}
+    <button type="button" class="sm" data-act="enviarDaAbaForn" data-id="${esc(f.id)}" title="Baixar a planilha de ${esc(f.nome)} e abrir o e-mail">✉ Enviar</button>
+    <label class="btn sm" style="margin:0" title="Importar a planilha que ${esc(f.nome)} devolveu">📥 Resposta<input type="file" class="hidden" accept=".xlsx,.xls" data-import-resp-forn="${esc(f.id)}"></label>`;
+}
+
 function linhasFornecedores() {
   const q = semAcento(ui.filtroForn);
+  const cotF = cotDaAbaForn();
   const lista = db.fornecedores
     .filter(f => !q || semAcento(`${f.nome} ${f.contato} ${f.email} ${f.telefone} ${f.obs}`).includes(q))
     .sort((a, b) => a.nome.localeCompare(b.nome));
-  if (!lista.length) return `<tr><td colspan="7" class="empty">${db.fornecedores.length ? 'Nenhum fornecedor encontrado.' : 'Nenhum fornecedor cadastrado.'}</td></tr>`;
+  if (!lista.length) return `<tr><td colspan="8" class="empty">${db.fornecedores.length ? 'Nenhum fornecedor encontrado.' : 'Nenhum fornecedor cadastrado.'}</td></tr>`;
   const notas = Object.fromEntries(desempenhoFornecedores('').map(x => [x.id, x]));
   return lista.map(f => {
     const n = db.cotacoes.filter(c => c.fornecedores.some(x => x.fornecedorId === f.id)).length;
@@ -7281,6 +7465,7 @@ function linhasFornecedores() {
       <td>${esc(f.telefone || '—')}</td>
       <td class="c">${n}</td>
       <td class="c">${d ? (podeVerRelatorios() ? `<a href="#" data-route="relatorios" class="link-nota">${badgeNota(d.nota, tituloNota(d))}</a>` : badgeNota(d.nota, tituloNota(d))) : '<span class="muted">—</span>'}</td>
+      <td class="acoes-cot-forn">${acoesCotForn(f, cotF)}</td>
       <td class="actions-cell">
         <button class="sm" data-act="editarForn" data-id="${f.id}">Editar</button>
         <button class="sm danger" data-act="excluirForn" data-id="${f.id}">✕</button>
@@ -7795,9 +7980,10 @@ function renderFornecedores() {
     </details>
   </section>
   <section class="card">
+    ${barraCotForn()}
     <input id="filtroForn" placeholder="Buscar fornecedor…" value="${esc(ui.filtroForn)}" style="margin-bottom:10px">
     <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th><th>Contato</th><th>E-mail</th><th>Telefone</th><th class="c">Cotações</th><th class="c" title="Nota de 0 a 10 (detalhes em Relatórios)">Nota</th><th></th></tr></thead>
+      <thead><tr><th>Fornecedor</th><th>Contato</th><th>E-mail</th><th>Telefone</th><th class="c">Cotações</th><th class="c" title="Nota de 0 a 10 (detalhes em Relatórios)">Nota</th><th>Cotação aberta</th><th></th></tr></thead>
       <tbody id="tbForn">${linhasFornecedores()}</tbody>
     </table></div>
   </section>`;
@@ -7893,7 +8079,7 @@ function renderConfig() {
       <label>Assunto<input name="assuntoEmail" value="${esc(c.assuntoEmail)}"></label>
       <label>Texto<textarea name="corpoEmail" rows="9">${esc(c.corpoEmail)}</textarea></label>
       <h3 style="margin-top:18px">E-mail do pedido de compra</h3>
-      <p class="muted small">Além dos campos acima: {totalPedido} {itensPedido} {entrega} (lojas e endereços de entrega) {pagamento}</p>
+      <p class="muted small">Além dos campos acima: {totalPedido} {itensPedido} {unidades} {entrega} (lojas e endereços de entrega) {pagamento}</p>
       <label>Assunto do pedido<input name="assuntoPedido" value="${esc(c.assuntoPedido)}"></label>
       <label>Texto do pedido<textarea name="corpoPedido" rows="9">${esc(c.corpoPedido)}</textarea></label>
       <h3 style="margin-top:16px">Cobrança de resposta</h3>
@@ -8137,7 +8323,7 @@ function render() {
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
-  if (nome === 'cotacao') ajustarColunasFixasDepois();
+  if (nome === 'cotacao') { ajustarColunasFixasDepois(); vigiarLarguraComp(); }
   anunciarPresenca();
   anotarUltimoLugar();
   const cotTela = nome === 'cotacao' ? db.cotacoes.find(x => x.id === id) : null;
@@ -8326,7 +8512,9 @@ const acoes = {
         if (!existente.marca) existente.marca = informada;
         else if (informada !== existente.marca) marcaCotacao = informada;
       }
-      const ja = r.itens.find(x => x.produtoId === id);
+      // mesmo produto e MESMO código (ex.: "01" e "01 XX"): soma no item; códigos diferentes ligados ao mesmo
+      // produto (similar/pedaço do código) continuam itens separados, cada um com o seu código
+      const ja = r.itens.find(x => x.produtoId === id && (!codArq || !x.codigoArquivo || chaveCodigo(x.codigoArquivo) === chaveCodigo(codArq)));
       const codigoArquivo = codArq;
       if (ja && papel) { somados++; continue; } // papelzinho que já está na cotação: não acrescenta
       if (ja) {
@@ -8350,6 +8538,35 @@ const acoes = {
   },
 
   menuMais: () => abrirMenuMais(),
+  irSecaoCot: el => {
+    const alvo = el.dataset.alvo === 'topo' ? null : document.getElementById(el.dataset.alvo);
+    if (!alvo) return window.scrollTo({ top: 0, behavior: 'smooth' });
+    const topo = (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--altura-topo')) || 60) + 54;
+    window.scrollTo({ top: alvo.getBoundingClientRect().top + window.scrollY - topo, behavior: 'smooth' });
+  },
+  incluirFornCot: el => {
+    const c = cotDaAbaForn();
+    const f = db.fornecedores.find(x => x.id === el.dataset.id);
+    if (!c || !f || c.fornecedores.some(x => x.fornecedorId === f.id)) return;
+    c.fornecedores.push(novoFornCot(f));
+    salvar();
+    render();
+    toast(`${f.nome} incluído na cotação nº ${c.numero}.`);
+  },
+  enviarDaAbaForn: el => {
+    const c = cotDaAbaForn();
+    const fi = c ? c.fornecedores.findIndex(x => x.fornecedorId === el.dataset.id) : -1;
+    if (fi < 0) return;
+    ir('cotacao', c.id);
+    ui.enviando = { cotId: c.id, fi }; // depois de trocar de tela (a troca fecha os painéis abertos)
+    ui.digitando = null;
+    ui.lote = null;
+    render();
+    setTimeout(() => $('#painelEnvio')?.scrollIntoView({ behavior: 'smooth' }), 50);
+  },
+  marcarComprado: el => alternarComprado(cotAtual(), +el.dataset.i),
+  maisProdutos: () => { ui.limiteProd = (ui.limiteProd || 200) + 300; atualizarListaProdutos(); },
+  todosProdutos: () => { ui.limiteProd = 1e9; atualizarListaProdutos(); },
   proximoAviso: el => irProximoAviso(cotAtual(), el.dataset.tipo, el),
   dividirCompra: el => dividirCompraItem(cotAtual(), +el.dataset.i, el.dataset.f != null ? +el.dataset.f : null),
   corrigirDescCadastro: el => {
@@ -8466,10 +8683,19 @@ const acoes = {
     const escolha = await abrirDialogo(`${it.codigo || '—'} · ${it.descricao}\n${f.nome}: ${fmtMoeda(o.preco)}${o.marca ? ` · marca ${o.marca}` : ''}${o.precoOriginal != null ? ` (valor original ${fmtMoeda(o.precoOriginal)})` : ''}\n\nEste preço está errado?`, [
       { txt: 'Cancelar', valor: null },
       { txt: 'Corrigir o valor…', valor: 'corrigir' },
+      { txt: 'Corrigir a marca…', valor: 'marca' },
       { txt: 'Remover o preço', valor: 'remover', cls: 'danger' },
-    ]);
+    ], document, { titulo: `✎ Editar o preço de ${f.nome}` });
     if (!escolha) return;
     if (escolha === 'corrigir') return alterarPrecoResposta(c, i, fi);
+    if (escolha === 'marca') {
+      const nova = await pedirValor(`Qual é a marca certa de ${f.nome} para ${it.codigo || it.descricao}?`, { valor: o.marca || '', ok: 'Salvar' });
+      if (nova == null || nova.trim().toUpperCase() === String(o.marca || '').toUpperCase()) return;
+      f.respostas = { ...f.respostas, [i]: { ...o, marca: nova.trim().toUpperCase(), marcaOriginal: o.marcaOriginal || o.marca || '' } };
+      salvar();
+      render();
+      return toast(`Marca de ${f.nome} corrigida para ${nova.trim().toUpperCase()}.`);
+    }
     return removerPrecoResposta(c, i, fi);
   },
   mostrarSemResposta: () => { ui.mostrarSemResposta = !ui.mostrarSemResposta; render(); },
@@ -8524,6 +8750,8 @@ const acoes = {
     const prod = prodPorId();
     const forn = byId(db.fornecedores);
     const itens = r.itens.filter(x => prod[x.produtoId]);
+    const perdidos = r.itens.length - itens.length;
+    if (perdidos && !(await confirmar(`${perdidos} item(ns) da lista não estão mais no cadastro de produtos (foram excluídos) e não vão para a cotação.\n\nCriar a cotação com os outros ${itens.length}?`, 'Criar sem eles'))) return;
     ordenarItensRascunho({ itens }, prod);
     if (!itens.length) return avisar('Adicione pelo menos um item.');
     const fornecedores = r.fornecedorIds.map(id => forn[id]).filter(Boolean);
@@ -9038,7 +9266,9 @@ const acoes = {
   },
   alternarCompacto: () => {
     try { localStorage.setItem(CHAVE_COMPACTO, modoCompacto() ? '0' : '1'); } catch (e) { /* sem acesso */ }
+    ui.colFixas = null; // outra quantidade de colunas: mede de novo (senão uma coluna presa cobre as outras)
     render();
+    setTimeout(() => { ui.colFixas = null; ajustarColunasFixas(); }, 250);
     toast(modoCompacto() ? 'Modo compacto: só o preço escolhido, o 2º lugar e as quantidades. Clique no 2º lugar para trocar.' : 'Modo completo: todas as colunas de fornecedores.');
   },
   marcarConcluida: el => {
@@ -9466,7 +9696,7 @@ function dicaPrecoComp(c, l, j) {
 function botaoRmPreco(td) {
   if (td.querySelector('.rm-preco')) return;
   const [i, j] = td.dataset.dica.split(':');
-  td.insertAdjacentHTML('afterbegin', `<button type="button" class="rm-preco" data-act="removerPreco" data-i="${i}" data-f="${j}" title="Preço errado? Remover ou corrigir" aria-label="Remover ou corrigir este preço"></button>`);
+  td.insertAdjacentHTML('afterbegin', `<button type="button" class="rm-preco" data-act="removerPreco" data-i="${i}" data-f="${j}" title="Editar o preço ou a marca (ou remover)" aria-label="Editar o preço ou a marca"></button>`);
 }
 document.addEventListener('mouseover', e => {
   const alvo = e.target.closest?.('[data-dica]');
@@ -10189,6 +10419,7 @@ async function abrirPip() {
     else if (acao === 'copiar') copiarCodigoPip(b);
     else if (acao === 'duvida') duvidaPip();
     else if (acao === 'escolher') escolherPip(+b.dataset.f);
+    else if (acao === 'comprado') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) alternarComprado(cot, pip.i); }
     else if (acao === 'dividir') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) dividirCompraItem(cot, pip.i, b.dataset.f != null ? +b.dataset.f : null, pip.win.document); }
     else if (acao === 'exportar') exportarPip(+b.dataset.f);
     else if (acao === 'ir') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) irParaItemPip(cot, +b.dataset.i); }
@@ -10271,8 +10502,8 @@ function teclaPip(e, d) {
 /** Itens da lista ainda sem quantidade em nenhuma loja (0 conta como informado: "não comprar"). */
 function pendentesPip(c, lista) {
   const LJ = lojas();
-  // compra dividida também conta como quantidade informada
-  return lista.filter(i => !LJ.some(lj => c.qtds?.[i]?.[lj.id] != null) && !Object.keys(c.divisoes?.[i] || {}).length);
+  // compra dividida e item já comprado também contam como resolvidos
+  return lista.filter(i => !LJ.some(lj => c.qtds?.[i]?.[lj.id] != null) && !Object.keys(c.divisoes?.[i] || {}).length && !c.comprados?.[i]);
 }
 
 /** Situação do item na janela flutuante (cor do cartão): dúvida, quantidade informada, marca diferente ou falta. */
@@ -10556,6 +10787,7 @@ function desenharPip(focar) {
           const tags = [
             l.recusadaGanhou ? '<span class="pip-tag recusada">⚠ marca recusada</span>' : '',
             l.manual ? '<span class="pip-tag">escolhido por você</span>' : '',
+            l.comprado ? '<span class="pip-tag comprado">✓ já comprado</span>' : '',
             l.campanhas[l.vencedor] ? `<span class="pip-tag campanha">🏷️ campanha ${esc(l.campanhas[l.vencedor].marca)}</span>` : '',
             l.preferencia ? `<span class="pip-tag regra">⭐ regra 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',
             entregaDemorada(f, f.respostas?.[l.i]) ? '<span class="pip-tag">🐢 GO demora</span>' : '',
@@ -10584,6 +10816,15 @@ function desenharPip(focar) {
             ${marcasPip(l, marcaVenc)}
             ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
             ${htmlDivisoes(c, l, { pip: true })}
+            ${(() => {
+              // filtrando a empresa que recebeu parte do item: a quantidade DELA em destaque
+              const fv = filtroVencedor(c);
+              const x = fv && (l.extras || []).find(e => c.fornecedores[e.fi]?.fornecedorId === fv && e.fi !== l.vencedor);
+              if (!x) return '';
+              const LJ = lojas();
+              return `<div class="pip-div-aqui">➗ <b>Comprar de ${esc(c.fornecedores[x.fi].nome)}: ${fmtNum(x.q)} un.</b> ${LJ.filter(lj => x.qtds[lj.id]).map(lj => `${esc(siglaLoja(lj))} ${fmtNum(x.qtds[lj.id])}`).join(' · ')} · ${fmtMoeda(x.preco)}<br><small>os campos de quantidade abaixo são da ganhadora (${esc(f.nome)})</small></div>`;
+            })()}
+            <button type="button" class="link small pip-comprado" data-pip="comprado">${l.comprado ? '↺ desfazer "já comprado"' : '🛒 marcar como já comprado'}</button>
           </div>${campPip}${seg}`;
         })() : `<div class="pip-ganhador vazio">${l.aguardando ? '<span class="aguardando">⏳ aguardando outro preço</span>' : '<span class="muted">sem preço</span>'}</div>`}
       </div>
@@ -10877,6 +11118,15 @@ async function aoMudarCampo(e) {
     Object.assign(ui.datacar, { pos: 0, gcur: 0, grupoAberto: null });
     renderSoDataCar();
     focarDataCar();
+  } else if (t.id === 'cotForn') {
+    ui.cotForn = t.value;
+    render();
+  } else if (t.id === 'filtroMarca') {
+    const c = cotAtual();
+    if (!c) return;
+    ui.filtroMarca = t.value ? { cotId: c.id, marca: t.value } : null;
+    render();
+    if (pip.win && pip.cotId === c.id) { pip.i = itensPip(c)[0] ?? pip.i; desenharPip(false); }
   } else if (t.id === 'filtroVencedor') {
     const c = cotAtual();
     if (!c) return;
@@ -10964,6 +11214,11 @@ async function aoMudarCampo(e) {
     const file = files[0];
     t.value = '';
     if (t.dataset.import != null) await importarResposta(file, cotAtual()?.id, +t.dataset.import);
+    else if (t.dataset.importRespForn != null) {
+      const c = cotDaAbaForn();
+      const fi = c ? c.fornecedores.findIndex(x => x.fornecedorId === t.dataset.importRespForn) : -1;
+      if (fi >= 0) { await importarResposta(file, c.id, fi); render(); }
+    }
     else if (t.hasAttribute('data-import-geral')) await importarRespostas(files, null);
     else if (t.hasAttribute('data-import-cot')) await importarRespostas(files, cotAtual()?.id);
     else if (t.hasAttribute('data-import-produtos')) await importarProdutos(file);

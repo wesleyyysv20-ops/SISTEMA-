@@ -50,3 +50,20 @@ test('descricoesCombinam: mesma peça mesmo abreviada; peças diferentes não', 
   assert.deepEqual(r, [true, false, true, true]);
   await s.fechar();
 });
+
+test('duas linhas com códigos diferentes que casam com o mesmo produto viram dois itens (nenhum código some)', async () => {
+  const s = await abrir(base({ produtos: [prod('p1', 'GP30521', 'AMORTECEDOR DIANT ESQ')] }));
+  const { page } = s;
+  await page.click('nav [data-route=nova]');
+  await page.setInputFiles('[data-import-datacar]', csv(['GP30521/AMD16637;AMORTECEDOR DIANT ESQ TURBOGAS;PERFECT;01', 'GP30521;AMORTECEDOR DIANT ESQ;COFAP;02']));
+  await page.waitForSelector('#dlgDataCar');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  const cods = await page.evaluate(() => rascunho().itens.map(x => x.codigoArquivo));
+  assert.deepEqual(cods.sort(), ['GP30521', 'GP30521/AMD16637']);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

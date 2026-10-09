@@ -2409,3 +2409,54 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 .pill-pos { margin-left: 4px; padding: 0 6px; border-radius: var(--r-pill); background: color-mix(in srgb, currentColor 14%, transparent); font-size: var(--fs-2xs); font-weight: 800; }
 @keyframes piscarLinha { 0%, 100% { box-shadow: none; } 30% { box-shadow: inset 0 0 0 3px var(--primary-2); } }
 .tab-comp tr.linha-piscar > td { animation: piscarLinha 1.2s ease; }
+
+/* conferência do cadastro */
+.prob-cad-caixa { margin: 8px 0 12px; }
+.prob-cad ul { margin: 4px 0 8px; padding-left: 18px; }
+.prob-cad li { margin: 2px 0; }
+.ok-cad { color: var(--ok); font-weight: 600; }
+
+/* comparativo: já comprado, editar preço, marca filtrada, colunas presas com sombra */
+.tab-comp tr.linha-comprada > td:not(.col-escolhido):not(:first-child):not(:nth-child(2)) { opacity: .45; }
+.tab-comp tr.linha-comprada .preco-escolhido { text-decoration: line-through; color: var(--muted); }
+.chip-comprado, .ja-comprado { display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: var(--r-pill); background: var(--ok); color: var(--on-cor); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+.btn-comprado { margin: 2px 0 0 6px; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
+.divisoes + .btn-comprado { display: block; margin-left: auto; }
+.btn-comprado:hover { color: var(--ok); }
+.pill-aviso.comprado { background: var(--ok-bg); color: var(--ok); }
+.btn-editar-preco { padding: 0 4px; color: var(--muted); }
+.btn-editar-preco:hover { color: var(--primary-2); }
+.tab-comp td.marca-filtrada { box-shadow: inset 0 0 0 2px var(--primary-2); }
+.filtro-marca select { max-width: 190px; }
+.tab-comp.fixa-dir > * > tr > .col-escolhido { box-shadow: -8px 0 10px -8px rgba(10, 18, 40, .35); }
+.tab-comp td .chip-demora, .tab-comp td .chip-marca { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.div-chip.div-destaque { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-size: var(--fs-sm); padding: 2px 10px; }
+/* janela flutuante: código em destaque, preço um pouco menor */
+.pip-cod-txt { font-size: var(--fs-3xl); }
+.pip-preco { font-size: var(--fs-2xl); }
+@media (min-width: 470px) { .pip-cod-txt { font-size: var(--fs-4xl); } .pip-preco { font-size: var(--fs-3xl); } }
+@media (max-width: 299px) { .pip-cod-txt { font-size: var(--fs-xl); } .pip-preco { font-size: var(--fs-lg); } }
+.pip-tag.comprado { background: var(--ok); color: var(--on-cor); border-color: var(--ok); }
+.pip-comprado { display: block; margin-top: 4px; font-size: var(--fs-xs); color: var(--muted); }
+.pip-div-aqui { margin-top: 6px; padding: 6px 9px; border-radius: var(--r-sm); background: var(--primary); color: var(--on-primary); font-size: var(--fs-sm); }
+.pip-div-aqui small { opacity: .85; }
+
+/* cotação: barra das partes (fica no topo ao rolar) e menu de ações */
+.secoes-cot { position: sticky; top: var(--altura-topo, 56px); z-index: 25; display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 12px; padding: 6px 8px; border-radius: var(--r-md); background: color-mix(in srgb, var(--card) 94%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); border: 1px solid var(--line); box-shadow: var(--shadow-card); }
+.secoes-cot button { min-height: 32px; padding: 3px 12px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 600; background: var(--card-2); border: 1px solid var(--line); box-shadow: none; }
+.secoes-cot button b { margin-left: 4px; padding: 0 6px; border-radius: var(--r-pill); background: var(--blue-bg); color: var(--primary-2); font-size: var(--fs-xs); }
+.secoes-cot button:hover { border-color: var(--primary-2); color: var(--primary); }
+.secoes-cot button:last-child { margin-left: auto; }
+.menu-acoes-cot { position: relative; }
+.menu-acoes-cot > summary { list-style: none; cursor: pointer; }
+.menu-acoes-cot > summary::-webkit-details-marker { display: none; }
+.menu-acoes-cot .menu-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; display: flex; flex-direction: column; gap: 4px; min-width: 240px; padding: 6px; border-radius: var(--r-md); background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.menu-acoes-cot .menu-pop button { justify-content: flex-start; border-color: transparent; box-shadow: none; }
+.menu-acoes-cot .menu-pop button:hover { background: var(--hover); }
+/* aba Fornecedores: cotação para enviar e receber respostas */
+.barra-cot-forn { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 14px; margin-bottom: 12px; padding: 10px 12px; border-radius: var(--r-md); background: var(--blue-bg); }
+.barra-cot-forn label { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-sm); font-weight: 600; }
+.barra-cot-forn select { min-width: 260px; }
+.acoes-cot-forn { white-space: nowrap; }
+.acoes-cot-forn > * { margin-right: 4px; vertical-align: middle; }
+@media (max-width: 760px) { .secoes-cot { top: 52px; overflow-x: auto; flex-wrap: nowrap; } .secoes-cot button { flex: none; } .barra-cot-forn select { min-width: 0; width: 100%; } .acoes-cot-forn { white-space: normal; } }
