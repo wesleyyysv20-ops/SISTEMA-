@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#253d83">
+  <title>Central Automações DISPPAR</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='158 164 314 196'%3E%3Cpath fill='%23253d83' d='M277 168H432C452 168 468 186 461 206L413 330C407 346 395 356 378 356H209L225 313H352C358 313 362 310 364 305L393 226C396 218 392 213 385 213H261Z'/%3E%3Cpath fill='%23ce0704' d='M175 246H326C330 246 332 249 330 253L319 279H163Z'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap">
+  <style>
+    :root { --bg: #f4f6fa; --card: #fff; --text: #121a2e; --muted: #5d6680; --line: #e4e8f0; --azul: #253d83; --azul-2: #2f4fa8; --vermelho: #ce0704; --ok: #17774a; --ok-bg: #e2f4ea; --warn: #8a5a00; --warn-bg: #fff3d6; --erro: #b3140f; --erro-bg: #fdecea; color-scheme: light; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #0d1222; --card: #151c30; --text: #e6eaf5; --muted: #99a3bf; --line: #29324c; --azul: #8ea5ea; --azul-2: #9bb0ee; --vermelho: #ff4a42; --ok: #6fd39c; --ok-bg: #173526; --warn: #f0c060; --warn-bg: #3a2e10; --erro: #f08a80; --erro-bg: #3d1c19; color-scheme: dark; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 15px/1.5 "Inter", system-ui, sans-serif; }
+    header { display: flex; align-items: center; gap: 14px; padding: 18px 24px; background: var(--card); border-bottom: 3px solid var(--vermelho); }
+    header svg { width: 54px; height: auto; flex: none; }
+    header svg .a { fill: var(--azul); } header svg .v { fill: var(--vermelho); }
+    header h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.02em; color: var(--azul); }
+    header h1 span { color: var(--vermelho); }
+    header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+    main { max-width: 980px; margin: 0 auto; padding: 28px 20px 40px; }
+    .grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+    .cartao { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 22px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 1px 2px rgba(18,26,46,.04), 0 8px 24px rgba(18,26,46,.06); }
+    .cartao::before { content: ""; position: absolute; left: 0; top: 18px; bottom: 18px; width: 4px; border-radius: 0 4px 4px 0; background: linear-gradient(var(--azul) 0 60%, var(--vermelho) 60%); }
+    .topo { display: flex; align-items: center; gap: 12px; }
+    .icone { font-size: 34px; line-height: 1; }
+    .cartao h2 { margin: 0; font-size: 20px; font-weight: 800; }
+    .desc { margin: 0; color: var(--muted); font-size: 14px; }
+    .status { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 3px 11px; border-radius: 999px; font-size: 13px; font-weight: 700; }
+    .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .s-ok { background: var(--ok-bg); color: var(--ok); } .s-espera { background: var(--warn-bg); color: var(--warn); } .s-erro { background: var(--erro-bg); color: var(--erro); }
+    .acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 6px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: 600 15px "Inter", sans-serif; text-decoration: none; cursor: pointer; }
+    .btn.principal { background: var(--azul); border-color: var(--azul); color: #fff; flex: 1; }
+    .btn.principal[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+    .btn:hover { filter: brightness(.96); }
+    .info { color: var(--muted); font-size: 12.5px; }
+    footer { margin-top: 26px; text-align: center; color: var(--muted); font-size: 12.5px; }
+    @media (max-width: 560px) { header { padding: 14px 16px; } header h1 { font-size: 18px; } main { padding: 18px 12px 30px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <svg viewBox="158 164 314 196" role="img" aria-label="DISPPAR"><path class="a" d="M277 168H432C452 168 468 186 461 206L413 330C407 346 395 356 378 356H209L225 313H352C358 313 362 310 364 305L393 226C396 218 392 213 385 213H261Z"/><path class="v" d="M175 246H326C330 246 332 249 330 253L319 279H163Z"/></svg>
+    <div><h1>CENTRAL AUTOMAÇÕES <span>DISPPAR</span></h1><p>Os sistemas da loja num lugar só</p></div>
+  </header>
+  <main>
+    <div class="grade" id="grade"><p class="info">Carregando…</p></div>
+    <footer id="rodape"></footer>
+  </main>
+  <script>
+    const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const rotulo = s => s === 'no ar' ? ['s-ok', 'No ar'] : s === 'ligando' || s === 'reiniciando' ? ['s-espera', s === 'ligando' ? 'Ligando…' : 'Reiniciando…'] : ['s-erro', s === 'com problema' ? 'Com problema' : 'Desligado'];
+    const tempo = iso => { if (!iso) return ''; const m = Math.floor((Date.now() - Date.parse(iso)) / 60000); return m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h` : `${Math.floor(m / 1440)} dia(s)`; };
+    async function atualizar() {
+      try {
+        const r = await fetch('api/central/status', { cache: 'no-store' });
+        const st = await r.json();
+        document.getElementById('grade').innerHTML = st.sistemas.map(s => {
+          const [cls, txt] = rotulo(s.status);
+          // no próprio servidor abre pelo endereço do computador; de fora, pelo link fixo
+          const abrir = st.noServidor ? s.local : s.link;
+          return `<section class="cartao">
+            <div class="topo"><span class="icone">${esc(s.icone)}</span><div><h2>${esc(s.nome)}</h2></div></div>
+            <p class="desc">${esc(s.descricao)}</p>
+            <span class="status ${cls}">${txt}</span>
+            <p class="info">${s.status === 'no ar' && s.desde ? `Ligado há ${tempo(s.desde)}` : ''}${s.reinicios ? ` · religado ${s.reinicios}× desde que a Central ligou` : ''}</p>
+            <div class="acoes">
+              <a class="btn principal" href="${esc(abrir || '#')}" ${abrir ? '' : 'aria-disabled="true"'}>Abrir ${esc(s.nome)} →</a>
+              ${st.noServidor ? `<button class="btn" data-reiniciar="${esc(s.id)}" title="Religa só este sistema">↻ Reiniciar</button>` : ''}
+            </div>
+          </section>`;
+        }).join('');
+        document.getElementById('rodape').textContent = `Atualizado às ${new Date().toLocaleTimeString('pt-BR')}${st.noServidor ? ' · você está no servidor' : ''}`;
+      } catch (e) {
+        document.getElementById('grade').innerHTML = '<p class="info">Não consegui falar com a Central. Tentando de novo…</p>';
+      }
+    }
+    document.addEventListener('click', async e => {
+      const b = e.target.closest('[data-reiniciar]');
+      if (!b || !confirm('Reiniciar só este sistema? O outro continua funcionando.')) return;
+      b.disabled = true;
+      await fetch('api/central/reiniciar/' + b.dataset.reiniciar, { method: 'POST' }).catch(() => {});
+      setTimeout(atualizar, 1500);
+    });
+    atualizar();
+    setInterval(atualizar, 10000);
+  </script>
+</body>
+</html>

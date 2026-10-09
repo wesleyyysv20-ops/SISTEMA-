@@ -1,0 +1,33 @@
+﻿CENTRAL AUTOMAÇÕES DISPPAR
+==========================
+
+Um serviço só no Windows que liga os sistemas da loja, cada um separado:
+  - Cotação          (cotações, comparativo de preços e pedidos)
+  - DISPPAR Atende   (central de WhatsApp das lojas)
+Se um parar, o outro continua. O que cair é religado sozinho.
+
+MUDANÇA PARA O SERVIDOR NOVO (Windows Server 2016/2019/2022 ou Windows 10/11, 64 bits)
+-------------------------------------------------------------------------------
+1) No computador ANTIGO:
+   a) Abra a Cotação com um usuário ADMINISTRADOR > Configurações > Backup >
+      "Exportar para a Central" e salve o arquivo em  dados\cotacao  deste pendrive.
+   b) Rode 1-NO-COMPUTADOR-ANTIGO-LEVAR-DADOS.bat
+      (desliga o Atende ali, leva conversas e a sessão do WhatsApp, e trava aquele computador).
+
+2) No servidor NOVO:
+   Rode INSTALAR-CENTRAL.bat (ele pede permissão de administrador).
+   No fim, abre a página da Central:  http://localhost:3200
+
+DEPOIS DE INSTALADO (pasta C:\DISPPAR-Central\gerenciar)
+---------------------------------------------------------
+  LIGAR / DESLIGAR / REINICIAR    a Central inteira
+  STATUS                          situação de cada sistema e os links
+  VER-LOG-COTACAO / VER-LOG-ATENDE
+  CRIAR-ADMIN-COTACAO             cria/troca a senha de um administrador da Cotação
+Na página da Central (no próprio servidor) dá para reiniciar só um sistema.
+
+Senhas da Cotação: o Supabase não entrega as senhas. Na importação cada usuário
+recebe uma senha provisória (C:\DISPPAR-Central\dados\cotacao\senhas-provisorias.txt).
+
+Cópia de segurança: FAZER-COPIA-NO-PENDRIVE.bat (pode rodar com tudo ligado).
+Guarde o pendrive com cuidado: ele tem a sessão do WhatsApp e os dados da loja.

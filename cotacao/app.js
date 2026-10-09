@@ -1117,19 +1117,26 @@ async function iniciarSupabase(cfg) {
       if (!error && data.length) { nuvem.nome = data[0].nome || ''; break; }
       await cli.auth.signOut();
       session = null;
-      mensagemLogin(error ? `Erro ao verificar o acesso: ${error.message}` : 'Este e-mail não tem acesso ao sistema. Peça para liberar em "cotacao_usuarios".');
+      mensagemLogin(error ? `Erro ao verificar o acesso: ${error.message}` : cfg.local ? 'Este e-mail não tem acesso ao sistema. Peça a um administrador.' : 'Este e-mail não tem acesso ao sistema. Peça para liberar em "cotacao_usuarios".');
     }
     nuvem.usuario = session.user.email;
     fecharLogin();
     await usarNuvem(adaptadorSupabase(cli));
-    assinarMudancas(cli);
-    iniciarPresenca(cli);
+    if (cfg.local) {
+      // servidor da Central DISPPAR (na loja): sem limite de tráfego, confere as mudanças a cada 4 segundos
+      nuvem.local = true;
+      setInterval(() => { if (!document.hidden) puxarNuvem(); }, 4000);
+      iniciarPresencaLocal(cli);
+    } else {
+      assinarMudancas(cli);
+      iniciarPresenca(cli);
+    }
     verSeAdmin(cli);
     render();
   } catch (e) {
     console.error(e);
     mostrarStatus('erro');
-    mensagemLogin('Não consegui conectar ao Supabase: ' + e.message);
+    mensagemLogin(((window.COTACAO_CONFIG || {}).local ? 'Não consegui conectar ao servidor da loja: ' : 'Não consegui conectar ao Supabase: ') + e.message);
   }
 }
 
@@ -1164,6 +1171,7 @@ function telaLogin(cli) {
       resolve(data.session);
     };
     tela.querySelector('[data-esqueci]').onclick = async () => {
+      if ((window.COTACAO_CONFIG || {}).local) return mensagemLogin('Peça a um administrador para trocar a sua senha (Configurações → Conta e usuários).');
       const email = form.email.value.trim();
       if (!email) return mensagemLogin('Digite o e-mail para receber o link de nova senha.');
       const { error } = await cli.auth.resetPasswordForEmail(email, { redirectTo: location.origin });
@@ -1275,6 +1283,32 @@ function iniciarPresenca(cli) {
   } catch (e) {
     console.error(e); // sem presença: o sistema funciona igual
   }
+}
+
+/** Presença no servidor local: cada computador conta onde está a cada 5 s e recebe onde estão os outros. */
+function iniciarPresencaLocal(cli) {
+  presenca.chave = `${nuvem.usuario}#${uid()}`;
+  presenca.pronto = true;
+  const trocar = async () => {
+    try {
+      const { data: { session } } = await cli.auth.getSession();
+      if (!session) return;
+      const r = await fetch('api/presenca', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token }, body: JSON.stringify({ chave: presenca.chave, estado: meuEstadoPresenca() }) });
+      if (!r.ok) return;
+      const eu = String(nuvem.usuario || '').toLowerCase();
+      const porEmail = new Map();
+      for (const x of await r.json()) {
+        if (!x?.email || String(x.email).toLowerCase() === eu) continue; // eu mesmo (inclusive outra aba) não aparece
+        const atual = porEmail.get(x.email);
+        if (!atual || (x.cotId && !atual.cotId)) porEmail.set(x.email, x);
+      }
+      presenca.outros = [...porEmail.values()];
+      atualizarPresencaTela();
+    } catch (e) { /* sem presença: o sistema funciona igual */ }
+  };
+  presenca.canal = { track: () => trocar() };
+  trocar();
+  setInterval(() => { if (!document.hidden) trocar(); }, 5000);
 }
 
 function meuEstadoPresenca() {
@@ -8106,6 +8140,9 @@ function renderConfig() {
     </div>
     <p class="small muted" style="margin-top:10px">${db.produtos.length} produtos · ${db.fornecedores.length} fornecedores · ${db.cotacoes.length} cotações${db.ultimoBackup ? ` · último backup em ${fmtData(db.ultimoBackup)}` : ''}</p>
     ${renderBackupsNuvem()}
+    ${nuvem.supabase && !nuvem.local && nuvem.admin ? `<h3 style="margin:18px 0 4px">📦 Levar para o servidor da loja (Central DISPPAR)</h3>
+    <p class="muted small" style="margin-top:0">Baixa <b>todos os dados</b> desta nuvem e a <b>lista de usuários</b> num arquivo só (<code>exportacao-cotacao.json</code>). Coloque o arquivo na pasta <b>dados\cotacao</b> do pendrive da Central: o instalador traz tudo para o servidor novo.</p>
+    <button type="button" data-act="exportarParaCentral">📦 Exportar para a Central</button>` : ''}
   </section>`;
 }
 
@@ -8538,6 +8575,26 @@ const acoes = {
   },
 
   menuMais: () => abrirMenuMais(),
+  exportarParaCentral: async () => {
+    // tudo o que está na nuvem (documentos com o conteúdo de agora) + os usuários, para o importar.js do servidor local
+    toast('Juntando os dados da nuvem…');
+    try {
+      if (nuvem.timer || nuvem.gravando) await sincronizar();
+      const documentos = {};
+      for (const col of ['sistema', 'produtos', 'fornecedores', 'cotacoes', 'qtds']) {
+        const r = await nuvem.db.collection(col).limit(1000).get();
+        for (const d of r.docs) if (d.exists) documentos[`${col}/${d.id}`] = d.data();
+      }
+      const { data: usuarios, error } = await nuvem.supabase.rpc('cotacao_listar_usuarios');
+      if (error) throw new Error(error.message);
+      const conteudo = { exportadoEm: new Date().toISOString(), origem: 'supabase', documentos, usuarios: (usuarios || []).map(u => ({ email: u.email, nome: u.nome || null, admin: !!u.admin })) };
+      await baixarBlob(new Blob([JSON.stringify(conteudo)], { type: 'application/json' }), 'exportacao-cotacao.json');
+      toast(`Exportado: ${Object.keys(documentos).length} documentos e ${conteudo.usuarios.length} usuário(s).`, 6000);
+    } catch (e) {
+      console.error(e);
+      avisar('Não consegui exportar: ' + e.message);
+    }
+  },
   irSecaoCot: el => {
     const alvo = el.dataset.alvo === 'topo' ? null : document.getElementById(el.dataset.alvo);
     if (!alvo) return window.scrollTo({ top: 0, behavior: 'smooth' });

@@ -1,0 +1,14 @@
+{
+  "name": "cotacao-disppar-servidor",
+  "version": "1.0.0",
+  "description": "Cotação DISPPAR: servidor local (parte da Central Automações DISPPAR)",
+  "type": "module",
+  "scripts": {
+    "start": "node --no-warnings index.js",
+    "test": "node --no-warnings --test",
+    "admin": "node --no-warnings criar-admin.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

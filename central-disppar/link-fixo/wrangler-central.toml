@@ -1,0 +1,8 @@
+name = "central-disppar"
+main = "worker-central.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "LINK"
+id = "a9bc88a027ed405b9e3414ba7b65c334"

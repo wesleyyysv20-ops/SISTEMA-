@@ -1,0 +1,8 @@
+name = "cotacao-disppar"
+main = "worker-cotacao.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "LINK"
+id = "7ff275f63a9d4bf380780b502a90efa5"

@@ -1,0 +1,11 @@
+{
+  "name": "central-automacoes-disppar",
+  "version": "1.0.0",
+  "description": "Central Automações DISPPAR: liga a Cotação e o DISPPAR Atende como programas separados, com página inicial",
+  "type": "module",
+  "scripts": {
+    "start": "node --no-warnings central/vigia.js",
+    "test": "node --no-warnings --test"
+  },
+  "engines": { "node": ">=22.5" }
+}
