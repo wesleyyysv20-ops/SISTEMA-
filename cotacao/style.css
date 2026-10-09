@@ -2393,3 +2393,19 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 .dlg-dividir label { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-sm); margin-top: 8px; }
 .div-qtds { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .div-total { margin: 8px 0 0; font-weight: 700; }
+
+/* etiquetas de aviso: clique vai ao próximo item; o ⏷ grudado filtra */
+.pill-grupo { display: inline-flex; align-items: stretch; }
+.pill-grupo > .pill-aviso { cursor: pointer; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.pill-filtro { min-height: 0; padding: 0 8px; border: 0; border-left: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 0 var(--r-pill) var(--r-pill) 0; font-size: var(--fs-xs); font-weight: 800; box-shadow: none; background: inherit; color: inherit; }
+.pill-grupo > .pill-filtro { background: color-mix(in srgb, var(--card) 35%, transparent); }
+.pill-grupo > .pill-aviso.perigo + .pill-filtro { color: var(--danger); background: var(--danger-bg); }
+.pill-grupo > .pill-aviso.atencao + .pill-filtro { color: var(--warn); background: var(--warn-bg); }
+.pill-grupo > .pill-aviso.demora + .pill-filtro { color: var(--demora-text); background: var(--demora-bg); }
+.pill-grupo > .pill-aviso.regra + .pill-filtro { color: var(--primary-2); background: var(--blue-bg); }
+.pill-grupo > .pill-aviso.campanha + .pill-filtro { color: var(--campanha-texto); background: var(--campanha-bg); }
+.pill-grupo > .pill-aviso.aviso-duvida + .pill-filtro { color: var(--roxo-forte); background: var(--kit-bg); }
+.pill-filtro:hover, .pill-filtro.ativo { filter: brightness(.93); }
+.pill-pos { margin-left: 4px; padding: 0 6px; border-radius: var(--r-pill); background: color-mix(in srgb, currentColor 14%, transparent); font-size: var(--fs-2xs); font-weight: 800; }
+@keyframes piscarLinha { 0%, 100% { box-shadow: none; } 30% { box-shadow: inset 0 0 0 3px var(--primary-2); } }
+.tab-comp tr.linha-piscar > td { animation: piscarLinha 1.2s ease; }

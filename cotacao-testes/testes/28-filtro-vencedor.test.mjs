@@ -72,7 +72,7 @@ test('quantidades: Tab anda na linha (Paranoá → São Sebastião → item de b
   await s.fechar();
 });
 
-test('etiquetas de aviso levam aos itens: clicar mostra só eles; clicar de novo (ou "ver todos") volta', async () => {
+test('etiquetas de aviso: o ⏷ mostra só esses itens; clicar de novo (ou "ver todos") volta', async () => {
   const itens = ['A', 'B', 'C', 'D'].map(x => item('P' + x, 'PECA ' + x, x === 'B' ? 'SÓ NGK' : 'QUALQUER', { codigo: x }));
   // B: marca diferente; C: diferença acima de 100%
   const s = await abrir(base({ cotacoes: [cotacao('c1', '0036', '2026-09-28', 'aberta', itens, [
@@ -83,10 +83,10 @@ test('etiquetas de aviso levam aos itens: clicar mostra só eles; clicar de novo
   await page.click('nav [data-route=cotacoes]');
   await page.click('[data-route=cotacao][data-id=c1]');
   const visiveis = () => page.locator('.tab-comp tbody tr[data-comp-linha]:not([hidden])').evaluateAll(trs => trs.map(tr => tr.querySelector('td:nth-child(2)').innerText.split('\n')[0].trim()));
-  await page.click('.pill-aviso.aviso-dif');
+  await page.click('.pill-filtro[data-tipo=dif]');
   assert.deepEqual(await visiveis(), ['C']);
   assert.equal(await page.locator('.pill-aviso.aviso-dif.ativo').count(), 1);
-  await page.click('.pill-aviso.aviso-marca');
+  await page.click('.pill-filtro[data-tipo=marca]');
   assert.deepEqual(await visiveis(), ['B'], 'troca de aviso');
   // continua filtrado depois de redesenhar
   await page.evaluate(() => render());
@@ -95,12 +95,12 @@ test('etiquetas de aviso levam aos itens: clicar mostra só eles; clicar de novo
   await page.click('.limpar-aviso');
   assert.equal((await visiveis()).length, 4);
   // junto com "Mostrar itens de": os dois filtros valem
-  await page.click('.pill-aviso.aviso-dif');
+  await page.click('.pill-filtro[data-tipo=dif]');
   await page.selectOption('#filtroVencedor', 'f2');
   assert.deepEqual(await visiveis(), [], 'o item C é da Kaizen');
   await page.selectOption('#filtroVencedor', 'f1');
   assert.deepEqual(await visiveis(), ['C']);
-  await page.click('.pill-aviso.aviso-dif');
+  await page.click('.pill-filtro[data-tipo=dif]');
   assert.equal((await visiveis()).length, 3, 'só o filtro de fornecedor (Kaizen ganha A, C, D... e B vai para a Via por marca)');
   assert.deepEqual(s.erros, []);
   await s.fechar();

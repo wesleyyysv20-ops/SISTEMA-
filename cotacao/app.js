@@ -5450,6 +5450,29 @@ function filtroAviso(c) {
   return ui.filtroAviso && ui.filtroAviso.cotId === c.id ? ui.filtroAviso.tipo : '';
 }
 
+/**
+ * Etiqueta de aviso: vai para o próximo item (depois da linha marcada) que tem aquele aviso, dando a volta no fim.
+ * A etiqueta mostra a posição (ex.: 2/5) e a janela flutuante acompanha.
+ */
+function irProximoAviso(c, tipo, el) {
+  if (!c || !tipo) return;
+  const todas = [...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]')];
+  const com = todas.filter(tr => !tr.hidden && (tr.dataset.avisos || '').split(' ').includes(tipo));
+  if (!com.length) return toast('Nenhum item com este aviso na lista.');
+  const atual = ui.linhaComp?.cotId === c.id ? todas.findIndex(tr => +tr.dataset.compLinha === ui.linhaComp.i) : -1;
+  const alvo = com.find(tr => todas.indexOf(tr) > atual) || com[0];
+  const i = +alvo.dataset.compLinha;
+  ui.linhaComp = { cotId: c.id, i };
+  document.querySelectorAll('.tab-comp tr.linha-atual').forEach(x => x.classList.remove('linha-atual'));
+  alvo.classList.add('linha-atual', 'linha-piscar');
+  setTimeout(() => alvo.classList.remove('linha-piscar'), 1300);
+  alvo.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // posição na etiqueta (2/5)
+  document.querySelectorAll('.pill-aviso .pill-pos').forEach(x => x.remove());
+  if (el) el.insertAdjacentHTML('beforeend', `<span class="pill-pos">${com.indexOf(alvo) + 1}/${com.length}</span>`);
+  if (pip.win && !pip.win.closed && pip.cotId === c.id) { pip.i = i; desenharPip(false); }
+}
+
 /** Mostra só as linhas do fornecedor escolhido e do aviso escolhido (sem redesenhar a tabela). */
 /** Busca do comparativo (código, descrição, similar ou marca pedida). */
 function buscaComp(c) {
@@ -5479,6 +5502,13 @@ function aplicarFiltrosComp(c) {
   if (barra) {
     barra.dataset.filtro = fa;
     barra.querySelectorAll('.pill-aviso').forEach(b => b.classList.toggle('ativo', b.dataset.tipo === fa));
+    barra.querySelectorAll('.pill-filtro').forEach(b => {
+      const at = b.dataset.tipo === fa;
+      b.classList.toggle('ativo', at);
+      b.textContent = at ? '✕' : '⏷';
+      b.title = at ? 'Mostrar todos os itens de novo' : 'Mostrar só os itens com este aviso';
+      b.closest('.pill-grupo')?.classList.toggle('ativo', at);
+    });
     const limpar = barra.querySelector('.limpar-aviso');
     if (limpar) { limpar.hidden = !fa; limpar.dataset.tipo = fa; }
   }
@@ -6466,7 +6496,12 @@ function renderCotacao(id) {
       if (qtdDemora) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso demora" data-tipo="demora" title="Clique para ver só esses itens. Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} GO (demora)</button>`);
       if (qtdAlertas) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso atencao aviso-alertas" data-tipo="alertas" title="Clique para ver só esses itens. Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} fora do normal</button>`);
       const fa = filtroAviso(c);
-      const ets = et.map(x => (fa && x.includes(`data-tipo="${fa}"`) ? x.replace('class="pill-aviso', 'class="pill-aviso ativo') : x));
+      const ets = et.map(x => {
+        const tipo = /data-tipo="([^"]+)"/.exec(x)?.[1] || '';
+        const ativo = fa === tipo;
+        const pill = x.replace('data-act="filtroAviso"', 'data-act="proximoAviso"').replace('title="Clique para ver só esses itens.', 'title="Clique para ir ao próximo item com este aviso (o ⏷ ao lado mostra só esses itens).');
+        return `<span class="pill-grupo${ativo ? ' ativo' : ''}">${ativo ? pill.replace('class="pill-aviso', 'class="pill-aviso ativo') : pill}<button type="button" class="pill-filtro${ativo ? ' ativo' : ''}" data-act="filtroAviso" data-tipo="${tipo}" title="${ativo ? 'Mostrar todos os itens de novo' : 'Mostrar só os itens com este aviso'}" aria-label="${ativo ? 'Tirar o filtro' : 'Filtrar por este aviso'}">${ativo ? '✕' : '⏷'}</button></span>`;
+      });
       return et.length ? `<div class="avisos-comp${c.status === 'finalizada' ? ' discreto' : ''}" data-filtro="${fa}">${ets.join('')}<button type="button" class="link limpar-aviso" data-act="filtroAviso" data-tipo="${fa}" ${fa ? '' : 'hidden'}>✕ ver todos</button></div>` : '';
     })()}
     </div>
@@ -8315,6 +8350,7 @@ const acoes = {
   },
 
   menuMais: () => abrirMenuMais(),
+  proximoAviso: el => irProximoAviso(cotAtual(), el.dataset.tipo, el),
   dividirCompra: el => dividirCompraItem(cotAtual(), +el.dataset.i, el.dataset.f != null ? +el.dataset.f : null),
   corrigirDescCadastro: el => {
     const r = rascunho();
