@@ -137,12 +137,35 @@ function ajustarKaizen(c) {
   return mudou;
 }
 
+/**
+ * Itens controlados: quando entram na nova cotação, o sistema avisa e BLOQUEIA até um administrador autorizar.
+ * A lista começa com os itens que o dono pediu (orçamento 1236686, 13/10/2026) e é editada em Configurações.
+ */
+function itensControladosInicio() {
+  return [
+  { codigo: '85GR-CAR8098', descricao: 'BORRACHA SILICONE BLACK 8098 (CAR80)' },
+  { codigo: '85GR-598/2942514', descricao: 'BORRACHA SILICONE BLACK 598 (LOCTITE)' },
+  { codigo: 'DOT4-500ML/BOSCH', descricao: 'FLUIDO PARA FREIO 500 ML (DOT 4) BOSCH' },
+  { codigo: 'DOT3-500ML-BOSCH', descricao: 'FLUIDO PARA FREIO 500 ML (DOT 3) BOSCH' },
+  { codigo: 'ADIT-DIL ROSA-PAR', descricao: 'ADITIVO RAD DILUIDO (PRONTO PRA USO) PARAFLU' },
+  { codigo: 'ADIT-PARAFLU-ROSA', descricao: 'ADITIVO RAD CONCENT (ROSA-ORGAN.) PARAFLU' },
+  { codigo: 'CAR80', descricao: 'DESCARBONIZANTE (CAR80)' },
+];
+}
+const itensControlados = () => db.config.itensControlados || [];
+/** O item da nova cotação é controlado? (pelo código do arquivo ou o do cadastro) */
+function controleDoItem(x, p) {
+  const ks = new Set([chaveCodigo(x?.codigoArquivo || ''), chaveCodigo(p?.codigo || '')].filter(Boolean));
+  return itensControlados().find(c => ks.has(chaveCodigo(c.codigo))) || null;
+}
+const bloqueadoNova = (x, p) => !!controleDoItem(x, p) && !x.autorizado;
+
 function normalizar(d) {
   const base = structuredClone(DEFAULT_DB);
   return {
     ...base,
     ...d,
-    config: ordenarLojas({ ...base.config, ...(d.config || {}) }),
+    config: ordenarLojas({ ...base.config, itensControlados: itensControladosInicio(), ...(d.config || {}) }),
     produtos: d.produtos || [],
     fornecedores: d.fornecedores || [],
     cotacoes: (d.cotacoes || []).map(c => { ajustarKaizen(c); return c; }),
@@ -1821,6 +1844,8 @@ function checklistNova(r = rascunho()) {
   const itensLista = xs => xs.slice(0, 6).join(', ') + (xs.length > 6 ? ` e mais ${xs.length - 6}` : '');
   const cod = x => x.codigoArquivo || prod[x.produtoId].codigo;
   const res = [];
+  const bloq = itens.filter(x => bloqueadoNova(x, prod[x.produtoId]));
+  if (bloq.length) res.push({ tipo: 'controlado', txt: `🔒 ${bloq.length} item(ns) controlado(s) sem autorização: ${itensLista(bloq.map(cod))}` });
   const semMarca = itens.filter(x => !(x.marca || prod[x.produtoId].marca));
   if (semMarca.length) res.push({ tipo: 'marca', txt: `${semMarca.length} item(ns) sem marca pedida: ${itensLista(semMarca.map(cod))}` });
   const vistos = new Map();
@@ -2914,6 +2939,37 @@ function alternarComprado(c, i) {
   render();
   if (pip.win && !pip.win.closed) desenharPip(false);
   toast(vira ? `${c.itens[i].codigo || 'Item'} marcado como já comprado: saiu dos pedidos.` : `${c.itens[i].codigo || 'Item'} volta a ser comprado pela cotação.`);
+}
+
+/** Item controlado acabou de entrar na nova cotação: alerta na hora, dizendo qual (uma vez por item). */
+let avisandoControlados = false;
+async function avisarControladosNova() {
+  if (avisandoControlados || rota().nome !== 'nova' || ui.datacar || document.querySelector('.dlg-fundo')) return;
+  const r = rascunho();
+  const prod = prodPorId();
+  const novos = r.itens.filter(x => prod[x.produtoId] && bloqueadoNova(x, prod[x.produtoId]) && !x.controleAvisado);
+  if (!novos.length) return;
+  avisandoControlados = true;
+  novos.forEach(x => { x.controleAvisado = true; });
+  salvar();
+  const lista = novos.map(x => `• ${x.codigoArquivo || prod[x.produtoId].codigo} — ${x.descricaoArquivo || prod[x.produtoId].descricao}`).join('\n');
+  const esc2 = await abrirDialogo(`${novos.length === 1 ? 'Este item controlado entrou' : `Estes ${novos.length} itens controlados entraram`} na cotação:\n\n${lista}\n\n${novos.length === 1 ? 'Ele fica BLOQUEADO' : 'Eles ficam BLOQUEADOS'} até um administrador autorizar. A cotação não é criada com item bloqueado.`, [
+    { txt: 'Deixar bloqueado', valor: null },
+    { txt: novos.length === 1 ? 'Tirar da cotação' : 'Tirar todos da cotação', valor: 'tirar', cls: 'danger' },
+    ...(ehAdmin() ? [{ txt: novos.length === 1 ? '✓ Autorizar' : '✓ Autorizar todos', valor: 'autorizar', cls: 'primary' }] : []),
+  ], document, { titulo: '🔒 Item controlado na cotação' });
+  avisandoControlados = false;
+  if (esc2 === 'tirar') { r.itens = r.itens.filter(x => !novos.includes(x)); salvar(); render(); toast(`${novos.length} item(ns) controlado(s) tirado(s) da cotação.`); }
+  else if (esc2 === 'autorizar') { autorizarItensControlados(novos); }
+  else { render(); setTimeout(avisarControladosNova, 50); } // pode ter entrado outro enquanto a janela estava aberta
+}
+function autorizarItensControlados(itens) {
+  if (!ehAdmin()) return avisar('Só um administrador pode autorizar item controlado.');
+  const quem = { por: nuvem.usuario || 'administrador', em: new Date().toISOString() };
+  itens.forEach(x => { x.autorizado = quem; });
+  salvar();
+  render();
+  toast(`${itens.length} item(ns) controlado(s) autorizado(s).`);
 }
 
 /** Abre a janela da compra dividida do item i e grava (comparativo ou janela flutuante). */
@@ -5015,7 +5071,11 @@ function linhaItemNova(ctx, x, i) {
     const obs = daPlanilha.map(o => o || 'sem OBS');
     const origemObs = daPlanilha.length ? 'OBS na planilha' : p.obs ? 'OBS no cadastro' : '';
     const textoObs = daPlanilha.length ? obs : p.obs ? [p.obs] : [];
-    return `<tr data-item-linha="${i}" ${itemNaBusca(x, p, ui.filtroItens) && itemNoTipo(ctx, x, i) ? '' : 'hidden'} class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}">
+    const ctrl = controleDoItem(x, p);
+    const selo = !ctrl ? '' : x.autorizado
+      ? `<br><span class="selo-controlado ok" title="Item controlado, autorizado por ${esc(x.autorizado.por || 'administrador')} em ${new Date(x.autorizado.em).toLocaleString('pt-BR')}">🔓 controlado · autorizado</span>`
+      : `<br><span class="selo-controlado" title="Item da lista de itens controlados: só vai para a cotação com a autorização de um administrador">🔒 BLOQUEADO · precisa de autorização</span> <button type="button" class="sm btn-autorizar" data-act="autorizarControlado" data-i="${i}">✓ Autorizar</button>`;
+    return `<tr data-item-linha="${i}" ${itemNaBusca(x, p, ui.filtroItens) && itemNoTipo(ctx, x, i) ? '' : 'hidden'} class="${i === ui.cursorItem ? 'item-atual' : ''} ${dup ? 'item-dup' : ''}${ctrl && !x.autorizado ? ' item-bloqueado' : ''}">
       <td class="c">${i + 1}</td>
       <td>${x.papelzinho
         ? `<input class="cod-item cod-papel" data-codigo-papel="${i}" value="${esc(x.codigoArquivo || p.codigo)}" title="Código do papelzinho: corrija se veio incompleto ou errado. A correção fica salva no cadastro (se o código já existir lá, o item passa a ser o do cadastro)." aria-label="Código de ${esc(p.descricao)} (papelzinho)" spellcheck="false" autocomplete="off">`
@@ -5024,7 +5084,7 @@ function linhaItemNova(ctx, x, i) {
         : esc(x.codigoArquivo || p.codigo)}${ehKit(x.codigoArquivo || p.codigo, p.descricao) ? ' <span class="badge kit">KIT</span>' : ''}${x.papelzinho ? ' <span class="tag-papel" title="Veio dos papelzinhos de São Sebastião">PAPELZINHOS</span>' : ''}${x.novoCadastro ? ` <span class="badge novo-cad" title="Não estava no cadastro: foi cadastrado agora pelo arquivo do DataCar${p.marca ? '' : '. Preencha a marca exigida.'}">🆕 novo no cadastro</span>` : ''}${dup ? ' <span class="badge warn">repetido</span>' : ''}${dup && parceiros[i].length ? `<br><span class="obs-dup">mesmo código em: ${parceiros[i].slice(0, 4).map(j => `<button type="button" class="link" data-act="irItem" data-i="${j}" title="Ir para a linha ${j + 1}">#${j + 1} ${esc(codDe(r.itens[j]))}</button>`).join(' ')}${parceiros[i].length > 4 ? ` +${parceiros[i].length - 4}` : ''}</span>` : ''}${x.codigoArquivo && x.codigoArquivo !== p.codigo ? `<br><span class="small muted">cadastro: ${esc(p.codigo)}</span>` : ''}${textoObs.length
         ? `<br><span class="${dup ? 'obs-dup' : 'obs-item'}" title="${origemObs}">OBS <b>${textoObs.map(esc).join(' · ')}</b></span>`
         : dup ? '<br><span class="obs-dup">OBS: não encontrada. Importe o arquivo do DataCar de novo para ver.</span>' : ''}
-        ${textoObs.length || dup ? '' : '<br>'}<details class="sim-item"><summary title="Códigos similares (ficam no cadastro)">${p.similar ? `<b>${esc(p.similar)}</b> ✎` : '+ similar'}</summary><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Códigos similares" aria-label="Códigos similares de ${esc(p.descricao)}"></details></td>
+        ${textoObs.length || dup ? '' : '<br>'}<details class="sim-item"><summary title="Códigos similares (ficam no cadastro)">${p.similar ? `<b>${esc(p.similar)}</b> ✎` : '+ similar'}</summary><input data-similar-prod="${p.id}" value="${esc(p.similar)}" placeholder="Códigos similares" aria-label="Códigos similares de ${esc(p.descricao)}"></details>${selo}</td>
       <td style="width:170px"><input class="${(x.marca || p.marca) ? '' : 'falta'} ${x.marca ? 'so-cotacao' : ''}" data-marca-item="${i}" value="${esc(x.marca || p.marca)}" placeholder="Informar marca" title="${p.marca ? `Cadastro: ${esc(p.marca)}. Alterar aqui muda só nesta cotação (Enter duas vezes grava como padrão no cadastro).` : 'Sem marca no cadastro: a marca informada fica salva.'}" aria-label="Marca de ${esc(p.descricao)}">${x.marca ? `<br><span class="small muted">cadastro: ${esc(p.marca)}</span>` : ''}</td>
       <td>${x.descricaoArquivo ? `${esc(x.descricaoArquivo)}<br><span class="desc-diverge" title="O código ${esc(x.codigoArquivo || p.codigo)} veio do DataCar como &quot;${esc(x.descricaoArquivo)}&quot;, mas o cadastro diz &quot;${esc(p.descricao)}&quot;. Na cotação vai a do DataCar.">⚠ cadastro: ${esc(p.descricao)}</span> <button type="button" class="link small" data-act="corrigirDescCadastro" data-i="${i}" title="Grava a descrição do DataCar no cadastro deste código">corrigir o cadastro</button>` : esc(p.descricao)}</td>
       <td class="c" style="white-space:nowrap">${dup ? `<button class="sm" data-act="manterItem" data-i="${i}" title="Manter na cotação e tirar o destaque">✓ Manter</button> ` : ''}<button class="sm danger" data-act="removerItem" data-i="${i}" title="Remover">✕</button></td>
@@ -8033,6 +8093,24 @@ function linhaLojaCfg(l) {
   </tr>`;
 }
 
+function renderControladosCfg() {
+  const lista = itensControlados();
+  const adm = ehAdmin();
+  return `<section class="card">
+    <h2>🔒 Itens controlados</h2>
+    <p class="muted small">Quando algum destes itens entra na <b>nova cotação</b> (DataCar, papelzinhos, busca ou duplicar), o sistema <b>avisa na hora</b> qual item entrou e o deixa <b>bloqueado</b>: a cotação só é criada depois que um administrador clicar em <b>✓ Autorizar</b> (ou se o item for tirado).${adm ? '' : ' <b>Só administradores mudam esta lista.</b>'}</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Código</th><th>Descrição</th><th></th></tr></thead>
+      <tbody>${lista.length ? lista.map((c, k) => `<tr><td><b class="cod-comp">${esc(c.codigo)}</b></td><td>${esc(c.descricao || '')}</td><td class="actions-cell">${adm ? `<button type="button" class="sm danger" data-act="tirarControlado" data-k="${k}" title="Tirar da lista">✕</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="3" class="empty">Nenhum item controlado.</td></tr>'}</tbody>
+    </table></div>
+    ${adm ? `<div class="row" style="margin-top:12px">
+      <input id="ctrlCodigo" placeholder="Código (ex.: CAR80)" autocomplete="off" style="max-width:220px">
+      <input id="ctrlDescricao" placeholder="Descrição (opcional: vem do cadastro)" autocomplete="off" style="max-width:380px">
+      <button type="button" class="primary" data-act="addControlado">+ Adicionar à lista</button>
+    </div>` : ''}
+  </section>`;
+}
+
 function renderMarcasCfg() {
   const eq = db.config.marcasEquivalentes || {};
   const dif = db.config.marcasDiferentes || {};
@@ -8058,7 +8136,7 @@ function renderMarcasCfg() {
 
 /** Abas das Configurações (uma de cada vez, em vez de uma página enorme). */
 const ABAS_CONFIG = [
-  ['aparencia', '🎨 Aparência'], ['loja', '🏪 Loja e planilha'], ['emails', '✉️ E-mails'], ['marcas', '🏷️ Marcas'], ['conta', '👥 Conta e usuários'], ['backup', '💾 Backup'],
+  ['aparencia', '🎨 Aparência'], ['loja', '🏪 Loja e planilha'], ['emails', '✉️ E-mails'], ['marcas', '🏷️ Marcas'], ['controlados', '🔒 Itens controlados'], ['conta', '👥 Conta e usuários'], ['backup', '💾 Backup'],
 ];
 function abaConfig() {
   if (ui.abaConfig == null) { try { ui.abaConfig = localStorage.getItem('cotacao.abaConfig') || ''; } catch (e) { ui.abaConfig = ''; } }
@@ -8126,6 +8204,7 @@ function renderConfig() {
   </form>
   <div data-aba-cfg="conta"${ver('conta')}>${renderConta()}</div>
   <div data-aba-cfg="marcas"${ver('marcas')}>${renderMarcasCfg()}</div>
+  <div data-aba-cfg="controlados"${ver('controlados')}>${renderControladosCfg()}</div>
   <section class="card" data-aba-cfg="backup"${ver('backup')}>
     <h2>Backup dos dados</h2>
     <p class="muted small">${nuvem.db
@@ -8361,6 +8440,7 @@ function render() {
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
   if (nome === 'cotacao') { ajustarColunasFixasDepois(); vigiarLarguraComp(); }
+  if (nome === 'nova') setTimeout(avisarControladosNova, 50);
   anunciarPresenca();
   anotarUltimoLugar();
   const cotTela = nome === 'cotacao' ? db.cotacoes.find(x => x.id === id) : null;
@@ -8575,6 +8655,35 @@ const acoes = {
   },
 
   menuMais: () => abrirMenuMais(),
+  autorizarControlado: async el => {
+    const r = rascunho();
+    const x = r.itens[+el.dataset.i];
+    const p = x && prodPorId()[x.produtoId];
+    if (!x || !p) return;
+    if (!ehAdmin()) return avisar('Só um administrador pode autorizar item controlado. Peça a um administrador (ou tire o item da lista).');
+    if (!(await confirmar(`Autorizar ${x.codigoArquivo || p.codigo} — ${x.descricaoArquivo || p.descricao}?\n\nO item controlado vai para a cotação.`, 'Autorizar'))) return;
+    autorizarItensControlados([x]);
+  },
+  addControlado: () => {
+    if (!ehAdmin()) return avisar('Só um administrador pode mudar a lista de itens controlados.');
+    const cod = $('#ctrlCodigo')?.value.trim().toUpperCase();
+    if (!cod) return;
+    if (itensControlados().some(c => chaveCodigo(c.codigo) === chaveCodigo(cod))) return toast('Esse código já está na lista.');
+    const prod = db.produtos.find(x => chaveCodigo(x.codigo) === chaveCodigo(cod));
+    const desc = $('#ctrlDescricao')?.value.trim().toUpperCase() || prod?.descricao || '';
+    db.config.itensControlados = [...itensControlados(), { codigo: cod, descricao: desc }];
+    salvar();
+    render();
+    toast(`${cod} entrou na lista de itens controlados.`);
+  },
+  tirarControlado: async el => {
+    if (!ehAdmin()) return avisar('Só um administrador pode mudar a lista de itens controlados.');
+    const c = itensControlados()[+el.dataset.k];
+    if (!c || !(await confirmar(`Tirar ${c.codigo} da lista de itens controlados?\n\nEle passa a entrar na cotação sem pedir autorização.`, 'Tirar'))) return;
+    db.config.itensControlados = itensControlados().filter(x => x !== c);
+    salvar();
+    render();
+  },
   exportarParaCentral: async () => {
     // tudo o que está na nuvem (documentos com o conteúdo de agora) + os usuários, para o importar.js do servidor local
     toast('Juntando os dados da nuvem…');
@@ -8813,6 +8922,11 @@ const acoes = {
     if (!itens.length) return avisar('Adicione pelo menos um item.');
     const fornecedores = r.fornecedorIds.map(id => forn[id]).filter(Boolean);
     const ck = checklistNova(r);
+    // itens controlados: só com autorização (bloqueia de verdade)
+    const bloqueados = itens.filter(x => bloqueadoNova(x, prod[x.produtoId]));
+    if (bloqueados.length) {
+      return avisar(`🔒 A cotação não pode ser criada: ${bloqueados.length} item(ns) controlado(s) ainda sem autorização:\n\n${bloqueados.map(x => `• ${x.codigoArquivo || prod[x.produtoId].codigo} — ${x.descricaoArquivo || prod[x.produtoId].descricao}`).join('\n')}\n\nUm administrador precisa clicar em "✓ Autorizar" em cada um (ou tire o item da lista).`);
+    }
     if (ck.length && !(await confirmar(`Antes de criar, confira:\n\n${ck.map(x => '⚠ ' + x.txt).join('\n')}\n\nCriar a cotação mesmo assim?`, 'Criar mesmo assim'))) return;
 
     const cfg = db.config;
@@ -8829,7 +8943,7 @@ const acoes = {
       criadoEm: new Date().toISOString(),
       itens: itens.map(x => {
         const p = prod[x.produtoId];
-        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', descricao: x.descricaoArquivo || p.descricao, unidade: p.unidade, marca: x.marca || p.marca, marcaCotacao: x.marca || '', quantidade: 1, ...(lojaPelaObs(x.obsArquivo) ? { lojaObs: lojaPelaObs(x.obsArquivo) } : {}), ...(x.papelzinho ? { papelzinho: true } : {}) };
+        return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', ...(x.autorizado ? { controladoAutorizado: x.autorizado } : {}), descricao: x.descricaoArquivo || p.descricao, unidade: p.unidade, marca: x.marca || p.marca, marcaCotacao: x.marca || '', quantidade: 1, ...(lojaPelaObs(x.obsArquivo) ? { lojaObs: lojaPelaObs(x.obsArquivo) } : {}), ...(x.papelzinho ? { papelzinho: true } : {}) };
       }),
       fornecedores: fornecedores.map(novoFornCot),
     };

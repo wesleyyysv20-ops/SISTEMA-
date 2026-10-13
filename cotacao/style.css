@@ -2460,3 +2460,11 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 .acoes-cot-forn { white-space: nowrap; }
 .acoes-cot-forn > * { margin-right: 4px; vertical-align: middle; }
 @media (max-width: 760px) { .secoes-cot { top: 52px; overflow-x: auto; flex-wrap: nowrap; } .secoes-cot button { flex: none; } .barra-cot-forn select { min-width: 0; width: 100%; } .acoes-cot-forn { white-space: normal; } }
+
+/* itens controlados: bloqueado até um administrador autorizar */
+.tab-itens tr.item-bloqueado > td { background: var(--danger-bg); }
+.tab-itens tr.item-bloqueado > td:first-child { box-shadow: inset 4px 0 0 var(--danger); }
+.selo-controlado { display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: var(--r-pill); background: var(--danger); color: var(--on-cor); font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+.selo-controlado.ok { background: var(--ok-bg); color: var(--ok); }
+.btn-autorizar { margin-top: 3px; border-color: var(--ok); color: var(--ok); font-weight: 700; }
+.selo-controlado, .btn-autorizar { font-family: var(--font); letter-spacing: 0; }
