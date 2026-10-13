@@ -2488,3 +2488,13 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 .conf-codigo-linha { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
 .conf-corrigir-cod { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); font-weight: 700; }
 .conf-cod-corrigido { margin-top: 2px; color: var(--warn); font-weight: 600; }
+
+/* conferir dados (integridade) */
+.integ-resumo { margin: 4px 0 10px; color: var(--danger); }
+.integ-grupo { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 12px; margin-top: 8px; }
+.integ-grupo > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.integ-grupo > summary .sm { margin-left: auto; }
+.integ-grupo ul { margin: 6px 0 0; padding-left: 20px; max-height: 260px; overflow-y: auto; }
+.integ-erro { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: var(--danger-bg); }
+.integ-aviso { border-color: color-mix(in srgb, var(--warn, #b7791f) 45%, var(--line)); }
+.aviso-integ { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }

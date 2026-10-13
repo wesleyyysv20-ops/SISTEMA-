@@ -1401,7 +1401,7 @@ async function verSeAdmin(cli) {
     nuvem.admin = false;
   }
   if (nuvem.admin && rota().nome === 'config') { await carregarUsuarios(); render(); }
-  else if (['relatorios', 'cotacao', 'fornecedores'].includes(rota().nome)) render(); // mostra (ou esconde) o que é só de administrador
+  else if (['relatorios', 'cotacao', 'fornecedores', 'inicio'].includes(rota().nome)) render(); // mostra (ou esconde) o que é só de administrador
   else atualizarNavAdmin();
 }
 
@@ -1855,7 +1855,7 @@ function checklistNova(r = rascunho()) {
   const abertas = db.cotacoes.filter(c => c.status === 'aberta' && !c.arquivada);
   const emAberta = [];
   for (const x of itens) {
-    const c = abertas.find(cc => cc.itens.some(it => it.produtoId === x.produtoId));
+    const c = abertas.find(cc => cc.itens.some(it => idProdutoItem(it) === x.produtoId));
     if (c) emAberta.push(`${cod(x)} (nº ${c.numero})`);
   }
   if (emAberta.length) res.push({ tipo: 'aberta', txt: `${emAberta.length} item(ns) já estão numa cotação aberta: ${itensLista(emAberta)}` });
@@ -2326,8 +2326,9 @@ function ultimosPrecos(excluirId) {
   for (const c of cots) {
     const { linhas } = comparar(c);
     for (const l of linhas) {
-      if (!l.it.produtoId || l.preco == null) continue;
-      map[l.it.produtoId] = { preco: l.preco, fornecedor: c.fornecedores[l.vencedor].nome, data: c.data, numero: c.numero };
+      const pid = idProdutoItem(l.it);
+      if (!pid || l.preco == null) continue;
+      map[pid] = { preco: l.preco, fornecedor: c.fornecedores[l.vencedor].nome, data: c.data, numero: c.numero };
     }
   }
   return map;
@@ -2344,8 +2345,9 @@ function historicoPrecos() {
     .sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
   for (const c of cots) {
     for (const l of comparar(c).linhas) {
-      if (!l.it.produtoId || l.preco == null) continue;
-      (map[l.it.produtoId] ||= []).push({
+      const pid = idProdutoItem(l.it);
+      if (!pid || l.preco == null) continue;
+      (map[pid] ||= []).push({
         cotId: c.id, numero: c.numero, data: c.data, preco: l.preco, fornecedor: c.fornecedores[l.vencedor].nome,
         manual: l.manual, min: l.min, segundo: l.segundo, difSegundo: l.difSegundo,
         precos: l.precos.map((p, j) => ({ nome: c.fornecedores[j].nome, preco: p })).filter(x => x.preco != null).sort((a, b) => a.preco - b.preco),
@@ -5073,8 +5075,7 @@ function painelRepetidos(ctx) {
 }
 
 /** Produto do cadastro com este código (o código inteiro ou uma das partes "A/B"). */
-function acharProdutoPorCodigo(cod) {
-  const mapa = indiceProdutos();
+function acharProdutoPorCodigo(cod, mapa = indiceProdutos()) {
   const k = v => semAcento(v).replace(/\s+/g, '');
   let p = mapa.get(k(cod)) || null;
   if (!p) for (const parte of String(cod).split(/[\/,;]+/)) { p = mapa.get(k(parte)); if (p) break; }
@@ -5083,9 +5084,76 @@ function acharProdutoPorCodigo(cod) {
   return p;
 }
 
+/** O código do item é desta peça do cadastro? (código, parte de código, similar ou OBS do DataCar) */
+function codigoBateCadastro(cod, p) {
+  if (!p) return false;
+  const k = chaveCodigo(cod || '');
+  if (!k || chaveCodigo(p.codigo || '') === k || mesmoCodigo(cod, p.codigo)) return true;
+  const partes = partesCodigo(cod).partes;
+  const sim = String(p.similar || '').split(/[\/,;\s]+/).map(chaveCodigo).filter(Boolean);
+  if (p.obsDataCar) sim.push(chaveCodigo(p.obsDataCar));
+  return sim.some(t => t === k || partes.includes(t));
+}
+
+/**
+ * Produto do cadastro de um item de cotação: o ligado ao item (se ainda existe e o código bate) ou o do código do item.
+ * Cotações antigas podem apontar para um cadastro que foi reimportado (outro id) ou, antes da regra dos códigos
+ * compostos, para a peça "parecida" (113175/50005 ligado ao 113175/VKBC4221). Sem cadastro: null.
+ */
+let cacheItemProd = null;
+function produtoDoItem(it) {
+  if (!it) return null;
+  const prod = prodPorId();
+  const p = prod[it.produtoId];
+  if (p && codigoBateCadastro(it.codigo, p)) return p;
+  if (!cacheItemProd || cacheItemProd.ref !== indices()) cacheItemProd = { ref: indices(), mapa: indiceProdutos(), memo: new Map() };
+  const chave = (it.codigo || '') + '|' + (it.produtoId || '');
+  if (cacheItemProd.memo.has(chave)) return cacheItemProd.memo.get(chave);
+  let q = it.codigo ? acharProdutoPorCodigo(it.codigo, cacheItemProd.mapa) : null;
+  if (q && !codigoBateCadastro(it.codigo, q)) q = null;
+  if (!q && p && !it.codigo) q = p;
+  cacheItemProd.memo.set(chave, q);
+  return q;
+}
+/** Chave do produto do item para histórico/último preço: o cadastro certo ou, sem cadastro, o próprio código. */
+const idProdutoItem = it => produtoDoItem(it)?.id || (it?.codigo ? 'cod:' + chaveCodigo(it.codigo) : it?.produtoId || null);
+
+/** Produtos usados agora: na lista da nova cotação ou numa cotação aberta (não podem sair do cadastro). */
+function usoDoProduto(prodId) {
+  if (rascunho().itens.some(x => x.produtoId === prodId)) return 'está na lista da nova cotação';
+  const c = db.cotacoes.find(cc => cc.status === 'aberta' && cc.itens.some(it => it.produtoId === prodId || idProdutoItem(it) === prodId));
+  return c ? `está na cotação nº ${c.numero}, que ainda está aberta` : '';
+}
+
+/**
+ * O cadastro mudou: os itens das cotações ABERTAS ligados a ele acompanham (descrição, unidade, marca exigida e
+ * código), para não ficar uma informação no cadastro e outra na cotação. O que veio do arquivo (descrição/marca
+ * próprias da cotação) fica. Cotações finalizadas guardam o histórico como estava. Devolve quantos itens mudaram.
+ */
+function propagarCadastroAbertas(p, antes) {
+  let n = 0;
+  for (const c of db.cotacoes) {
+    if (c.status !== 'aberta') continue;
+    let mudou = false;
+    const itens = c.itens.map(it => {
+      if (it.produtoId !== p.id) return it;
+      const y = { ...it };
+      const descDoCadastro = it.descricao === antes.descricao || chaveCodigo(it.descricao || '') === chaveCodigo(it.codigo || '') || !String(it.descricao || '').trim();
+      if (descDoCadastro && p.descricao) y.descricao = p.descricao;
+      if (!it.marcaCotacao && it.marca === antes.marca) y.marca = p.marca;
+      if (it.unidade === antes.unidade) y.unidade = p.unidade;
+      if (!it.codigoArquivo && p.codigo) { y.codigo = p.codigo; y.codigoCadastro = p.codigo; } else if (p.codigo) y.codigoCadastro = p.codigo;
+      if (['descricao', 'marca', 'unidade', 'codigo', 'codigoCadastro'].some(k => y[k] !== it[k])) { mudou = true; n++; }
+      return y;
+    });
+    if (mudou) c.itens = itens;
+  }
+  return n;
+}
+
 /** O produto foi cadastrado agora e não é usado em mais nada (pode sair do cadastro). */
 function produtoSoNesteItem(prodId, item) {
-  return !db.cotacoes.some(c => c.itens.some(it => it.produtoId === prodId))
+  return !db.cotacoes.some(c => c.itens.some(it => it.produtoId === prodId || idProdutoItem(it) === prodId))
     && !rascunho().itens.some(y => y !== item && y.produtoId === prodId);
 }
 
@@ -5832,7 +5900,7 @@ function checklistPedido(c, fi) {
   add('aviso', '⚠', 'preço fora do normal (último preço pago ou os outros fornecedores)', itens(l => {
     const o = f.respostas?.[l.i];
     const p = l.precos[fi];
-    const ult = l.it.produtoId ? ultimos[l.it.produtoId] : null;
+    const ult = ultimos[idProdutoItem(l.it)] || null;
     return alertasPreco(p, ult, l.precos).length && !(o?.precoConferido != null && o.precoConferido === p);
   }));
   add('aviso', '⚠', 'mais de 100% de diferença para o 2º lugar (preço pode estar errado)', itens(l => difSuspeita(l)));
@@ -6582,7 +6650,7 @@ function renderCotacao(id) {
       </tr></thead>
       <tbody>
         ${comp.linhas.map(l => {
-          const ult = l.it.produtoId ? ultimos[l.it.produtoId] : null;
+          const ult = ultimos[idProdutoItem(l.it)] || null;
           const avisosLinha = new Set(); // para as etiquetas de aviso levarem aos itens
           if (l.aguardando || l.recusadaGanhou) avisosLinha.add('aguardando');
           if (difSuspeita(l)) avisosLinha.add('dif');
@@ -7200,7 +7268,7 @@ function itensMaisCotados() {
   for (const c of cots) {
     const comp = comparar(c);
     for (const l of comp.linhas) {
-      const k = l.it.produtoId || chaveCodigo(l.it.codigo || l.it.descricao || '');
+      const k = idProdutoItem(l.it) || 'cod:' + chaveCodigo(l.it.descricao || '');
       if (!k) continue;
       const x = mapa.get(k) || { it: l.it, vezes: 0, compras: 0, qtd: 0, ultimo: null };
       x.vezes++;
@@ -7791,6 +7859,7 @@ function renderInicio() {
     </div>
   </section>
   ${cartaoRasc}
+  ${ehAdmin() && nDivergencias() ? `<section class="card aviso-integ"><div class="row-between"><span>🩺 <b>${nDivergencias()} divergência(s) nos dados</b> <span class="small muted">— uma tela pode estar mostrando informação diferente da outra.</span></span><button type="button" class="sm primary" data-act="irConferirDados">Conferir e corrigir</button></div></section>` : ''}
   ${ativas.length ? `<section class="card">
     <h3>Andamento das cotações abertas</h3>
     <div class="cartoes-cot">${[...ativas].sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))).map(cartaoAndamento).join('')}</div>
@@ -8187,6 +8256,136 @@ function linhaLojaCfg(l) {
   </tr>`;
 }
 
+/**
+ * Peça que precisa de cadastro próprio (código composto diferente do cadastro ligado, ou cadastro apagado):
+ * usa o cadastro que já existe com esse código ou cria um, com descrição/unidade/marca do item.
+ */
+function cadastroProprio(cod, base, desc, extra = {}) {
+  const achado = acharProdutoPorCodigo(cod);
+  if (achado && codigoBateCadastro(cod, achado)) return achado;
+  const np = { id: uid(), codigo: String(cod).trim().toUpperCase(), similar: '', descricao: desc || base?.descricao || String(cod).toUpperCase(), unidade: extra.unidade || base?.unidade || 'UN', marca: extra.marca || base?.marca || '', categoria: base?.categoria || '', obs: '', criadoEm: new Date().toISOString() };
+  db.produtos.push(np);
+  return np;
+}
+
+/** Campos da cotação guardados por número do item (c.campo[i]). */
+const CAMPOS_POR_ITEM = ['qtds', 'escolhas', 'divisoes', 'comprados', 'recusadas', 'permitidas', 'difConferida'];
+const descPlaceholder = it => !String(it.descricao || '').trim() || chaveCodigo(it.descricao) === chaveCodigo(it.codigo || '');
+
+/**
+ * Conferência de integridade dos dados: tudo o que pode deixar uma tela dizendo uma coisa e outra tela outra.
+ * Cada grupo: { k, nivel: 'erro'|'aviso'|'info', tit, linhas (texto), fix (ação que corrige, se houver), dica }.
+ */
+let cacheInteg = null;
+function verificarIntegridade() {
+  if (cacheInteg && cacheInteg.db === db && cacheInteg.v === versaoDados) return cacheInteg.res;
+  const prod = prodPorId();
+  const G = {};
+  const g = (k, nivel, tit, fix, dica) => (G[k] ||= { k, nivel, tit, fix, dica, linhas: [] });
+  const nomeLoja = new Set(lojas().map(l => l.id));
+  const cadForn = new Set(db.fornecedores.map(f => f.id));
+  for (const c of db.cotacoes) {
+    const N = c.itens.length;
+    const tag = `Cotação nº ${c.numero}`;
+    c.itens.forEach((it, i) => {
+      const p = prod[it.produtoId];
+      const certo = produtoDoItem(it);
+      if (!p || !codigoBateCadastro(it.codigo, p)) {
+        const motivo = !p ? 'o cadastro ligado não existe mais' : `estava ligado a ${p.codigo}`;
+        if (certo) g('religar', 'erro', 'Itens de cotação ligados ao cadastro errado (ou a um cadastro que não existe mais)', 'integReligar', 'Corrigir liga cada item ao cadastro do próprio código. Assim o histórico de preços, o último preço e os itens mais cotados contam a peça certa.')
+          .linhas.push(`${tag} · item ${i + 1}: ${it.codigo} — ${motivo}; o certo é o cadastro ${certo.codigo}`);
+        else if (p || c.status === 'aberta') g('recadastrar', 'erro', 'Itens ligados à peça de outro código (cada código precisa do seu cadastro)', 'integReligar', 'Ex.: 113175/50005 ligado ao cadastro do 113175/VKBC4221. Corrigir cadastra o código do item (com a descrição, a unidade e a marca que estão na cotação) e liga o item a ele; o cadastro antigo não muda.')
+          .linhas.push(`${tag} · item ${i + 1}: ${it.codigo} ${it.descricao} — ${motivo}`);
+        else g('semcad', 'info', 'Itens de cotações finalizadas cujo código não está mais no cadastro', null, 'Ficam como estavam: o histórico desses itens é contado pelo código.')
+          .linhas.push(`${tag} · item ${i + 1}: ${it.codigo} ${it.descricao}`);
+      }
+      if (descPlaceholder(it) && certo && !descPlaceholder({ descricao: certo.descricao, codigo: certo.codigo }))
+        g('desc', 'erro', 'Itens com a descrição vazia ou igual ao código, mas o cadastro tem a descrição', 'integDescricao', 'Corrigir copia a descrição do cadastro para o item.')
+          .linhas.push(`${tag} · item ${i + 1}: ${it.codigo} — "${it.descricao || ''}" → "${certo.descricao}"`);
+    });
+    const fids = c.fornecedores.map(f => f.fornecedorId);
+    const vistos = new Set();
+    for (const f of c.fornecedores) {
+      if (vistos.has(f.fornecedorId)) g('fornrep', 'erro', 'Fornecedor repetido dentro da mesma cotação').linhas.push(`${tag}: ${f.nome}`);
+      vistos.add(f.fornecedorId);
+      if (!cadForn.has(f.fornecedorId)) g('fornsemcad', 'info', 'Fornecedores de cotações que não estão mais no cadastro').linhas.push(`${tag}: ${f.nome}`);
+      for (const [i, o] of Object.entries(f.respostas || {})) {
+        if (+i >= N || !Number.isInteger(+i)) g('indices', 'erro', 'Informações apontando para itens que não existem na cotação', 'integIndices', 'Sobras de itens tirados da cotação. Corrigir apaga essas sobras (não mexe em nenhum item que existe).').linhas.push(`${tag}: resposta de ${f.nome} para o item ${+i + 1}`);
+        else if (o && o.preco != null && !(Number.isFinite(o.preco) && o.preco >= 0)) g('preco', 'erro', 'Preços inválidos nas respostas', 'integIndices', 'Corrigir apaga o preço inválido (o item volta a ficar sem resposta desse fornecedor).').linhas.push(`${tag} · item ${+i + 1}: ${f.nome} = ${o.preco}`);
+      }
+    }
+    for (const campo of CAMPOS_POR_ITEM) for (const i of Object.keys(c[campo] || {})) {
+      if (+i >= N || !Number.isInteger(+i)) g('indices', 'erro', 'Informações apontando para itens que não existem na cotação', 'integIndices', 'Sobras de itens tirados da cotação. Corrigir apaga essas sobras (não mexe em nenhum item que existe).').linhas.push(`${tag}: ${campo} do item ${+i + 1}`);
+    }
+    for (const [i, q] of Object.entries(c.qtds || {})) for (const [lj, v] of Object.entries(q || {})) {
+      if (!nomeLoja.has(lj)) g('qtdloja', 'aviso', 'Quantidades de uma loja que não está mais nas Configurações').linhas.push(`${tag} · item ${+i + 1}: loja "${lj}" = ${v}`);
+      else if (v != null && v !== '' && !(Number.isInteger(+v) && +v >= 0)) g('qtd', 'erro', 'Quantidades inválidas', 'integIndices', 'Corrigir apaga a quantidade inválida (fica em branco para você digitar de novo).').linhas.push(`${tag} · item ${+i + 1}: ${lj} = ${v}`);
+    }
+    for (const [i, fid] of Object.entries(c.escolhas || {})) {
+      if (+i >= N) continue;
+      const fi = fids.indexOf(fid);
+      const pr = fi >= 0 ? c.fornecedores[fi].respostas?.[i]?.preco : null;
+      if (fi < 0 || !(pr > 0)) g('escolha', 'erro', 'Escolhas manuais de um fornecedor sem preço (ou que saiu da cotação)', 'integIndices', 'Corrigir desfaz essa escolha: o item volta para o menor preço automático.')
+        .linhas.push(`${tag} · item ${+i + 1} ${c.itens[i]?.codigo || ''}: ${fi < 0 ? 'fornecedor fora da cotação' : `${c.fornecedores[fi].nome} sem preço`}`);
+    }
+    // o mesmo total em todas as telas: pedidos (e-mail/PDF) = comparativo
+    if (c.status !== 'cancelada') {
+      try {
+        const comp = comparar(c);
+        if (comp.porLoja) {
+          const totPed = pedidosPorFornecedor(c).reduce((t, x) => t + x.total, 0);
+          const totLin = comp.linhas.reduce((t, l) => t + (l.preco != null ? l.preco * qtdComprada(c, l, comp.porLoja) : 0) + extrasComprados(l).reduce((a, e) => a + e.preco * e.q, 0), 0);
+          if (Math.abs(totPed - totLin) > 0.009) g('totais', 'erro', 'Total dos pedidos diferente do total do comparativo').linhas.push(`${tag}: pedidos ${fmtMoeda(totPed)} × comparativo ${fmtMoeda(totLin)}`);
+        }
+      } catch (e) { g('totais', 'erro', 'Cotação que não abre o comparativo').linhas.push(`${tag}: ${e.message}`); }
+    }
+  }
+  const nums = new Map();
+  for (const c of db.cotacoes) nums.set(c.numero, (nums.get(c.numero) || 0) + 1);
+  for (const [k, n] of nums) if (n > 1) g('numrep', 'aviso', 'Número de cotação repetido').linhas.push(`nº ${k}: ${n} cotações`);
+  // nova cotação em andamento
+  for (const x of rascunho().itens) if (!prod[x.produtoId]) g('rasc', 'erro', 'Itens da nova cotação sem cadastro (seriam perdidos ao criar a cotação)', 'integRascunho', 'Corrigir tira esses itens da lista (anote os códigos antes, se precisar).').linhas.push(`${x.codigoArquivo || x.produtoId}`);
+  // cadastro de produtos
+  const pc = problemasCadastro();
+  for (const l of pc.repetidos) g('cadrep', 'aviso', 'Códigos repetidos no cadastro de produtos', null, 'Edite em Produtos → Conferência do cadastro.').linhas.push(`${l[0].codigo}: ${l.map(p => p.descricao).join(' · ')}`);
+  for (const x of pc.similarDeOutro) g('cadsim', 'aviso', 'Similar que é o código de outra peça', null, 'Edite em Produtos → Conferência do cadastro.').linhas.push(`${x.p.codigo} tem o similar ${x.t}, que é ${x.dono.descricao}`);
+  for (const p of pc.semDesc) g('caddesc', 'aviso', 'Produtos sem descrição (ou com a descrição igual ao código)', null, 'Edite em Produtos.').linhas.push(`${p.codigo || '—'} ${p.descricao || ''}`);
+  for (const p of db.produtos) if (/\s{2,}|\.\.\./.test(p.codigo || '')) g('cadcod', 'aviso', 'Códigos com texto a mais (aplicação, reticências ou espaços duplos)', null, 'O código deve ter só o código: o DataCar e as planilhas dos fornecedores não acham "41181-PL  GOL 89/...". Edite em Produtos (a aplicação vai na descrição ou na OBS).').linhas.push(`"${p.codigo}" — ${p.descricao}`);
+  // fornecedores
+  const nomes = new Map();
+  for (const f of db.fornecedores) { const k = semAcento(f.nome || '').trim(); nomes.set(k, [...(nomes.get(k) || []), f]); if (!String(f.email || '').trim()) g('fornemail', 'info', 'Fornecedores sem e-mail (a cotação e o pedido não vão por e-mail)').linhas.push(f.nome); }
+  for (const [, l] of nomes) if (l.length > 1) g('fornnome', 'aviso', 'Fornecedores com o mesmo nome no cadastro').linhas.push(l.map(f => f.nome).join(' · '));
+  // dúvidas
+  for (const d of db.duvidas || []) if (d.origem?.cotId && !db.cotacoes.some(c => c.id === d.origem.cotId)) g('duv', 'info', 'Dúvidas de cotações que foram excluídas').linhas.push(`${d.empresa || ''} ${d.codigo || ''}`);
+  const ordem = { erro: 0, aviso: 1, info: 2 };
+  const res = Object.values(G).sort((a, b) => ordem[a.nivel] - ordem[b.nivel]);
+  cacheInteg = { db, v: versaoDados, res };
+  return res;
+}
+
+function renderIntegridadeCfg() {
+  const grupos = verificarIntegridade();
+  const adm = ehAdmin();
+  const erros = grupos.filter(x => x.nivel === 'erro').reduce((t, x) => t + x.linhas.length, 0);
+  const ic = { erro: '⛔', aviso: '⚠', info: 'ℹ' };
+  return `<section class="card integ">
+    <div class="row-between"><h2>🩺 Conferir dados</h2><button type="button" class="sm" data-act="integAtualizar">↻ Conferir de novo</button></div>
+    <p class="muted small" style="margin-top:0">Confere se as informações batem entre as telas: cada item ligado ao cadastro certo, quantidades e preços válidos, escolhas com preço, total dos pedidos igual ao comparativo, cadastro sem códigos repetidos. ${adm ? 'Os grupos com <b>Corrigir</b> são consertados sem apagar nada que esteja certo.' : '<b>Só administradores corrigem.</b>'}</p>
+    ${grupos.length ? '' : '<p class="ok-cad">✓ Tudo confere: nenhuma divergência nos dados.</p>'}
+    ${erros ? `<p class="integ-resumo"><b>${erros}</b> divergência(s) que podem mostrar informação diferente entre as telas.</p>` : grupos.length ? '<p class="ok-cad small">✓ Nenhuma divergência grave — só avisos.</p>' : ''}
+    ${grupos.map(x => `<details class="integ-grupo integ-${x.nivel}"${x.nivel === 'erro' ? ' open' : ''}>
+      <summary><span class="integ-ic">${ic[x.nivel]}</span> <b>${esc(x.tit)}</b> <span class="badge">${x.linhas.length}</span>
+        ${x.fix && adm ? `<button type="button" class="sm primary" data-act="${x.fix}">Corrigir</button>` : ''}</summary>
+      ${x.dica ? `<p class="small muted">${esc(x.dica)}</p>` : ''}
+      <ul class="small">${x.linhas.slice(0, 40).map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+      ${x.linhas.length > 40 ? `<p class="small muted">… e mais ${x.linhas.length - 40}</p>` : ''}
+    </details>`).join('')}
+  </section>`;
+}
+
+/** Quantas divergências graves os dados têm agora (Início avisa o administrador). */
+const nDivergencias = () => verificarIntegridade().filter(x => x.nivel === 'erro').reduce((t, x) => t + x.linhas.length, 0);
+
 function renderControladosCfg() {
   const lista = itensControlados();
   const adm = ehAdmin();
@@ -8230,7 +8429,7 @@ function renderMarcasCfg() {
 
 /** Abas das Configurações (uma de cada vez, em vez de uma página enorme). */
 const ABAS_CONFIG = [
-  ['aparencia', '🎨 Aparência'], ['loja', '🏪 Loja e planilha'], ['emails', '✉️ E-mails'], ['marcas', '🏷️ Marcas'], ['controlados', '🔒 Itens controlados'], ['conta', '👥 Conta e usuários'], ['backup', '💾 Backup'],
+  ['aparencia', '🎨 Aparência'], ['loja', '🏪 Loja e planilha'], ['emails', '✉️ E-mails'], ['marcas', '🏷️ Marcas'], ['controlados', '🔒 Itens controlados'], ['dados', '🩺 Conferir dados'], ['conta', '👥 Conta e usuários'], ['backup', '💾 Backup'],
 ];
 function abaConfig() {
   if (ui.abaConfig == null) { try { ui.abaConfig = localStorage.getItem('cotacao.abaConfig') || ''; } catch (e) { ui.abaConfig = ''; } }
@@ -8299,6 +8498,7 @@ function renderConfig() {
   <div data-aba-cfg="conta"${ver('conta')}>${renderConta()}</div>
   <div data-aba-cfg="marcas"${ver('marcas')}>${renderMarcasCfg()}</div>
   <div data-aba-cfg="controlados"${ver('controlados')}>${renderControladosCfg()}</div>
+  <div data-aba-cfg="dados"${ver('dados')}>${aba === 'dados' ? renderIntegridadeCfg() : ''}</div>
   <section class="card" data-aba-cfg="backup"${ver('backup')}>
     <h2>Backup dos dados</h2>
     <p class="muted small">${nuvem.db
@@ -8904,7 +9104,7 @@ const acoes = {
     if (!o) return;
     const it = c.itens[i];
     const l = comparar(c).linhas[i];
-    const ult = it.produtoId ? ultimosPrecos(c.id)[it.produtoId] : null;
+    const ult = ultimosPrecos(c.id)[idProdutoItem(it)] || null;
     const motivos = alertasPreco(o.preco, ult, l.precos).map(a => '• ' + a.texto).join('\n');
     const escolha = await abrirDialogo(`${it.codigo || '—'} · ${it.descricao}\n${f.nome}: ${fmtMoeda(o.preco)}${o.marca ? ` · marca ${o.marca}` : ''}\n\n${motivos}\n\nEste preço está certo?`, [
       { txt: 'Cancelar', valor: null },
@@ -9043,7 +9243,8 @@ const acoes = {
       status: 'aberta',
       criadoEm: new Date().toISOString(),
       itens: itens.map(x => {
-        const p = prod[x.produtoId];
+        let p = prod[x.produtoId];
+        if (x.codigoArquivo && !codigoBateCadastro(x.codigoArquivo, p)) p = cadastroProprio(x.codigoArquivo, p, x.descricaoArquivo);
         return { produtoId: p.id, codigo: x.codigoArquivo || p.codigo, codigoArquivo: x.codigoArquivo || '', codigoCadastro: p.codigo, similar: p.similar || '', ...(x.autorizado ? { controladoAutorizado: x.autorizado } : {}), descricao: x.descricaoArquivo || p.descricao, unidade: p.unidade, marca: x.marca || p.marca, marcaCotacao: x.marca || '', quantidade: 1, ...(lojaPelaObs(x.obsArquivo) ? { lojaObs: lojaPelaObs(x.obsArquivo) } : {}), ...(x.papelzinho ? { papelzinho: true } : {}) };
       }),
       fornecedores: fornecedores.map(novoFornCot),
@@ -9361,7 +9562,6 @@ const acoes = {
 
   duplicarCot: async () => {
     const c = cotAtual();
-    const prod = prodPorId();
     const forn = byId(db.fornecedores);
     const r = rascunho();
     if (r.itens.length && !(await confirmar('Já existe uma nova cotação em andamento. Substituir pelos itens desta?'))) return;
@@ -9369,11 +9569,13 @@ const acoes = {
       titulo: c.titulo,
       prazoResposta: '',
       obs: c.obs,
-      itens: c.itens.filter(i => prod[i.produtoId]).map(i => ({ produtoId: i.produtoId, quantidade: i.quantidade, codigoArquivo: i.codigoArquivo || '', marca: i.marcaCotacao || '' })),
+      itens: c.itens.filter(i => produtoDoItem(i)).map(i => ({ produtoId: produtoDoItem(i).id, quantidade: i.quantidade, codigoArquivo: i.codigoArquivo || '', marca: i.marcaCotacao || '' })),
       fornecedorIds: c.fornecedores.map(f => f.fornecedorId).filter(id => forn[id]),
     };
+    const fora = c.itens.filter(i => !produtoDoItem(i));
     salvar();
     ir('nova');
+    if (fora.length) avisar(`${fora.length} item(ns) desta cotação não estão mais no cadastro e ficaram de fora:\n\n${fora.slice(0, 20).map(i => `• ${i.codigo || '—'} — ${i.descricao}`).join('\n')}${fora.length > 20 ? `\n… e mais ${fora.length - 20}` : ''}\n\nCadastre-os em Produtos (ou corrija em Configurações → Conferir dados) e adicione de novo.`);
   },
 
   excluirCot: async () => {
@@ -9447,6 +9649,8 @@ const acoes = {
   cancelarProd: () => { ui.editProd = null; render(); },
   excluirProd: async el => {
     const p = db.produtos.find(x => x.id === el.dataset.id);
+    const uso = usoDoProduto(p.id);
+    if (uso) return avisar(`O produto ${p.codigo || ''} "${p.descricao}" não pode ser excluído agora: ${uso}.\n\nTire o item de lá primeiro (ou espere a cotação ser finalizada).`);
     if (!(await confirmar(`Excluir o produto "${p.descricao}"? (As cotações antigas não são alteradas.)`))) return;
     db.produtos = db.produtos.filter(x => x.id !== p.id);
     salvar();
@@ -9454,15 +9658,16 @@ const acoes = {
   },
   exportarProdutos: () => exportarProdutos(),
   excluirSemMarca: async () => {
-    const lista = produtosSemMarca();
-    if (!lista.length) return;
+    const todos = produtosSemMarca();
+    const emUso = todos.filter(p => usoDoProduto(p.id));
+    const lista = todos.filter(p => !emUso.includes(p));
+    if (!lista.length) return avisar(`Os ${todos.length} produto(s) sem marca estão em uso (na lista da nova cotação ou numa cotação aberta) e não podem ser excluídos agora. Preencha a marca deles.`);
     const amostra = lista.slice(0, 15).map(p => `${p.codigo || '—'} · ${p.descricao}`).join('\n');
-    const ok = await abrirDialogo(`Excluir do banco ${lista.length} produto(s) sem marca exigida?\n\n${amostra}${lista.length > 15 ? `\n… e mais ${lista.length - 15}` : ''}\n\nNão dá para desfazer (as cotações antigas não mudam). Se quiser guardar, baixe um backup antes em Configurações.`,
+    const ok = await abrirDialogo(`Excluir do banco ${lista.length} produto(s) sem marca exigida?\n\n${amostra}${lista.length > 15 ? `\n… e mais ${lista.length - 15}` : ''}\n\nNão dá para desfazer (as cotações antigas não mudam). Se quiser guardar, baixe um backup antes em Configurações.${emUso.length ? `\n\n${emUso.length} produto(s) sem marca ficam no cadastro porque estão em uso agora (lista da nova cotação ou cotação aberta).` : ''}`,
       [{ txt: 'Cancelar', valor: false }, { txt: `Excluir ${lista.length} produto(s)`, valor: true, cls: 'danger' }]);
     if (!ok) return;
     const ids = new Set(lista.map(p => p.id));
     db.produtos = db.produtos.filter(p => !ids.has(p.id));
-    if (db.rascunho?.itens) db.rascunho.itens = db.rascunho.itens.filter(x => !ids.has(x.produtoId));
     salvar();
     render();
     toast(`${lista.length} produto(s) sem marca exigida excluído(s) do banco.`);
@@ -9555,6 +9760,99 @@ const acoes = {
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
   analiseForn: el => abrirAnaliseFornecedor(el.dataset.id),
+  integAtualizar: () => { cacheInteg = null; render(); },
+  irConferirDados: () => { ui.abaConfig = 'dados'; try { localStorage.setItem('cotacao.abaConfig', 'dados'); } catch (e) { /* sem acesso */ } ir('config'); },
+  integReligar: () => {
+    if (!ehAdmin()) return avisar('Só um administrador corrige os dados.');
+    const prod = prodPorId();
+    let lig = 0, cad = 0;
+    for (const c of db.cotacoes) {
+      let mudou = false;
+      const itens = c.itens.map(it => {
+        const p = prod[it.produtoId];
+        if (p && codigoBateCadastro(it.codigo, p)) return it;
+        let q = produtoDoItem(it);
+        if (!q && (p || c.status === 'aberta') && it.codigo) { q = cadastroProprio(it.codigo, p, it.descricao, { marca: it.marca, unidade: it.unidade }); cad++; }
+        if (!q) return it;
+        mudou = true; lig++;
+        return { ...it, produtoId: q.id, codigoCadastro: q.codigo };
+      });
+      if (mudou) c.itens = itens;
+    }
+    cacheInteg = null;
+    salvar();
+    render();
+    toast(`${lig} item(ns) ligados ao cadastro certo${cad ? ` (${cad} cadastrado(s) agora)` : ''}.`, 6000);
+  },
+  integDescricao: () => {
+    if (!ehAdmin()) return avisar('Só um administrador corrige os dados.');
+    let n = 0;
+    for (const c of db.cotacoes) {
+      if (!c.itens.some(it => descPlaceholder(it) && produtoDoItem(it))) continue;
+      c.itens = c.itens.map(it => {
+        const q = produtoDoItem(it);
+        if (!descPlaceholder(it) || !q || descPlaceholder({ descricao: q.descricao, codigo: q.codigo })) return it;
+        n++;
+        return { ...it, descricao: q.descricao };
+      });
+    }
+    cacheInteg = null;
+    salvar();
+    render();
+    toast(`${n} descrição(ões) corrigida(s) pelo cadastro.`);
+  },
+  integIndices: () => {
+    if (!ehAdmin()) return avisar('Só um administrador corrige os dados.');
+    const nomeLoja = new Set(lojas().map(l => l.id));
+    let n = 0;
+    for (const c of db.cotacoes) {
+      const N = c.itens.length;
+      const fora = i => !(Number.isInteger(+i) && +i >= 0 && +i < N);
+      const fids = c.fornecedores.map(f => f.fornecedorId);
+      c.fornecedores = c.fornecedores.map(f => {
+        const r = { ...(f.respostas || {}) };
+        let m = false;
+        for (const [i, o] of Object.entries(r)) if (fora(i) || (o && o.preco != null && !(Number.isFinite(o.preco) && o.preco >= 0))) { delete r[i]; m = true; n++; }
+        return m ? { ...f, respostas: r } : f;
+      });
+      for (const campo of CAMPOS_POR_ITEM) {
+        if (!c[campo]) continue;
+        const o = { ...c[campo] };
+        let m = false;
+        for (const i of Object.keys(o)) if (fora(i)) { delete o[i]; m = true; n++; }
+        if (m) c[campo] = o;
+      }
+      if (c.qtds) {
+        const q = {};
+        for (const [i, porLoja] of Object.entries(c.qtds)) {
+          const y = { ...(porLoja || {}) };
+          for (const [lj, v] of Object.entries(y)) if (nomeLoja.has(lj) && v != null && v !== '' && !(Number.isInteger(+v) && +v >= 0)) { delete y[lj]; n++; }
+          q[i] = y;
+        }
+        c.qtds = q;
+      }
+      if (c.escolhas) {
+        const e = { ...c.escolhas };
+        for (const [i, fid] of Object.entries(e)) { const fi = fids.indexOf(fid); if (fi < 0 || !(c.fornecedores[fi].respostas?.[i]?.preco > 0)) { delete e[i]; n++; } }
+        c.escolhas = e;
+      }
+    }
+    cacheInteg = null;
+    salvar();
+    render();
+    toast(`${n} informação(ões) inválida(s) corrigida(s).`);
+  },
+  integRascunho: () => {
+    if (!ehAdmin()) return avisar('Só um administrador corrige os dados.');
+    const prod = prodPorId();
+    const r = rascunho();
+    const antes = r.itens.length;
+    r.itens = r.itens.filter(x => prod[x.produtoId]);
+    cacheInteg = null;
+    salvar();
+    render();
+    toast(`${antes - r.itens.length} item(ns) sem cadastro tirado(s) da nova cotação.`);
+  },
   abaConfig: el => {
     // troca de aba sem redesenhar: o que foi digitado e ainda não foi salvo continua nos campos
     const aba = el.dataset.aba;
@@ -9796,9 +10094,12 @@ const formularios = {
     const dup = d.codigo && db.produtos.find(p => p.id !== ui.editProd && semAcento(p.codigo) === semAcento(d.codigo));
     if (dup && !(await confirmar(`O código ${d.codigo} já é usado por "${dup.descricao}". Salvar mesmo assim?`))) return;
     if (ui.editProd) {
-      Object.assign(db.produtos.find(p => p.id === ui.editProd), d);
+      const p = db.produtos.find(x => x.id === ui.editProd);
+      const antes = { ...p };
+      Object.assign(p, d);
       ui.editProd = null;
-      toast('Produto atualizado.');
+      const n = propagarCadastroAbertas(p, antes);
+      toast(n ? `Produto atualizado (e em ${n} item(ns) das cotações abertas).` : 'Produto atualizado.');
     } else {
       db.produtos.push({ id: uid(), ...d, criadoEm: new Date().toISOString() });
       toast('Produto adicionado.');
