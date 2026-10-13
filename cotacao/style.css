@@ -2468,3 +2468,18 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 .selo-controlado.ok { background: var(--ok-bg); color: var(--ok); }
 .btn-autorizar { margin-top: 3px; border-color: var(--ok); color: var(--ok); font-weight: 700; }
 .selo-controlado, .btn-autorizar { font-family: var(--font); letter-spacing: 0; }
+
+/* janela dos itens controlados: o que vai e o que sai */
+.dlg.dlg-controlados { width: min(var(--dlg-m), 100%); }
+.ctrl-todos { margin: 0 0 6px; }
+.ctrl-lista { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; }
+.ctrl-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); cursor: pointer; }
+.ctrl-item input { width: 20px; height: 20px; }
+.ctrl-item.vai { border-color: var(--ok); background: var(--ok-bg); }
+.ctrl-item.sai { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: var(--danger-bg); }
+.ctrl-estado { font-size: var(--fs-xs); font-weight: 800; white-space: nowrap; }
+.ctrl-item.vai .ctrl-estado { color: var(--ok); }
+.ctrl-item.sai .ctrl-estado { color: var(--danger); }
+
+.btn-sem-marca { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); font-weight: 700; }
+.btn-sem-marca b { margin-left: 4px; }

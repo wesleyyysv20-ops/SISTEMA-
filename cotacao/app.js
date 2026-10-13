@@ -1882,6 +1882,7 @@ function htmlBarraCriar(r = rascunho()) {
       ${ck.length ? `<span class="barra-criar-alerta" title="${esc(ck.map(x => '• ' + x.txt).join('\n'))}">⚠ ${ck.length}<span class="rot-longo"> ponto(s) a conferir</span></span>` : n ? '<span class="barra-criar-ok">✓<span class="rot-longo"> tudo certo</span></span>' : ''}
     </div>
     <div class="barra-criar-acoes">
+      ${(() => { const sm = n ? itensSemMarcaNaLista().length : 0; return sm ? `<button type="button" class="sm btn-sem-marca" data-act="irNovoSemMarca" title="Vai para o próximo item sem marca pedida (fica sempre aqui embaixo)">🏷️ Próximo sem marca <b>${sm}</b></button>` : ''; })()}
       <button type="button" class="sm" data-act="limparRascunho">Limpar tudo</button>
       ${n ? '' : '<span class="small muted barra-criar-dica">Adicione itens para criar</span>'}
       <button type="button" class="primary" data-act="criarCotacao" title="${n ? 'Cria a cotação e salva a planilha em Excel' : 'Adicione itens (arquivo do DataCar, papelzinhos ou busca no cadastro) para criar a cotação'}" ${n ? '' : 'disabled'}>Criar cotação<span class="rot-longo"> e salvar planilha</span> →</button>
@@ -2952,16 +2953,73 @@ async function avisarControladosNova() {
   avisandoControlados = true;
   novos.forEach(x => { x.controleAvisado = true; });
   salvar();
-  const lista = novos.map(x => `• ${x.codigoArquivo || prod[x.produtoId].codigo} — ${x.descricaoArquivo || prod[x.produtoId].descricao}`).join('\n');
-  const esc2 = await abrirDialogo(`${novos.length === 1 ? 'Este item controlado entrou' : `Estes ${novos.length} itens controlados entraram`} na cotação:\n\n${lista}\n\n${novos.length === 1 ? 'Ele fica BLOQUEADO' : 'Eles ficam BLOQUEADOS'} até um administrador autorizar. A cotação não é criada com item bloqueado.`, [
-    { txt: 'Deixar bloqueado', valor: null },
-    { txt: novos.length === 1 ? 'Tirar da cotação' : 'Tirar todos da cotação', valor: 'tirar', cls: 'danger' },
-    ...(ehAdmin() ? [{ txt: novos.length === 1 ? '✓ Autorizar' : '✓ Autorizar todos', valor: 'autorizar', cls: 'primary' }] : []),
-  ], document, { titulo: '🔒 Item controlado na cotação' });
+  const r2 = await dialogoControlados(novos, prod);
   avisandoControlados = false;
-  if (esc2 === 'tirar') { r.itens = r.itens.filter(x => !novos.includes(x)); salvar(); render(); toast(`${novos.length} item(ns) controlado(s) tirado(s) da cotação.`); }
-  else if (esc2 === 'autorizar') { autorizarItensControlados(novos); }
-  else { render(); setTimeout(avisarControladosNova, 50); } // pode ter entrado outro enquanto a janela estava aberta
+  if (r2) {
+    if (r2.saem.length) r.itens = r.itens.filter(x => !r2.saem.includes(x));
+    if (r2.vao.length) { autorizarItensControlados(r2.vao); } else { salvar(); render(); }
+    toast([r2.vao.length && `${r2.vao.length} autorizado(s): vão para a cotação`, r2.saem.length && `${r2.saem.length} tirado(s) da cotação`].filter(Boolean).join(' · '), 5000);
+  } else { render(); setTimeout(avisarControladosNova, 50); } // decidir depois: ficam bloqueados (pode ter entrado outro enquanto a janela estava aberta)
+}
+
+/**
+ * Janela dos itens controlados: uma caixinha por item — marcado vai para a cotação (autoriza),
+ * desmarcado sai. Quem não é administrador só pode tirar (ou decidir depois).
+ * Devolve { vao, saem } ou null (decidir depois: tudo continua bloqueado).
+ */
+function dialogoControlados(itens, prod) {
+  const adm = ehAdmin();
+  return new Promise(resolve => {
+    const fundo = document.createElement('div');
+    fundo.className = 'dlg-fundo';
+    fundo.innerHTML = `<form class="dlg dlg-controlados" role="dialog" aria-modal="true" aria-label="Itens controlados na cotação">
+      <h3 class="dlg-tit">🔒 Item controlado na cotação</h3>
+      <p class="small">${itens.length === 1 ? 'Este item controlado entrou' : `Estes ${itens.length} itens controlados entraram`} na cotação. ${adm ? '<b>Marque o que vai</b> para a cotação; o que ficar desmarcado sai da lista.' : '<b>Só um administrador autoriza.</b> Marque o que você quer <b>tirar</b> da cotação; o resto fica bloqueado até um administrador decidir.'}</p>
+      ${itens.length > 1 ? `<div class="ctrl-todos"><button type="button" class="link small" data-todos="1">marcar todos</button> · <button type="button" class="link small" data-todos="0">desmarcar todos</button></div>` : ''}
+      <div class="ctrl-lista">${itens.map((x, k) => {
+        const pp = prod[x.produtoId];
+        return `<label class="ctrl-item"><input type="checkbox" data-k="${k}">
+          <span><b class="cod-comp">${esc(x.codigoArquivo || pp.codigo)}</b><br><span class="small muted">${esc(x.descricaoArquivo || pp.descricao)}</span></span>
+          <span class="ctrl-estado"></span></label>`;
+      }).join('')}</div>
+      <div class="actions"><button type="button" data-r="0" title="Fecha sem mudar nada: os itens continuam bloqueados">Decidir depois</button><button class="primary" data-ok></button></div>
+    </form>`;
+    const form = fundo.querySelector('form');
+    const caixas = [...form.querySelectorAll('input[type=checkbox]')];
+    const atualizar = () => {
+      const marcados = caixas.filter(c => c.checked).length;
+      for (const c of caixas) {
+        const est = c.closest('.ctrl-item').querySelector('.ctrl-estado');
+        c.closest('.ctrl-item').classList.toggle('vai', adm && c.checked);
+        c.closest('.ctrl-item').classList.toggle('sai', adm ? !c.checked : c.checked);
+        est.textContent = adm ? (c.checked ? '✓ vai' : '✕ sai') : (c.checked ? '✕ sai' : '🔒 fica bloqueado');
+      }
+      form.querySelector('[data-ok]').textContent = adm
+        ? `Confirmar: ${marcados} vai(ão) · ${caixas.length - marcados} sai(em)`
+        : marcados ? `Tirar ${marcados} da cotação` : 'Deixar bloqueado';
+    };
+    const fechar = v => { fundo.remove(); document.removeEventListener('keydown', tecla, true); resolve(v); };
+    const tecla = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); fechar(null); } else if (e.key !== 'Enter') e.stopImmediatePropagation(); };
+    form.addEventListener('change', atualizar);
+    fundo.addEventListener('click', e => {
+      e.stopPropagation();
+      const t = e.target.closest('[data-todos]');
+      if (t) { caixas.forEach(c => { c.checked = t.dataset.todos === '1'; }); atualizar(); return; }
+      if (e.target.closest('button[data-r="0"]')) fechar(null);
+    });
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const marc = caixas.filter(c => c.checked).map(c => itens[+c.dataset.k]);
+      const nao = itens.filter(x => !marc.includes(x));
+      if (adm) fechar({ vao: marc, saem: nao });
+      else fechar(marc.length ? { vao: [], saem: marc } : null);
+    });
+    document.addEventListener('keydown', tecla, true);
+    document.body.appendChild(fundo);
+    atualizar();
+    (caixas[0] || form.querySelector('[data-ok]')).focus();
+  });
 }
 function autorizarItensControlados(itens) {
   if (!ehAdmin()) return avisar('Só um administrador pode autorizar item controlado.');
@@ -5045,6 +5103,13 @@ function corrigirCodigoPapel(i, valor) {
 }
 
 /** Itens desta cotação cadastrados agora pelo DataCar que ainda estão sem marca exigida. */
+/** Todos os itens da lista sem marca pedida (o botão "Próximo sem marca" anda por eles). */
+function itensSemMarcaNaLista() {
+  const r = rascunho();
+  const prod = byId(db.produtos);
+  return r.itens.map((x, i) => [x, i]).filter(([x]) => prod[x.produtoId] && !(x.marca || prod[x.produtoId].marca)).map(([, i]) => i);
+}
+
 function novosSemMarcaNaLista() {
   const r = rascunho();
   const prod = byId(db.produtos);
@@ -8748,12 +8813,18 @@ const acoes = {
     toast(`Cadastro de ${p.codigo} corrigido: "${antes}" → "${p.descricao}".`, 6000);
   },
   irNovoSemMarca: () => {
-    const pend = novosSemMarcaNaLista();
+    const pend = itensSemMarcaNaLista();
+    if (!pend.length) return toast('✓ Todos os itens já têm marca.');
     if (!pend.length) return;
     const i = pend.find(k => k > ui.cursorItem) ?? pend[0];
     moverCursorItem(i);
     const tr = document.querySelector(`[data-item-linha="${i}"]`);
-    if (tr) { tr.scrollIntoView({ block: 'center' }); tr.querySelector('[data-marca-item]')?.focus(); }
+    if (tr) {
+      tr.scrollIntoView({ block: 'center' });
+      tr.querySelector('[data-marca-item]')?.focus();
+      tr.classList.remove('piscar'); void tr.offsetWidth; tr.classList.add('piscar');
+    }
+    toast(`Item ${pend.indexOf(i) + 1} de ${pend.length} sem marca.`, 2000);
   },
   irItem: el => {
     const i = +el.dataset.i;
@@ -10100,15 +10171,24 @@ document.addEventListener('pointerdown', e => {
   let b = e.button === 0 ? e.target.closest?.('button[data-act], input[type=checkbox], input[type=radio]') : null;
   if (!b && e.button === 0) b = e.target.closest?.('label')?.querySelector('input[type=checkbox], input[type=radio]') || null;
   const sel = b && seletorDoBotao(b);
-  botaoApertado = sel ? { b, sel } : null;
+  // guarda onde o botão estava: se a tela for redesenhada no meio do clique (um campo que perdeu o foco e gravou,
+  // um aviso que mudou de tamanho e empurrou as linhas…), o clique ainda vai para o mesmo botão
+  botaoApertado = sel ? { b, sel, r: b.getBoundingClientRect() } : null;
 }, true);
 document.addEventListener('pointerup', e => {
   const a = botaoApertado;
   botaoApertado = null;
   if (!a || a.b.isConnected) return; // o clique normal acontece
-  const novo = document.querySelector(a.sel);
+  // o mesmo botão pode existir em dois lugares (ex.: painel de repetidos e a lista): fica com o do mesmo lugar
+  const doPainel = !!a.b.closest('.painel-dup');
+  const candidatos = [...document.querySelectorAll(a.sel)];
+  const novo = candidatos.find(x => !!x.closest('.painel-dup') === doPainel) || candidatos[0];
+  if (!novo) return;
   const sob = document.elementFromPoint(e.clientX, e.clientY);
-  if (novo && sob && (novo.contains(sob) || sob.closest('label')?.contains(novo))) setTimeout(() => novo.click(), 0);
+  // soltou em cima do botão novo, ou soltou no MESMO lugar onde estava o botão apertado (que só mudou de posição)
+  const r = a.r;
+  const soltouNoBotao = r && e.clientX >= r.left - 2 && e.clientX <= r.right + 2 && e.clientY >= r.top - 2 && e.clientY <= r.bottom + 2;
+  if ((sob && (novo.contains(sob) || sob.closest('label')?.contains(novo))) || soltouNoBotao) setTimeout(() => novo.click(), 0);
 }, true);
 
 document.addEventListener('click', e => {

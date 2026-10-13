@@ -25,14 +25,15 @@ test('itens controlados: alerta na hora com os itens que entraram, bloqueio e au
   const { page } = s;
   assert.equal(await page.evaluate(() => itensControlados().length), 7, 'a lista já vem com os 7 itens do orçamento');
   await carregar(page);
-  const dlg = page.locator('.dlg', { hasText: 'Item controlado' });
+  const dlg = page.locator('.dlg-controlados');
   await dlg.waitFor();
   const txt = n(await dlg.innerText());
   assert.match(txt, /Estes 2 itens controlados entraram/);
-  assert.match(txt, /CAR80 — DESCARBONIZANTE/);
-  assert.match(txt, /DOT4-500ML\/BOSCH — FLUIDO PARA FREIO/);
+  assert.equal(await dlg.locator('.ctrl-item').count(), 2);
+  assert.match(txt, /CAR80\s+DESCARBONIZANTE/);
+  assert.match(txt, /DOT4-500ML\/BOSCH\s+FLUIDO PARA FREIO/);
   assert.doesNotMatch(txt, /GP33264/);
-  await dlg.locator('button:text("Deixar bloqueado")').click();
+  await dlg.locator('button:text("Decidir depois")').click();
   assert.equal(await page.locator('#tabItens tr.item-bloqueado').count(), 2);
   // não cria com item bloqueado
   await page.click('[data-act=criarCotacao]');
@@ -42,7 +43,7 @@ test('itens controlados: alerta na hora com os itens que entraram, bloqueio e au
   // o alerta não repete para os mesmos itens
   await page.evaluate(() => render());
   await page.waitForTimeout(200);
-  assert.equal(await page.locator('.dlg', { hasText: 'Item controlado' }).count(), 0);
+  assert.equal(await page.locator('.dlg-controlados').count(), 0);
   // administrador autoriza os dois e a cotação sai
   for (let k = 0; k < 2; k++) {
     await page.locator('[data-act=autorizarControlado]').first().click();
@@ -63,11 +64,29 @@ test('itens controlados: quem não é administrador não autoriza; "tirar" remov
   const { page } = s;
   await page.evaluate(() => { nuvem.usuario = 'compras@loja.com'; nuvem.admin = false; });
   await carregar(page);
-  const dlg = page.locator('.dlg', { hasText: 'Item controlado' });
+  const dlg = page.locator('.dlg-controlados');
   await dlg.waitFor();
-  assert.equal(await dlg.locator('button:text("Autorizar")').count(), 0, 'sem o botão de autorizar');
-  await dlg.locator('button:text("Tirar todos da cotação")').click();
+  assert.match(n(await dlg.innerText()), /Só um administrador autoriza/);
+  await dlg.locator('[data-todos="1"]').click();
+  assert.match(n(await dlg.locator('[data-ok]').innerText()), /Tirar 2 da cotação/);
+  await dlg.locator('[data-ok]').click();
   assert.deepEqual(await page.evaluate(() => rascunho().itens.map(x => x.codigoArquivo)), ['GP33264']);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
+
+test('itens controlados: na janela, o administrador escolhe o que vai e o que sai', async () => {
+  const s = await abrir(dados());
+  const { page } = s;
+  await carregar(page);
+  const dlg = page.locator('.dlg-controlados');
+  await dlg.waitFor();
+  await dlg.locator('.ctrl-item', { hasText: 'CAR80' }).locator('input').check();
+  assert.match(n(await dlg.locator('[data-ok]').innerText()), /Confirmar: 1 vai\(ão\) · 1 sai\(em\)/);
+  await dlg.locator('[data-ok]').click();
+  const itens = await page.evaluate(() => rascunho().itens.map(x => [x.codigoArquivo, !!x.autorizado]));
+  assert.deepEqual(itens.sort(), [['CAR80', true], ['GP33264', false]], 'o CAR80 vai autorizado e o DOT4 saiu');
+  assert.equal(await page.locator('#tabItens tr.item-bloqueado').count(), 0);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
