@@ -2483,3 +2483,8 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 
 .btn-sem-marca { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); font-weight: 700; }
 .btn-sem-marca b { margin-left: 4px; }
+
+/* conferência: corrigir o código antes de entrar na cotação */
+.conf-codigo-linha { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.conf-corrigir-cod { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); font-weight: 700; }
+.conf-cod-corrigido { margin-top: 2px; color: var(--warn); font-weight: 600; }

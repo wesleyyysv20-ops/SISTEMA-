@@ -3845,7 +3845,8 @@ function casarLinhasDataCar() {
   d.linhas.forEach(l => {
     // OBS (chave) agrupa os itens; o código do arquivo identifica o produto (e a descrição do arquivo confere).
     const chave = String(l.cels[d.col] ?? '').trim();
-    const codigo = d.colCod >= 0 && d.colCod !== d.col ? String(l.cels[d.colCod] ?? '').trim() : '';
+    // código corrigido na conferência (o colega digitou errado no papel) vale no lugar do arquivo
+    const codigo = l.codigoCorrigido ? l.codigoCorrigido.para : d.colCod >= 0 && d.colCod !== d.col ? String(l.cels[d.colCod] ?? '').trim() : '';
     const busca = codigo || chave;
     const descArq = d.colDesc >= 0 ? String(l.cels[d.colDesc] ?? '').trim() : '';
     const r = produtoDoArquivo(mapa, busca, descArq);
@@ -4358,6 +4359,7 @@ function teclaDataCar(e) {
   else if (e.key === 'ArrowLeft') { e.preventDefault(); decidirDataCar('nao'); }
   else if (e.key === 'Backspace' || e.key === 'ArrowUp') { e.preventDefault(); voltarDataCar(); }
   else if (e.key === 'F2') { e.preventDefault(); editarMarcaDataCar(); }
+  else if (e.key === 'F4') { e.preventDefault(); corrigirCodigoDataCar(); }
   else if (letra) { e.preventDefault(); editarMarcaDataCar(e.key); }
   else if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); fecharGrupoDataCar(false); }
 }
@@ -4471,6 +4473,26 @@ function conteudoGrupos() {
     </p>`;
 }
 
+/** Corrige o código do item da conferência (papelzinho digitado errado) e procura o produto de novo. */
+async function corrigirCodigoDataCar() {
+  const d = ui.datacar;
+  if (!d || d.grupoAberto == null) return;
+  const l = filaDataCar()[d.pos];
+  if (!l) return;
+  const atual = l.codigo || l.chave;
+  const novo = await pedirValor(`Código certo do item (no arquivo: ${l.codigoCorrigido?.de || atual})`, { valor: atual, ok: 'Corrigir' });
+  if (novo == null) { focarDataCar(); return; }
+  const cod = novo.trim().toUpperCase();
+  if (!cod || cod === String(atual).toUpperCase()) { focarDataCar(); return; }
+  const de = l.codigoCorrigido?.de || atual;
+  if (chaveCodigo(cod) === chaveCodigo(de)) delete l.codigoCorrigido; else l.codigoCorrigido = { de, para: cod };
+  casarLinhasDataCar();
+  const p = l.produtoId ? db.produtos.find(x => x.id === l.produtoId) : null;
+  renderSoDataCar();
+  focarDataCar();
+  toast(p ? `Código corrigido: ${cod} — ${p.descricao} (achado no cadastro).` : `Código corrigido: ${cod}. Não está no cadastro: será cadastrado ao adicionar.`, 5000);
+}
+
 function conteudoItem() {
   const d = ui.datacar;
   const fila = filaDataCar();
@@ -4496,7 +4518,9 @@ function conteudoItem() {
         ${repetido ? '<span class="badge warn">código repetido no arquivo</span>' : ''}
         ${p && naCotacao.has(p.id) ? '<span class="badge">já está na cotação</span>' : ''}
       </div>
-      <div class="conf-codigo">${esc(l.codigo || l.chave)}</div>
+      <div class="conf-codigo-linha"><div class="conf-codigo">${esc(l.codigo || l.chave)}</div>
+        <button type="button" class="sm conf-corrigir-cod" data-act="dcCorrigirCodigo" title="O código veio errado ou incompleto? Corrija antes de entrar na cotação (atalho: F4)">✎ Corrigir código</button></div>
+      ${l.codigoCorrigido ? `<div class="small conf-cod-corrigido">✎ Corrigido — no arquivo estava <b>${esc(l.codigoCorrigido.de)}</b></div>` : ''}
       <div class="conf-desc">${esc(txt(d.colDesc) || (p ? p.descricao : ''))}</div>
       <div class="conf-cadastro small">${p
         ? `Cadastro: <b>${esc(p.codigo)}</b> · ${esc(p.descricao)}${p.similar ? ` · sim. ${esc(p.similar)}` : ''}${l.descDiverge ? ' <span class="badge warn" title="O código é o mesmo, mas a descrição do cadastro é de outra peça. Na cotação vai a descrição do arquivo.">⚠ descrição do cadastro diferente</span>' : ''}`
@@ -4519,7 +4543,7 @@ function conteudoItem() {
     </div>
     <p class="small muted" style="margin:8px 0 0">
       <span class="kbd">→</span>/<span class="kbd">Espaço</span> vai · <span class="kbd">←</span> não vai · <span class="kbd">Backspace</span> item anterior ·
-      digite para trocar a marca · <span class="kbd">Esc</span> volta aos grupos
+      digite para trocar a marca · <span class="kbd">F4</span> corrigir o código · <span class="kbd">Esc</span> volta aos grupos
     </p>`;
 }
 
@@ -8624,6 +8648,7 @@ function removerPrecoResposta(c, i, fi) {
 const acoes = {
   dcDecidir: el => decidirDataCar(el.dataset.d),
   dcEditarMarca: () => editarMarcaDataCar(),
+  dcCorrigirCodigo: () => corrigirCodigoDataCar(),
   dcSugestoes: () => aplicarSugestoesDataCar(),
   dcSelVai: () => decidirSelecionadosDc('vai'),
   dcSelNao: () => decidirSelecionadosDc('nao'),
