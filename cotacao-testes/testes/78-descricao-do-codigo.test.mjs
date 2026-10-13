@@ -67,3 +67,24 @@ test('duas linhas com códigos diferentes que casam com o mesmo produto viram do
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('códigos compostos que só começam igual são peças diferentes: cada um com o seu cadastro, sem "repetido"', async () => {
+  const s = await abrir(base({ produtos: [prod('p1', '113175/50005', 'ROLAMENTO RODA DIANTEIRA')] }));
+  const { page } = s;
+  await page.click('nav [data-route=nova]');
+  await page.setInputFiles('[data-import-datacar]', csv(['113175/50005;ROLAMENTO RODA DIANTEIRA;SKF;01', '113175/VKBC4221;ROLAMENTO RODA DIANTEIRA;SKF;01']));
+  await page.waitForSelector('#dlgDataCar');
+  const casou = await page.evaluate(() => Object.fromEntries(ui.datacar.linhas.map(l => [l.codigo, l.produtoId])));
+  assert.equal(casou['113175/50005'], 'p1');
+  assert.equal(casou['113175/VKBC4221'], null, 'não liga ao cadastro do 113175/50005');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  const r = await page.evaluate(() => { const prod = Object.fromEntries(db.produtos.map(p => [p.id, p])); return rascunho().itens.map(x => prod[x.produtoId].codigo).sort(); });
+  assert.deepEqual(r, ['113175/50005', '113175/VKBC4221'], 'cada um com o seu cadastro');
+  assert.equal(await page.locator('#tabItens .badge.warn:text("repetido")').count(), 0);
+  assert.equal(await page.locator('.painel-dup').count(), 0);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});

@@ -3830,6 +3830,8 @@ function produtoDoArquivo(mapa, busca, descArquivo) {
   const k = v => semAcento(v).replace(/\s+/g, '');
   const cands = [...(mapa.get(k(busca)) || [])];
   for (const parte of busca.split(/[\/,;]+/)) for (const c of mapa.get(k(parte)) || []) if (!cands.some(x => x.p === c.p)) cands.push(c);
+  // código composto diferente que só tem um pedaço igual ("113175/VKBC4221" x "113175/50005") é outra peça
+  for (let k = cands.length - 1; k >= 0; k--) if (cands[k].nivel === 'codigo' && !mesmoCodigo(busca, cands[k].p.codigo)) cands.splice(k, 1);
   if (!cands.length) return { p: null };
   if (!String(descArquivo || '').trim()) return { p: cands[0].p };
   const bom = cands.find(c => descricoesCombinam(descArquivo, c.p.descricao));
@@ -3973,29 +3975,40 @@ const grupoDc = v => {
 };
 const chaveCodigo = v => semAcento(v).replace(/\s+/g, '');
 
-/**
- * Partes de um código para achar repetidos: "2527/GR12527" -> ["2527", "gr12527", "2527/gr12527"].
- * Como no DISPPAR, o sufixo de KIT não conta: "40123-KITCIA" também vira "40123".
- */
-function tokensCodigo(cod) {
-  const k = chaveCodigo(cod || '');
-  if (!k) return [];
-  const partes = k.split(/[\/,;|]+/).filter(t => t.length >= 3);
-  const semKit = [k, ...partes].map(t => t.replace(/^(.{3,}?)[-\/]?kit[a-z0-9]*$/, '$1')).filter(t => t.length >= 3);
-  return [...new Set([k, ...partes, ...semKit])];
-}
 
 /** Para cada código, os índices dos outros com código igual ou contido (ver tokensCodigo). */
+/** Código normalizado (sem o sufixo de KIT) e as suas partes ("113175/50005" -> ["113175", "50005"]). */
+function partesCodigo(cod) {
+  const semKit = t => t.replace(/^(.{3,}?)[-\/]?kit[a-z0-9]*$/, '$1');
+  const k = chaveCodigo(cod || '');
+  if (!k) return { k: '', partes: [] };
+  const partes = [...new Set(k.split(/[\/,;|]+/).filter(t => t.length >= 3).map(semKit))];
+  return { k: semKit(k), partes: partes.length ? partes : [semKit(k)] };
+}
+/**
+ * São o mesmo código (item repetido)? Igual, ou igual tirando o sufixo de KIT, ou um código simples que é
+ * parte do outro ("UB152" e "UB152/20036"). Dois códigos COMPOSTOS diferentes que só começam igual
+ * ("113175/50005" e "113175/VKBC4221") são peças diferentes, cada uma com o seu cadastro.
+ */
+function mesmoCodigo(a, b) {
+  const A = partesCodigo(a), B = partesCodigo(b);
+  if (!A.k || !B.k) return false;
+  if (A.k === B.k) return true;
+  if (A.partes.length > 1 && B.partes.length > 1) return false;
+  return A.partes.some(t => B.partes.includes(t));
+}
+
+/** Para cada código, os índices dos outros que são o mesmo código (ver mesmoCodigo). */
 function parceirosCodigo(codigos) {
-  const porToken = new Map();
-  const toks = codigos.map((c, i) => {
-    const t = tokensCodigo(c);
-    t.forEach(x => { if (!porToken.has(x)) porToken.set(x, new Set()); porToken.get(x).add(i); });
-    return t;
+  const porParte = new Map();
+  const ps = codigos.map((c, i) => {
+    const p = partesCodigo(c);
+    p.partes.forEach(x => { if (!porParte.has(x)) porParte.set(x, new Set()); porParte.get(x).add(i); });
+    return p;
   });
   return codigos.map((c, i) => {
     const set = new Set();
-    toks[i].forEach(t => porToken.get(t).forEach(j => { if (j !== i) set.add(j); }));
+    ps[i].partes.forEach(t => porParte.get(t).forEach(j => { if (j !== i && !set.has(j) && mesmoCodigo(c, codigos[j])) set.add(j); }));
     return [...set];
   });
 }
@@ -4503,8 +4516,7 @@ function conteudoItem() {
   const txt = cc => (cc >= 0 ? l.cels[cc] : '');
   const naCotacao = new Set(rascunho().itens.map(x => x.produtoId));
   const m = marcaAtualDataCar(l, p);
-  const meusTokens = new Set(tokensCodigo(l.codigo));
-  const repetido = l.codigo && todosDataCar().some(x => x !== l && tokensCodigo(x.codigo).some(t => meusTokens.has(t)));
+  const repetido = l.codigo && todosDataCar().some(x => x !== l && mesmoCodigo(l.codigo, x.codigo));
   const vai = fila.filter(x => x.decisao === 'vai').length;
   const nao = fila.filter(x => x.decisao === 'nao').length;
   return `${progressoDataCar()}
@@ -4993,20 +5005,11 @@ function ordenarItensRascunho(r, prod, ordem = 'desc') {
 function contextoNova() {
   const r = rascunho();
   const prod = prodPorId();
-  // Códigos repetidos: itens cujo código é igual ou CONTÉM o mesmo código de outro item
-  // (ex.: "2527/GR12527" e "2527/RD45552", ou "UB152" e "UB152/20036"), ou várias linhas do arquivo no mesmo item.
+  // Códigos repetidos: o mesmo código (ou um código simples dentro de outro, "UB152" e "UB152/20036"), ou várias
+  // linhas do arquivo no mesmo item. Compostos diferentes ("113175/50005" e "113175/VKBC4221") são peças diferentes.
   const codDe = x => x.codigoArquivo || prod[x.produtoId].codigo || '';
-  const porToken = new Map();
-  const tokensDe = r.itens.map((x, i) => {
-    const toks = tokensCodigo(codDe(x));
-    toks.forEach(t => { if (!porToken.has(t)) porToken.set(t, new Set()); porToken.get(t).add(i); });
-    return toks;
-  });
-  const parceiros = r.itens.map((x, i) => {
-    const set = new Set();
-    tokensDe[i].forEach(t => porToken.get(t).forEach(j => { if (j !== i) set.add(j); }));
-    return [...set];
-  });
+  const parceiros = parceirosCodigo(r.itens.map(codDe));
+  const tokensDe = r.itens.map(x => partesCodigo(codDe(x)).partes); // o pedaço em comum aparece no painel de repetidos
   const obsRep = o => o.filter(temXX).length > 1 || o.filter(v => !temXX(v)).length > 1; // XX e sem XX = duas lojas, não é repetido
   const repetido = (x, i = r.itens.indexOf(x)) => !x.dupVisto && (parceiros[i].length > 0 || obsRep(x.obsArquivo || []));
   const obsDe = x => {
@@ -5075,6 +5078,8 @@ function acharProdutoPorCodigo(cod) {
   const k = v => semAcento(v).replace(/\s+/g, '');
   let p = mapa.get(k(cod)) || null;
   if (!p) for (const parte of String(cod).split(/[\/,;]+/)) { p = mapa.get(k(parte)); if (p) break; }
+  // pedaço igual de outro código composto não é o mesmo produto
+  if (p && chaveCodigo(p.codigo || '') !== k(cod) && !mesmoCodigo(cod, p.codigo) && !String(p.similar || '').split(/[\/,;\s]+/).some(t => k(t) === k(cod))) return null;
   return p;
 }
 
