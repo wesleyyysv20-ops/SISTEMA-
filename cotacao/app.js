@@ -8171,9 +8171,9 @@ function renderInicio() {
     <div class="row-between cab-pagina">
       <div class="cab-tit"><h2>Início</h2><p class="cab-sub saudacao">${esc(saudacaoInicio())}</p></div>
       <div class="row">
-        <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
-        <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
         ${ativas.length ? '<label class="btn" style="margin:0" title="Importar as planilhas que os fornecedores devolveram (o sistema acha a cotação e o fornecedor de cada uma)">📥 Importar respostas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>' : ''}
+        <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
+        <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
       </div>
     </div>
     ${htmlContinuar()}

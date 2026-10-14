@@ -2618,3 +2618,14 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 /* janela flutuante: ✎ editar o preço, ao lado do ❓ */
 .pip-btn-edit { flex: none; padding: 1px 7px; font-size: var(--fs-md); border-radius: var(--r-pill); background: var(--card); border: 1px solid var(--primary-2); color: var(--primary-2); }
 .pip-btn-edit:hover { background: var(--blue-bg); }
+
+/* ===== padrão de tamanhos (crítica de design): 3 alturas de botão, cada uma para um papel =====
+   36px: ações do topo de cada página · 32px: abas e navegação · 28px: filtros e etiquetas clicáveis */
+.cab-cot-acoes > details, .cab-cot-acoes > details > summary, .cab-cot-acoes > .sm { height: 36px; min-height: 36px; font-size: var(--fs-md); padding-left: 12px; padding-right: 12px; }
+.aba-cfg { height: 32px; font-size: var(--fs-sm); display: inline-flex; align-items: center; }
+.secoes-cot button { height: 32px; min-height: 32px; }
+.chip-status, .pill-aviso { height: 28px; min-height: 28px; box-sizing: border-box; }
+.pill-filtro { height: 28px; }
+.status-cot .seta-status { font-size: 11px; }
+/* títulos dos cartões das Configurações iguais aos das outras telas */
+[data-aba-cfg] > h2, [data-aba-cfg] > section > h2, section.card[data-aba-cfg] > h2 { font-size: 16px; }

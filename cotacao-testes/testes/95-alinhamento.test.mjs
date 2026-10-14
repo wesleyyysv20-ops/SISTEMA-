@@ -49,6 +49,14 @@ function problemas() {
     const torto = bts.some(a => bts.some(b => a !== b && Math.abs(a.top - b.top) < Math.min(a.height, b.height) && (Math.abs(a.top - b.top) > 1 || Math.abs(a.height - b.height) > 1)));
     if (torto) res.push(`botões desalinhados: ${nome(grupo)}`);
   }
+  // padrão de tamanhos: ações do topo da página 36px; filtros e etiquetas clicáveis 28px
+  if (W > 760) {
+    const alturas = (sel, h, papel) => {
+      for (const b of document.querySelectorAll(sel)) if (visivel(b) && Math.abs(b.getBoundingClientRect().height - h) > 1) res.push(`${papel} com ${Math.round(b.getBoundingClientRect().height)}px (padrão ${h}px): ${nome(b)}`);
+    };
+    alturas('#app .cab-pagina .row > .btn, #app .cab-cot-acoes > .sm, #app .cab-cot-acoes > details > summary', 36, 'botão do topo');
+    alturas('#app .chip-status, #app .pill-aviso', 28, 'filtro');
+  }
   // barras de ferramentas: tudo na mesma altura (uma linha só) quando há espaço
   if (W >= 1000) {
     for (const barra of document.querySelectorAll('#secComp > .row-between > .row')) {
