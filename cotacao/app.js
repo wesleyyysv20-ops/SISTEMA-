@@ -7706,12 +7706,22 @@ function renderRelatorios() {
 /* ---------------- nota dos fornecedores ---------------- */
 
 const PESOS_NOTA = [
-  ['resposta', 0.25, 'Responde às cotações'],
-  ['prazo', 0.15, 'Responde no prazo'],
-  ['cobertura', 0.20, 'Cota os itens pedidos'],
+  ['resposta', 0.20, 'Responde às cotações'],
+  ['prazo', 0.10, 'Responde no prazo'],
+  ['cobertura', 0.15, 'Cota os itens pedidos'],
   ['marca', 0.20, 'Manda a marca exigida'],
-  ['notas', 0.20, 'Notas fiscais sem divergência'],
+  ['preco', 0.20, 'Preço competitivo'],
+  ['notas', 0.15, 'Notas fiscais sem divergência'],
 ];
+/** Preço competitivo: mediana de quanto fica acima do melhor preço. 0% = 100 pontos; 30% ou mais = 0. */
+const LIMITE_PRECO_NOTA = 0.30;
+const mediana = v => { if (!v.length) return null; const o = [...v].sort((a, b) => a - b); const m = o.length >> 1; return o.length % 2 ? o[m] : (o[m - 1] + o[m]) / 2; };
+/** Cotação aberta que o fornecedor ainda pode responder (prazo não venceu ou sem prazo): não conta como "não respondeu". */
+function aguardandoResposta(c, f) {
+  if (c.status !== 'aberta' || respondeu(f)) return false;
+  const lim = limitePrazo(c);
+  return !lim || lim > new Date();
+}
 
 /**
  * Desempenho de cada fornecedor do cadastro nas cotações do período (canceladas não contam):
@@ -7720,8 +7730,8 @@ const PESOS_NOTA = [
 function desempenhoFornecedores(desde = inicioPeriodo(), cotId = null) {
   const st = {};
   const pega = (id, nome) => (st[id] ||= {
-    id, nome, recebidas: 0, respondidas: 0, comPrazo: 0, noPrazo: 0, horas: [], itensPedidos: 0, itensCotados: 0,
-    comExigencia: 0, marcaErrada: 0, semMarca: 0, notas: 0, notasDiv: 0, cobrado: 0, faltas: 0,
+    id, nome, recebidas: 0, respondidas: 0, aguardando: 0, comPrazo: 0, noPrazo: 0, horas: [], itensPedidos: 0, itensCotados: 0,
+    comExigencia: 0, marcaErrada: 0, semMarca: 0, notas: 0, notasDiv: 0, cobrado: 0, faltas: 0, difs: [], ganhos: 0,
   });
   // uma cotação só (análise individual) ou todas do período (análise geral)
   const cots = cotId ? db.cotacoes.filter(c => c.id === cotId) : db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde));
@@ -7731,6 +7741,7 @@ function desempenhoFornecedores(desde = inicioPeriodo(), cotId = null) {
       const x = pega(f.fornecedorId || f.nome, f.nome);
       const resp = respondeu(f);
       if (!f.enviadoEm && !resp) return; // ainda não recebeu a cotação
+      if (aguardandoResposta(c, f)) { x.aguardando++; return; } // ainda dentro do prazo: não é falta
       x.recebidas++;
       if (!resp) return;
       x.respondidas++;
@@ -7743,6 +7754,9 @@ function desempenhoFornecedores(desde = inicioPeriodo(), cotId = null) {
       for (const l of comp.linhas) {
         if (l.precos[j] == null) continue;
         x.itensCotados++;
+        if (l.vencedor === j) x.ganhos++;
+        // preço: só onde houve 2 ou mais preços para comparar e a marca dele não é a errada (preço de outra peça não compara)
+        if (l.min > 0 && l.marcas[j] !== 'errada' && l.precos.filter(v => v != null).length > 1) x.difs.push(Math.max(0, l.precos[j] / l.min - 1));
         const m = l.marcas[j];
         if (m == null) continue;
         x.comExigencia++;
@@ -7769,7 +7783,10 @@ function desempenhoFornecedores(desde = inicioPeriodo(), cotId = null) {
       cobertura: x.itensPedidos ? x.itensCotados / x.itensPedidos : null,
       marca: x.comExigencia ? 1 - (x.marcaErrada + x.semMarca * 0.5) / x.comExigencia : null,
       notas: x.notas ? 1 - x.notasDiv / x.notas : null,
+      preco: x.difs.length ? Math.max(0, Math.min(1, 1 - mediana(x.difs) / LIMITE_PRECO_NOTA)) : null,
     };
+    x.medianaAcima = mediana(x.difs);
+    x.vezesMelhor = x.difs.filter(d => d === 0).length;
     const usados = PESOS_NOTA.filter(([k]) => x.partes[k] != null);
     const peso = usados.reduce((s2, [, w]) => s2 + w, 0);
     x.nota = peso ? Math.round((usados.reduce((s2, [k, w]) => s2 + x.partes[k] * w, 0) / peso) * 100) / 10 : null;
@@ -7814,20 +7831,21 @@ function secaoNotaFornecedores() {
         </select></label>
     </div>
     ${cot ? `<p class="small" style="margin:8px 0 0">Só a cotação nº ${esc(cot.numero)}${cot.titulo ? ` (${esc(cot.titulo)})` : ''} de ${fmtData(cot.data)} · ${cot.itens.length} itens · ${cot.fornecedores.length} fornecedores · <a href="#" data-route="cotacao" data-id="${esc(cot.id)}">abrir a cotação</a></p>` : ''}
-    <p class="muted small" style="margin-top:0"><b>Clique no fornecedor para ver a análise detalhada.</b> Nota de 0 a 10: responde às cotações (25%), no prazo (15%), cota os itens pedidos (20%), manda a marca exigida (20%; sem marca conta meio erro) e notas fiscais sem divergência (20%). O que não tem dados fica fora da conta. Passe o mouse na nota para ver cada parte.</p>
+    <p class="muted small" style="margin-top:0"><b>Clique no fornecedor para ver a análise detalhada.</b> Nota de 0 a 10: responde às cotações (20%), no prazo (10%), cota os itens pedidos (15%), manda a marca exigida (20%; sem marca conta meio erro), <b>preço competitivo (20%</b>: quanto fica acima do melhor preço, pela mediana — 0% vale 10, 30% ou mais vale 0) e notas fiscais sem divergência (15%). Cotação aberta ainda no prazo não conta como "não respondeu". O que não tem dados fica fora da conta. Passe o mouse na nota para ver cada parte.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th><th class="c">Nota</th><th class="r">Respondeu</th><th class="r">No prazo</th><th class="r">Tempo médio</th><th class="r">Itens cotados</th><th class="r">Marca errada</th><th class="r">Sem marca</th><th class="r">Notas com divergência</th><th class="r">Cobrado a mais</th></tr></thead>
+      <thead><tr><th>Fornecedor</th><th class="c">Nota</th><th class="r">Respondeu</th><th class="r">No prazo</th><th class="r">Tempo médio</th><th class="r">Itens cotados</th><th class="r">Ganhou</th><th class="r" title="Mediana de quanto o preço dele fica acima do melhor preço de cada item">Preço vs melhor</th><th class="r">Marca errada</th><th class="r">Sem marca</th><th class="r">Notas fiscais</th></tr></thead>
       <tbody>${lista.map(x => `<tr class="linha-forn-analise" data-act="analiseForn" data-id="${esc(x.id)}" title="Clique para ver a análise detalhada de ${esc(x.nome)}">
         <td><button type="button" class="link nome-forn-analise" data-act="analiseForn" data-id="${esc(x.id)}"><b>${esc(x.nome)}</b></button></td>
         <td class="c">${badgeNota(x.nota, tituloNota(x))}</td>
-        <td class="r">${pct(x.respondidas, x.recebidas)}</td>
+        <td class="r">${pct(x.respondidas, x.recebidas)}${x.aguardando ? `<br><span class="small muted">+${x.aguardando} no prazo</span>` : ''}</td>
         <td class="r">${pct(x.noPrazo, x.comPrazo)}</td>
         <td class="r">${fmtHoras(x.horasMedia)}</td>
         <td class="r">${pct(x.itensCotados, x.itensPedidos)}</td>
+        <td class="r">${x.itensCotados ? `${x.ganhos} <span class="small muted">(${fmtPct(x.ganhos / x.itensCotados, 0)})</span>` : '—'}</td>
+        <td class="r">${x.medianaAcima == null ? '—' : x.medianaAcima === 0 ? '<span class="txt-bom">o melhor</span>' : `<span class="${x.medianaAcima > 0.15 ? 'txt-ruim' : ''}">+${fmtPct(x.medianaAcima, 1)}</span>`}${x.medianaAcima == null ? '' : `<br><span class="small muted">menor em ${x.vezesMelhor}</span>`}</td>
         <td class="r">${x.comExigencia ? `${x.marcaErrada} <span class="small muted">de ${x.comExigencia}</span>` : '—'}</td>
         <td class="r">${x.comExigencia ? x.semMarca : '—'}</td>
-        <td class="r">${x.notas ? `${x.notasDiv} de ${x.notas}${x.faltas ? `<br><span class="small muted">${x.faltas} item(ns) não vieram</span>` : ''}` : '—'}</td>
-        <td class="r">${x.cobrado ? `<span class="txt-ruim">${fmtMoeda(x.cobrado)}</span>` : '—'}</td>
+        <td class="r">${x.notas ? `${x.notasDiv} com divergência de ${x.notas}${x.cobrado ? `<br><span class="txt-ruim small">cobrou ${fmtMoeda(x.cobrado)} a mais</span>` : ''}${x.faltas ? `<br><span class="small muted">${x.faltas} item(ns) não vieram</span>` : ''}` : '—'}</td>
       </tr>`).join('')}</tbody>
     </table></div>
     <p class="small muted" style="margin:6px 0 0">O tempo de resposta vai do envio (marcado quando você abre o e-mail) até a importação da planilha respondida.</p>
@@ -7840,18 +7858,23 @@ function secaoNotaFornecedores() {
  */
 function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
   const cots = cotId ? db.cotacoes.filter(c => c.id === cotId) : db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde));
-  const r = { hist: [], cotados: 0, ganhos: 0, ganhosPreco: 0, segundo: 0, valorGanho: 0, acima: [], perdas: [], marcas: {}, marcasGanhas: {}, erradas: [], recebidas: 0, confirmadas: 0, comPedido: 0, exportados: 0 };
+  const r = { hist: [], cotados: 0, ganhos: 0, ganhosPreco: 0, segundo: 0, valorGanho: 0, acima: [], perdas: [], marcas: {}, marcasGanhas: {}, erradas: [], recebidas: 0, confirmadas: 0, comPedido: 0, exportados: 0, naoCotados: new Map() };
   for (const c of [...cots].sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero))) {
     const j = c.fornecedores.findIndex(f => (f.fornecedorId || f.nome) === id);
     if (j < 0) continue;
     const f = c.fornecedores[j];
     const resp = respondeu(f);
-    const h = { c, f, resp, enviada: !!f.enviadoEm || resp, noPrazo: c.prazoResposta && f.respondidoEm ? respondeuNoPrazo(c, f) : null, cotados: 0, ganhos: 0, valor: 0, acima: [] };
+    const h = { c, f, resp, aguardando: aguardandoResposta(c, f), enviada: !!f.enviadoEm || resp, noPrazo: c.prazoResposta && f.respondidoEm ? respondeuNoPrazo(c, f) : null, cotados: 0, ganhos: 0, valor: 0, acima: [] };
     if (resp) {
       const comp = comparar(c);
       for (const l of comp.linhas) {
         const p = l.precos[j];
-        if (p == null) continue;
+        if (p == null) {
+          // item pedido que ele não cotou (para o feedback: o que mais deixa de cotar)
+          const k = chaveCodigo(l.it.codigo || l.it.descricao || '');
+          if (k) { const y = r.naoCotados.get(k) || { it: l.it, n: 0 }; y.n++; r.naoCotados.set(k, y); }
+          continue;
+        }
         h.cotados++;
         const m = f.respostas?.[l.i]?.marca;
         if (m) { const k = String(m).trim().toUpperCase(); r.marcas[k] = (r.marcas[k] || 0) + 1; }
@@ -7866,7 +7889,7 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
           if (m) { const k = String(m).trim().toUpperCase(); r.marcasGanhas[k] = (r.marcasGanhas[k] || 0) + 1; }
         }
         else if (l.segundoIdx === j) r.segundo++;
-        if (l.min > 0 && l.minIdx !== j) {
+        if (l.marcas[j] === 'errada') { /* marca errada: preço de outra peça, não entra na comparação */ } else if (l.min > 0 && l.minIdx !== j) {
           const dif = p / l.min - 1;
           h.acima.push(dif);
           if (dif > 0) r.perdas.push({ c, it: l.it, preco: p, min: l.min, dif, quem: c.fornecedores[l.minIdx]?.nome || '' });
@@ -7886,10 +7909,60 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
     r.hist.push(h);
   }
   r.mediaAcima = r.acima.length ? r.acima.reduce((a, b) => a + b, 0) / r.acima.length : null;
+  r.medianaAcima = mediana(r.acima);
+  r.naoCotados = [...r.naoCotados.values()].sort((p, q) => q.n - p.n);
   r.vezesMelhor = r.acima.filter(d => d === 0).length;
   r.perdas.sort((a, b) => b.dif - a.dif);
   r.perto = r.perdas.filter(x => x.dif <= 0.05).length; // perdeu por até 5%: dá para negociar
   return r;
+}
+
+
+/**
+ * Feedback para o vendedor (texto para WhatsApp/e-mail): números reais do período, pontos fortes,
+ * o que melhorar e exemplos concretos (marcas erradas, itens perdidos por pouco, itens que não cota).
+ */
+function textoFeedbackFornecedor({ x, a, escopo, pos, total, fortes, atencao }) {
+  const L = [];
+  const pct = (v, d = 0) => fmtPct(v, d);
+  const nota = x.nota == null ? '—' : x.nota.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const loja = db.config.loja || 'DISPPAR';
+  L.push(`*Avaliação de fornecedor — ${loja}*`);
+  L.push(`Fornecedor: *${x.nome}*`);
+  L.push(`Período: ${escopo} · ${x.recebidas} cotação(ões) recebida(s)${x.aguardando ? ` (+${x.aguardando} ainda no prazo)` : ''}`);
+  L.push(`Nota: *${nota} de 10*${pos && total > 1 ? ` (${pos}º de ${total} fornecedores)` : ''}`);
+  L.push('');
+  if (fortes.length) { L.push('✅ *Pontos fortes*'); fortes.forEach(t => L.push(`• ${t}`)); L.push(''); }
+  if (atencao.length) { L.push('⚠️ *Pontos a melhorar*'); atencao.forEach(t => L.push(`• ${t}`)); L.push(''); }
+  L.push('📊 *Números*');
+  L.push(`• Respondeu ${x.respondidas} de ${x.recebidas} cotações${x.recebidas ? ` (${pct(x.respondidas / x.recebidas)})` : ''}${x.comPrazo ? ` · ${x.noPrazo} de ${x.comPrazo} no prazo` : ''}`);
+  if (x.horasMedia != null) L.push(`• Tempo médio de resposta: ${fmtHoras(x.horasMedia)}`);
+  L.push(`• Cotou ${x.itensCotados} de ${x.itensPedidos} itens pedidos${x.itensPedidos ? ` (${pct(x.itensCotados / x.itensPedidos)})` : ''}`);
+  L.push(`• Ganhou ${a.ganhos} itens${a.cotados ? ` (${pct(a.ganhos / a.cotados)} dos que cotou)` : ''}${a.valorGanho ? ` · ${fmtMoeda(a.valorGanho)} em compras` : ''}`);
+  if (a.medianaAcima != null) L.push(`• Preço: ${a.medianaAcima === 0 ? 'em geral é o melhor preço' : `em geral ${pct(a.medianaAcima, 1)} acima do melhor preço`} · foi o menor em ${a.vezesMelhor} item(ns)`);
+  if (x.comExigencia) L.push(`• Marca diferente da pedida: ${x.marcaErrada} de ${x.comExigencia} itens${x.semMarca ? ` · sem marca informada: ${x.semMarca}` : ''}`);
+  if (x.notas) L.push(`• Notas fiscais: ${x.notasDiv} com divergência de ${x.notas}${x.cobrado ? ` · cobrado a mais: ${fmtMoeda(x.cobrado)}` : ''}`);
+  const perto = a.perdas.filter(q => q.dif <= 0.05);
+  if (perto.length) {
+    L.push('');
+    L.push(`💲 *Perdeu por pouco (até 5%) — dá para melhorar o preço* (${perto.length})`);
+    perto.slice(0, 10).forEach(q => L.push(`• nº ${q.c.numero} · ${q.it.codigo || q.it.descricao}: seu ${fmtMoeda(q.preco)} × melhor ${fmtMoeda(q.min)} (+${pct(q.dif, 1)})`));
+    if (perto.length > 10) L.push(`… e mais ${perto.length - 10}`);
+  }
+  if (a.erradas.length) {
+    L.push('');
+    L.push(`🏷️ *Marca diferente da pedida* (${a.erradas.length})`);
+    a.erradas.slice(0, 10).forEach(e => L.push(`• nº ${e.c.numero} · ${e.it.codigo || e.it.descricao}: pedimos ${e.pedida || '—'}, veio ${e.mandou || 'sem marca'}`));
+    if (a.erradas.length > 10) L.push(`… e mais ${a.erradas.length - 10}`);
+  }
+  if (a.naoCotados.length) {
+    L.push('');
+    L.push('📦 *Itens que mais deixou de cotar*');
+    a.naoCotados.slice(0, 10).forEach(q => L.push(`• ${q.it.codigo || ''} ${q.it.descricao || ''} (${q.n}×)`.replace(/\s+/g, ' ').trim()));
+  }
+  L.push('');
+  L.push('Obrigado pela parceria!');
+  return L.join('\n');
 }
 
 async function abrirAnaliseFornecedor(id) {
@@ -7901,6 +7974,7 @@ async function abrirAnaliseFornecedor(id) {
   const cad = db.fornecedores.find(f => f.id === id);
   const pct = (v, d = 0) => fmtPct(v, d);
   const escopo = cot ? `cotação nº ${esc(cot.numero)}` : ui.periodoRel ? `últimos ${esc(ui.periodoRel)} dias` : 'todas as cotações';
+  const escopoTxt = cot ? `cotação nº ${cot.numero} (${fmtData(cot.data)})` : ui.periodoRel ? `últimos ${ui.periodoRel} dias` : 'todas as cotações';
   // comparação com os outros fornecedores do mesmo período
   const outros = desemp.map(y => ({ id: y.id, nota: y.nota, a: y.id === id ? a : analiseFornecedor(y.id, inicioPeriodo(), cot?.id || null) }));
   const posNota = [...outros].filter(o => o.nota != null).sort((p, q) => q.nota - p.nota).findIndex(o => o.id === id) + 1;
@@ -7925,8 +7999,8 @@ async function abrirAnaliseFornecedor(id) {
     if (minhaTaxa >= mediaTaxa * 1.2) fortes.push(`Ganha mais que a média: ${pct(minhaTaxa)} dos itens que cota (média ${pct(mediaTaxa)})`);
     else if (minhaTaxa <= mediaTaxa * 0.6) atencao.push(`Ganha pouco: ${pct(minhaTaxa)} dos itens que cota (média ${pct(mediaTaxa)})`);
   }
-  if (a.mediaAcima != null && a.mediaAcima <= 0.03) fortes.push(`Preço muito competitivo: em média ${pct(a.mediaAcima, 1)} acima do melhor`);
-  if (a.mediaAcima != null && a.mediaAcima > 0.15) atencao.push(`Preço alto: em média ${pct(a.mediaAcima, 1)} acima do melhor preço`);
+  if (a.medianaAcima != null && a.medianaAcima <= 0.03) fortes.push(`Preço muito competitivo: em geral ${pct(a.medianaAcima, 1)} acima do melhor`);
+  if (a.medianaAcima != null && a.medianaAcima > 0.15) atencao.push(`Preço alto: em geral ${pct(a.medianaAcima, 1)} acima do melhor preço`);
   if (a.perto) fortes.push(`${a.perto} item(ns) perdidos por até 5% — dá para negociar`);
   if (x.horasMedia != null && x.horasMedia > 48) atencao.push(`Demora para responder (${fmtHoras(x.horasMedia)} em média)`);
   if (a.comPedido && a.exportados < a.comPedido) atencao.push(`${a.comPedido - a.exportados} pedido(s) ainda não exportado(s)`);
@@ -7935,7 +8009,7 @@ async function abrirAnaliseFornecedor(id) {
   const top = (obj, k = 10) => Object.entries(obj).sort((p, q) => q[1] - p[1]).slice(0, k);
   const marcas = top(a.marcas);
   const marcasGanhas = top(a.marcasGanhas, 8);
-  const statusResp = h => (!h.enviada ? '<span class="muted">não enviada</span>' : !h.resp ? '<span class="txt-ruim">não respondeu</span>'
+  const statusResp = h => (!h.enviada ? '<span class="muted">não enviada</span>' : h.aguardando ? '<span class="muted">aguardando (no prazo)</span>' : !h.resp ? '<span class="txt-ruim">não respondeu</span>'
     : h.noPrazo === false ? '<span class="txt-atencao">fora do prazo</span>' : h.noPrazo ? '<span class="txt-bom">no prazo</span>' : 'respondeu');
   const maxGanhos = Math.max(1, ...a.hist.map(h => h.ganhos));
   const html = `<div class="af-topo">
@@ -7943,6 +8017,7 @@ async function abrirAnaliseFornecedor(id) {
         <p class="small muted" style="margin:2px 0 0">${cad ? [cad.contato && '👤 ' + esc(cad.contato), cad.substituto && `<span class="subst-forn">subst. ${esc(cad.substituto)}</span>`, cad.telefone && '📞 ' + esc(cad.telefone), cad.email && '✉ ' + esc(cad.email)].filter(Boolean).join(' · ') : ''}</p>
         <p class="small muted" style="margin:2px 0 0">Análise de ${escopo}${n > 1 ? ` · comparado com ${n - 1} outro(s) fornecedor(es)` : ''}</p></div>
       <div class="af-nota">${badgeNota(x.nota, tituloNota(x))}<span class="small muted">nota${posNota ? ` · ${posNota}º de ${outros.filter(o => o.nota != null).length}` : ''}</span></div>
+      <button type="button" class="sm primary af-feedback" title="Copia um texto pronto para mandar ao vendedor no WhatsApp ou e-mail: nota, pontos fortes, o que melhorar e os itens">📋 Copiar feedback para o vendedor</button>
       <button type="button" class="af-fechar" title="Fechar (Esc)" aria-label="Fechar">✕</button>
     </div>
     <div class="af-grupos">
@@ -7958,7 +8033,7 @@ async function abrirAnaliseFornecedor(id) {
         ${linha('Itens ganhos', `${a.ganhos}`, `${a.cotados ? pct(a.ganhos / a.cotados) + ' dos cotados' : ''}${mediaTaxa != null && n > 1 ? ` · média ${pct(mediaTaxa)}` : ''}`, 'destaque')}
         ${linha('Menor preço', `${a.vezesMelhor}`, a.acima.length ? `em ${pct(a.vezesMelhor / a.acima.length)} dos itens` : '')}
         ${linha('Ficou em 2º', `${a.segundo}`, 'item(ns)')}
-        ${linha('Acima do melhor', a.mediaAcima == null ? '—' : pct(a.mediaAcima, 1), 'em média', a.mediaAcima > 0.15 ? 'ruim' : '')}
+        ${linha('Acima do melhor', a.medianaAcima == null ? '—' : pct(a.medianaAcima, 1), a.mediaAcima == null ? '' : `mediana · média ${pct(a.mediaAcima, 1)}`, a.medianaAcima > 0.15 ? 'ruim' : '')}
       </section>
       <section class="af-grupo"><h4>🛒 Compras</h4>
         ${linha('Valor ganho', fmtMoeda(a.valorGanho), 'preço × quantidade')}
@@ -7994,6 +8069,9 @@ async function abrirAnaliseFornecedor(id) {
       <div class="table-wrap af-rolar"><table class="af-tab"><thead><tr><th>Cotação</th><th>Item</th><th class="r">Preço dele</th><th class="r">Melhor</th><th class="r">Dif.</th><th>Quem ganhou</th></tr></thead>
       <tbody>${a.perdas.slice(0, 12).map(q => `<tr><td>nº ${esc(q.c.numero)}</td><td><b>${esc(q.it.codigo || '')}</b> <span class="small muted">${esc(q.it.descricao || '')}</span></td><td class="r">${fmtMoeda(q.preco)}</td><td class="r">${fmtMoeda(q.min)}</td><td class="r ${q.dif > 0.15 ? 'txt-ruim' : ''}">+${pct(q.dif, 1)}</td><td>${esc(q.quem)}</td></tr>`).join('')}</tbody></table></div>
     </section>` : ''}
+    ${a.naoCotados.length ? `<section><h4>Itens que mais deixa de cotar <span class="small muted">(pedidos e sem preço dele)</span></h4>
+      <p class="af-marcas">${a.naoCotados.slice(0, 15).map(q => `<span class="af-chip" title="${esc(q.it.descricao || '')}">${esc(q.it.codigo || q.it.descricao || '')} <b>${q.n}×</b></span>`).join('')}${a.naoCotados.length > 15 ? ` <span class="small muted">e mais ${a.naoCotados.length - 15}</span>` : ''}</p>
+    </section>` : ''}
     <section><h4>Histórico por cotação</h4>
       <div class="table-wrap af-rolar"><table class="af-tab"><thead><tr><th>Cotação</th><th>Data</th><th>Resposta</th><th class="r">Cotou</th><th>Ganhou</th><th class="r">Valor ganho</th><th class="r">Acima do melhor</th><th>Pedido</th></tr></thead>
       <tbody>${a.hist.map(h => `<tr><td><a href="#" data-route="cotacao" data-id="${esc(h.c.id)}" class="af-abrir"><b>nº ${esc(h.c.numero)}</b></a></td><td>${fmtData(h.c.data)}</td><td>${statusResp(h)}</td>
@@ -8009,6 +8087,8 @@ async function abrirAnaliseFornecedor(id) {
     if (e.target.closest('.af-fechar')) { dlg.querySelector('.actions button').click(); return; }
     const cp = e.target.closest('.af-copiar-erradas');
     if (cp) { copiar(textoMarcasErradas(x.nome, a.erradas), cp); return; }
+    const fb = e.target.closest('.af-feedback');
+    if (fb) { copiar(textoFeedbackFornecedor({ x, a, escopo: escopoTxt, pos: posNota, total: outros.filter(o => o.nota != null).length, fortes, atencao }), fb); return; }
     // abrir uma cotação do histórico fecha a análise
     const lk = e.target.closest('.af-abrir');
     if (!lk) return;
