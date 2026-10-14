@@ -27,25 +27,16 @@ test('comparativo sem quantidade: o total mostra o preço de 1 un.; quantidade v
   assert.equal(await page.locator('[data-qtd-loja="paranoa"][data-i="0"]').getAttribute('placeholder'), '');
   // variação contra o último preço pago (100 → 120)
   assert.match(n(await page.locator('tr[data-comp-linha="0"] .ult-preco').innerText()), /último R\$ 100,00 ▲ 20,0%/);
-  // ações juntas na linha do preço; legenda e rótulos visíveis
-  assert.equal(await page.locator('tr[data-comp-linha="0"] .esc-linha .div-add').count(), 1);
-  assert.equal(await page.locator('tr[data-comp-linha="0"] .esc-linha [data-act=marcarComprado]').count(), 1);
+  // ações todas juntas na última linha da célula do preço escolhido
+  const acoes = await page.locator('tr[data-comp-linha="0"] td.col-escolhido > :last-child').evaluate(el => [el.className, [...el.querySelectorAll('button')].map(b => b.dataset.act)]);
+  assert.deepEqual(acoes, ['esc-acoes', ['duvidaItem', 'removerPreco', 'dividirCompra', 'marcarComprado']]);
   assert.match(await page.locator('.legenda-comp').innerText(), /sem preço[\s\S]*dividir compra/);
   assert.equal(await page.locator('.filtro-venc-rot').first().isVisible(), true);
-  // rodapé: nenhuma quantidade, 3 itens sem quantidade; digita e acompanha
-  assert.match(n(await page.locator('#rodapeComp').innerText()), /3 itens[\s\S]*Nenhuma quantidade[\s\S]*3 sem quantidade/);
-  await page.click('#rodapeComp .rc-semqtd');
-  assert.equal(await page.evaluate(() => document.activeElement.dataset.i), '0');
-  await page.keyboard.type('2');
+  // digitar a quantidade: o total do item passa a ser o valor do pedido
+  await page.fill('[data-qtd-loja="paranoa"][data-i="0"]', '2');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => /240,00/.test(document.getElementById('rodapeComp').innerText));
-  const rod = n(await page.locator('#rodapeComp').innerText());
-  assert.match(rod, /Paranoá 2 un\. R\$ 240,00[\s\S]*Total R\$ 240,00[\s\S]*2 sem quantidade/);
+  await page.waitForFunction(() => /240,00/.test(document.getElementById('tot-0').innerText));
   assert.match(n(await page.locator('#tot-1').innerText()), /sem qtd/);
-  // com filtro, o rodapé conta só o que está na tela
-  await page.fill('#buscaComp', 'LN2');
-  await page.waitForFunction(() => /1 de 3 itens/.test(document.getElementById('rodapeComp').innerText));
-  assert.match(n(await page.locator('#rodapeComp').innerText()), /Total do filtro R\$ 0,00/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

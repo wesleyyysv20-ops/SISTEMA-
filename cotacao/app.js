@@ -5755,7 +5755,7 @@ const SIT_COMP = { ok: 'Verde: preço escolhido, nada para conferir', conferir: 
 function legendaComp() {
   const cor = { ok: 'var(--verde-linha)', conferir: 'var(--laranja-suave)', aguardando: 'var(--danger)', sem: 'var(--faixa-neutra)', duvida: 'var(--roxo)' };
   const rot = { ok: 'ok', conferir: 'conferir', aguardando: 'aguardando marca', sem: 'sem preço', duvida: 'em dúvida' };
-  return `<div class="legenda-comp small muted"><span>Faixa:</span>${Object.keys(rot).map(k => `<span title="${esc(SIT_COMP[k])}"><i style="background:${cor[k]}"></i>${rot[k]}</span>`).join('')}<span class="leg-sep">·</span><span>❓ pôr em Dúvidas · ✎ corrigir preço/marca · ➗ dividir compra · 🛒 já comprado por fora</span><span class="leg-sep">·</span><span>⌨ digite um número: vai para a quantidade · ↑ ↓ itens · ← → lojas</span></div>`;
+  return `<div class="legenda-comp small muted" title="${esc(Object.values(SIT_COMP).join('\n') + '\n\n❓ pôr em Dúvidas · ✎ corrigir preço/marca · ➗ dividir compra · 🛒 já comprado por fora\n⌨ digite um número: vai para a quantidade · ↑ ↓ itens · ← → lojas')}"><span>Faixa:</span>${Object.keys(rot).map(k => `<span title="${esc(SIT_COMP[k])}"><i style="background:${cor[k]}"></i>${rot[k]}</span>`).join('')}<span class="leg-sep">|</span><span>❓ dúvida · ✎ corrigir · ➗ dividir compra · 🛒 já comprado</span><span class="leg-sep">|</span><span>⌨ número → quantidade · ↑↓ itens · ←→ lojas</span></div>`;
 }
 
 /** Setinha da variação do preço escolhido contra o último pago (▲ subiu, em vermelho; ▼ caiu, em verde). */
@@ -5840,7 +5840,7 @@ function seletorMarca(c, comp) {
   if (!cont.size) return '';
   const atual = filtroMarcaComp(c);
   return `<label class="filtro-venc filtro-marca" title="Mostrar só os itens em que algum fornecedor mandou preço desta marca"><span class="filtro-venc-rot">Marca:</span>
-    <select id="filtroMarca"><option value="">Todas</option>${[...cont].sort((a, b) => b[1].n - a[1].n || COLLATOR.compare(a[1].nome, b[1].nome)).map(([k, x]) => `<option value="${esc(k)}" ${atual === k ? 'selected' : ''}>${esc(x.nome)} (${x.n})</option>`).join('')}</select></label>${sugestoesDicionario().length ? `<button type="button" class="link small btn-dic" data-act="irDicionarioMarcas" title="Há marcas que parecem a mesma escrita de jeitos diferentes (ex.: FRA e FRAS-LE). Clique para juntar no dicionário de marcas.">📖 ${sugestoesDicionario().length} marca(s) repetida(s)?</button>` : ''}`;
+    <select id="filtroMarca"><option value="">Todas as marcas</option>${[...cont].sort((a, b) => b[1].n - a[1].n || COLLATOR.compare(a[1].nome, b[1].nome)).map(([k, x]) => `<option value="${esc(k)}" ${atual === k ? 'selected' : ''}>${esc(x.nome)} (${x.n})</option>`).join('')}</select></label>`;
 }
 /** Filtro pelas etiquetas de aviso ('aguardando', 'dif', 'marca', 'regra', 'demora', 'alertas'); '' = nenhum. */
 function filtroAviso(c) {
@@ -6568,46 +6568,6 @@ window.addEventListener('resize', () => { clearTimeout(timerColFixas); timerColF
 // a largura do comparativo muda sem a janela mudar (barra de rolagem aparece, quadro abre/fecha): mede de novo
 const vigiaLarguraComp = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { clearTimeout(timerColFixas); timerColFixas = setTimeout(() => { ui.colFixas = null; ajustarColunasFixas(); }, 120); }) : null;
 let painelVigiado = null;
-/**
- * Rodapé fixo do comparativo: total dos itens que estão na tela (com o filtro), por loja, e quantos ainda estão
- * sem quantidade. A mesma conta do total do comparativo e dos pedidos (preço escolhido × quantidade + divisões).
- */
-let vigiaRodape = null;
-function atualizarRodapeComp() {
-  const el = document.getElementById('rodapeComp');
-  const c = cotAtual();
-  if (!el || !c) return;
-  const comp = comparar(c);
-  const LJ = lojas();
-  const vis = new Set([...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]:not([hidden])')].map(tr => +tr.dataset.compLinha));
-  const linhas = comp.linhas.filter(l => vis.has(l.i));
-  const porLoja = Object.fromEntries(LJ.map(lj => [lj.id, { q: 0, v: 0 }]));
-  for (const l of linhas) for (const lj of LJ) {
-    const q = l.preco != null ? qtdLoja(c, l.i, lj.id) : 0;
-    porLoja[lj.id].q += q + l.extras.reduce((t, x) => t + (x.qtds[lj.id] || 0), 0);
-    porLoja[lj.id].v += (l.preco != null ? l.preco * q : 0) + l.extras.reduce((t, x) => t + x.preco * (x.qtds[lj.id] || 0), 0);
-  }
-  const total = Object.values(porLoja).reduce((t, x) => t + x.v, 0);
-  const semQtd = linhas.filter(l => l.preco != null && !l.comprado && !l.duvida && !LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null && c.qtds[l.i][lj.id] !== ''));
-  const filtrado = vis.size < comp.linhas.length;
-  el.innerHTML = `<span class="rc-itens">${filtrado ? `<b>${linhas.length}</b> de ${comp.linhas.length} itens (filtro)` : `<b>${comp.linhas.length}</b> itens`}</span>
-    ${comp.porLoja ? LJ.map(lj => `<span class="rc-loja"><span class="muted">${esc(lj.nome)}</span> <b>${fmtNum(porLoja[lj.id].q)} un.</b> ${fmtMoeda(porLoja[lj.id].v)}</span>`).join('') + `<span class="rc-total"><span class="muted">Total${filtrado ? ' do filtro' : ''}</span> <b>${fmtMoeda(total)}</b></span>` : '<span class="muted">Nenhuma quantidade digitada ainda</span>'}
-    ${semQtd.length ? `<button type="button" class="sm rc-semqtd" data-act="irSemQtd" title="Itens com preço que ainda não têm quantidade em nenhuma loja">⚠ ${semQtd.length} sem quantidade →</button>` : '<span class="rc-ok">✓ todos com quantidade</span>'}`;
-}
-let rodapeAgendado = 0;
-function agendarRodapeComp() {
-  if (rodapeAgendado) return;
-  rodapeAgendado = requestAnimationFrame(() => { rodapeAgendado = 0; atualizarRodapeComp(); });
-}
-function vigiarRodapeComp() {
-  const tb = document.querySelector('.tab-comp tbody');
-  if (!tb) return;
-  if (!vigiaRodape) vigiaRodape = new MutationObserver(agendarRodapeComp);
-  vigiaRodape.disconnect();
-  vigiaRodape.observe(tb, { attributes: true, attributeFilter: ['hidden'], subtree: true, childList: true });
-  agendarRodapeComp();
-}
-
 function vigiarLarguraComp() {
   const pc = document.querySelector('.painel-comp');
   if (!vigiaLarguraComp || !pc || pc === painelVigiado) return;
@@ -6617,7 +6577,6 @@ function vigiarLarguraComp() {
 }
 
 function atualizarTotaisComp(c, i = null) {
-  agendarRodapeComp();
   const comp = comparar(c);
   // quando as quantidades passam a valer (1ª digitada) todos os totais mudam; senão, só o da linha digitada
   const todas = i == null || ui.porLojaComp?.cotId !== c.id || ui.porLojaComp.v !== comp.porLoja;
@@ -6841,7 +6800,7 @@ function renderCotacao(id) {
             const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
             const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
               ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${fmtMoeda(l.precos[alvoS])} · ${esc(c.fornecedores[alvoS].nome)}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
-            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b><span class="esc-acoes">${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)">✎</button>` : ''}${fv && l.precos.some((p, j) => p != null && j !== l.vencedor) ? `<button type="button" class="sm link div-add" data-act="dividirCompra" data-i="${l.i}" title="Dividir a compra: comprar uma parte deste item em outra empresa (pelo preço dela)">➗</button>` : ''}${l.preco != null || l.comprado ? `<button type="button" class="sm link btn-comprado${l.comprado ? ' ativo' : ''}" data-act="marcarComprado" data-i="${l.i}" title="${l.comprado ? 'Desfazer: voltar a comprar este item pela cotação' : 'Já comprado por fora (ex.: o chefe comprou): o item sai de todos os pedidos'}">${l.comprado ? '↺' : '🛒'}</button>` : ''}</span></div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult || segMini ? `<div class="esc-info">${ult ? `<span class="small muted ult-preco" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}${varUltimo(l.preco, ult.preco)}</span>` : ''}${segMini}</div>` : ''}${campMini}${htmlDivisoes(c, l, { semBotao: true })}</td>`;
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b></div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}<div class="esc-info">${ult ? `<span class="small muted ult-preco" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}${varUltimo(l.preco, ult.preco)}</span>` : ''}${segMini}</div>${campMini}${htmlDivisoes(c, l, { semBotao: true })}<div class="esc-acoes">${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)">✎</button>` : ''}${fv && l.precos.some((p, j) => p != null && j !== l.vencedor) ? `<button type="button" class="sm link div-add" data-act="dividirCompra" data-i="${l.i}" title="Dividir a compra: comprar uma parte deste item em outra empresa (pelo preço dela)">➗</button>` : ''}${l.preco != null || l.comprado ? `<button type="button" class="sm link btn-comprado${l.comprado ? ' ativo' : ''}" data-act="marcarComprado" data-i="${l.i}" title="${l.comprado ? 'Desfazer: voltar a comprar este item pela cotação' : 'Já comprado por fora (ex.: o chefe comprou): o item sai de todos os pedidos'}">${l.comprado ? '↺' : '🛒'}</button>` : ''}</div></td>`;
           })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
@@ -6860,7 +6819,7 @@ function renderCotacao(id) {
           <td colspan="${(nf > 1 ? 3 : 2) + LJ.length}"></td></tr>` : '').join('') : ''}
       </tbody>
     </table></div>
-    <div class="rodape-comp" id="rodapeComp" aria-live="polite"></div>`;
+    ${temResposta ? legendaComp() : ''}`;
 
   return `
   <section class="card card-cab-cot">
@@ -6941,7 +6900,7 @@ function renderCotacao(id) {
     <div class="faixa-comp">
     ${temResposta ? `<div class="barra-comp small">
       ${escondidos ? `<span class="muted">${escondidos} fornecedor(es) ainda sem resposta não aparecem na tabela.</span> <button type="button" class="link" data-act="mostrarSemResposta">mostrar</button>` : ui.mostrarSemResposta && c.fornecedores.some(f => !Object.values(f.respostas || {}).some(o => o?.preco > 0)) ? '<button type="button" class="link" data-act="mostrarSemResposta">esconder quem não respondeu</button>' : ''}
-      ${legendaComp()}
+      ${sugestoesDicionario().length ? `<button type="button" class="link small btn-dic" data-act="irDicionarioMarcas" title="Há marcas que parecem a mesma escrita de jeitos diferentes (ex.: FRA e FRASLE). Clique para juntar no dicionário de marcas.">📖 ${sugestoesDicionario().length} marca(s) repetida(s)?</button>` : ''}
       <details class="ajuda-comp"><summary title="Como usar o comparativo${comp.escolhasManuais ? ' e mais opções' : ''}">ⓘ${comp.escolhasManuais ? ' mais opções' : ' Como usar'}</summary>
         ${comp.escolhasManuais ? `<p><button type="button" class="sm danger" data-act="limparEscolhas">↺ Desfazer as ${comp.escolhasManuais} escolha(s) feitas na mão</button> <span class="small muted">volta todos esses itens para o menor preço (pede confirmação)</span></p>` : ''}
         ${nf > 1 ? '<p>O vencedor de cada item fica em <b>verde</b>. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço. Preços iguais: ganha quem respondeu primeiro.</p>' : ''}
@@ -8891,7 +8850,7 @@ function render() {
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
-  if (nome === 'cotacao') { ajustarColunasFixasDepois(); vigiarLarguraComp(); vigiarRodapeComp(); }
+  if (nome === 'cotacao') { ajustarColunasFixasDepois(); vigiarLarguraComp(); }
   if (nome === 'nova') setTimeout(avisarControladosNova, 50);
   anunciarPresenca();
   anotarUltimoLugar();
@@ -9779,20 +9738,6 @@ const acoes = {
     render();
   },
   irDicionarioMarcas: () => { ui.abaConfig = 'marcas'; try { localStorage.setItem('cotacao.abaConfig', 'marcas'); } catch (e) { /* sem acesso */ } ir('config'); setTimeout(() => document.getElementById('dicMarcas')?.scrollIntoView({ block: 'start' }), 50); },
-  irSemQtd: () => {
-    const c = cotAtual();
-    if (!c) return;
-    const LJ = lojas();
-    const comp = comparar(c);
-    const linhas = [...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]:not([hidden])')].map(tr => +tr.dataset.compLinha);
-    const atual = ui.linhaComp?.cotId === c.id ? ui.linhaComp.i : -1;
-    const falta = linhas.filter(i => { const l = comp.linhas[i]; return l.preco != null && !l.comprado && !l.duvida && !LJ.some(lj => c.qtds?.[i]?.[lj.id] != null && c.qtds[i][lj.id] !== ''); });
-    const i = falta.find(x => x > atual) ?? falta[0];
-    if (i == null) return;
-    const inp = document.querySelector(`.tab-comp tr[data-comp-linha="${i}"] input[data-qtd-loja]`);
-    inp?.scrollIntoView({ block: 'center' });
-    inp?.focus();
-  },
   esquecerMarca: el => {
     const mapa = el.dataset.tipo === 'eq' ? 'marcasEquivalentes' : 'marcasDiferentes';
     const m = { ...(db.config[mapa] || {}) };
