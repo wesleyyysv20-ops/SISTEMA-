@@ -6218,7 +6218,7 @@ function linhaTotalComp(c, comp) {
   const nf = c.fornecedores.length;
   const LJ = lojas();
   const qtdL = lj => comp.linhas.reduce((s, l) => s + qtdLoja(c, l.i, lj.id), 0);
-  return `<tr class="total" id="totalComp">
+  return `<tr class="total${comp.linhas.length % 2 ? ' par' : ''}" id="totalComp">
     <td></td><td>Total dos itens cotados${comp.porLoja ? '<br><span class="small muted">com as quantidades das lojas</span>' : '<br><span class="small muted">sem quantidades: soma de 1 unidade de cada (não é o pedido)</span>'}</td>
     ${fornecedoresVisiveisComp(c).map(j => comp.totais[j]).map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
     <td class="fd">${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td>${nf > 1 ? '<td class="fd col-dif"></td>' : ''}
@@ -6834,6 +6834,15 @@ function atualizarTotaisComp(c, i = null) {
   }, 350);
 }
 
+/** Marca no lugar das linhas do comparativo (o HTML de cada linha fica em paginaCot.linhas). */
+const MARCA_LINHAS_COMP = '<!--linhas-comp-->';
+let linhasCompGuardadas = null;
+let paginaCot = null; // último desenho da cotação: { cotId, semLinhas, linhas }
+function guardarLinhasComp(linhas) {
+  linhasCompGuardadas = linhas;
+  return MARCA_LINHAS_COMP;
+}
+
 function renderCotacao(id) {
   const c = db.cotacoes.find(x => x.id === id);
   if (!c) return `<section class="card"><p class="empty">Cotação não encontrada. <a href="#" data-route="cotacoes">Voltar</a></p></section>`;
@@ -6973,7 +6982,7 @@ function renderCotacao(id) {
           ${LJ.map(lj => `<th class="c col-qtd fd" title="Quantidade para ${esc(lj.nome)}">Qtd.<br>${esc(lj.nome)}</th>`).join('')}<th class="r fd">Total</th>` : ''}
       </tr></thead>
       <tbody>
-        ${comp.linhas.map(l => {
+        ${guardarLinhasComp(comp.linhas.map((l, k) => {
           const ult = ultimos[idProdutoItem(l.it)] || null;
           const avisosLinha = new Set(); // para as etiquetas de aviso levarem aos itens
           if (l.aguardando || l.recusadaGanhou) avisosLinha.add('aguardando');
@@ -7006,7 +7015,7 @@ function renderCotacao(id) {
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
           const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => !['regra', 'campanha', 'comprado'].includes(a)) ? 'conferir' : 'ok';
-          return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''}${l.comprado ? ' linha-comprada' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && linhaNaMarca(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
+          return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''}${l.comprado ? ' linha-comprada' : ''}${k % 2 ? ' par' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && linhaNaMarca(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
           <td class="c" title="${SIT_COMP[situacao] || ''}">${l.i + 1}</td>
           <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
             <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
@@ -7044,17 +7053,17 @@ function renderCotacao(id) {
             ${LJ.map(lj => `<td class="c col-qtd fd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}"${cotTravada(c) ? ' readonly' : ''} title="Vazio = ainda não preenchido · 0 = não comprar nesta loja" placeholder="" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r fd" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
-        }).join('')}
+        }))}
         ${temResposta ? linhaTotalComp(c, comp) : ''}
-        ${temResposta && ordemForn.length ? COND_CAMPOS.map(([k, label]) => ordemForn.some(j => c.fornecedores[j].cond?.[k]) ? `<tr>
+        ${temResposta && ordemForn.length ? COND_CAMPOS.filter(([k]) => ordemForn.some(j => c.fornecedores[j].cond?.[k])).map(([k, label], kk) => `<tr${(comp.linhas.length + kk) % 2 ? '' : ' class="par"'}>
           <td></td><td class="small muted">${label}</td>
           ${ordemForn.map(j => `<td class="r small">${esc(c.fornecedores[j].cond?.[k] || '—')}</td>`).join('')}
-          <td colspan="${(nf > 1 ? 3 : 2) + LJ.length}"></td></tr>` : '').join('') : ''}
+          <td colspan="${(nf > 1 ? 3 : 2) + LJ.length}"></td></tr>`).join('') : ''}
       </tbody>
     </table></div>
     ${temResposta ? legendaComp() : ''}`;
 
-  return `
+  const pagina = `
   <section class="card card-cab-cot">
     <a href="#" class="voltar-cot" data-route="cotacoes">← Cotações</a>
     <div class="cab-cot">
@@ -7175,6 +7184,12 @@ function renderCotacao(id) {
   </section>
 
   ${temResposta ? secaoPedidos(c, comp) : ''}`;
+  // as linhas do comparativo ficam guardadas à parte: o render() troca só as que mudaram
+  const linhas = linhasCompGuardadas;
+  linhasCompGuardadas = null;
+  paginaCot = { cotId: c.id, semLinhas: pagina, linhas };
+  const [antes, depois] = pagina.split(MARCA_LINHAS_COMP);
+  return antes + linhas.join('') + depois;
 }
 
 function linhasProdutos() {
@@ -8928,6 +8943,100 @@ function ir(nome, id = null) {
 
 let telaDesenhada = null; // tela do último render (para manter a rolagem ao redesenhar a mesma tela)
 
+/*
+ * Redesenho rápido da cotação aberta: a tabela do comparativo tem ~400 linhas e milhares de botões;
+ * regravar tudo a cada clique (escolher fornecedor, já comprado, dúvida…) leva quase 1 s só para o
+ * navegador montar a tela. Aqui só as linhas cujo HTML mudou são trocadas, e o resto da tela é
+ * acertado nó a nó (o que não mudou fica como está: rolagem, foco e cursor continuam no lugar).
+ */
+const htmlDaLinhaComp = new WeakMap(); // <tr> do comparativo → HTML que a desenhou
+const ATRIB_DA_TELA = new Set(['data-label', 'data-rot', 'open']); // postos depois do desenho (rotularTabelas, quem abriu o menu)
+function anotarLinhasComp(app) {
+  const p = paginaCot;
+  if (!p) return;
+  const trs = app.querySelectorAll('.tab-comp > tbody > tr[data-comp-linha]');
+  if (trs.length === p.linhas.length) trs.forEach((tr, k) => htmlDaLinhaComp.set(tr, p.linhas[k]));
+}
+const mesmoTipoNo = (a, b) => a.nodeType === b.nodeType && a.nodeName === b.nodeName;
+function acertarAtributos(v, n) {
+  for (const { name } of [...v.attributes]) if (!n.hasAttribute(name) && !ATRIB_DA_TELA.has(name)) v.removeAttribute(name);
+  for (const { name, value } of n.attributes) if (name !== 'open' && v.getAttribute(name) !== value) v.setAttribute(name, value);
+}
+function mesmosAtributos(v, n) {
+  for (const { name, value } of n.attributes) if (v.getAttribute(name) !== value) return false;
+  for (const { name } of v.attributes) if (!n.hasAttribute(name) && !ATRIB_DA_TELA.has(name)) return false;
+  return true;
+}
+/** Acerta o nó `v` (na tela) para ficar como `n` (desenho novo). `alvo`: o tbody do comparativo, tratado à parte. */
+function acertarNo(v, n, alvo) {
+  if (v === alvo.vivo) return alvo.trocar(n);
+  if (v.nodeType !== 1) {
+    if (v.nodeValue !== n.nodeValue) v.nodeValue = n.nodeValue;
+    return true;
+  }
+  // campos: qualquer diferença (ou valor digitado que o desenho novo não tem) troca o campo inteiro, como antes;
+  // o campo onde a pessoa está digitando fica
+  if (v.matches('input, select, textarea')) {
+    const valor = x => (x.tagName === 'SELECT' ? x.selectedIndex : x.value);
+    if (!mesmosAtributos(v, n) || (v.tagName !== 'INPUT' && v.innerHTML !== n.innerHTML)
+      || ((valor(v) !== valor(n) || v.checked !== n.checked) && v !== document.activeElement)) v.replaceWith(n);
+    return true;
+  }
+  // menu aberto: vem novo (o voltarAbertos abre de novo e ele se posiciona)
+  if (v.tagName === 'DETAILS' && v.open && !v.contains(alvo.vivo)) { v.replaceWith(n); return true; }
+  acertarAtributos(v, n);
+  return acertarFilhos(v, n, alvo);
+}
+function acertarLista(pai, vs, ns, antesDe, alvo) {
+  if (vs.length === ns.length && vs.every((x, k) => mesmoTipoNo(x, ns[k]))) {
+    for (let k = 0; k < vs.length; k++) if (!acertarNo(vs[k], ns[k], alvo)) return false;
+    return true;
+  }
+  vs.forEach(x => x.remove());
+  for (const x of ns) pai.insertBefore(x, antesDe);
+  return true;
+}
+function acertarFilhos(v, n, alvo) {
+  const vs = [...v.childNodes], ns = [...n.childNodes];
+  if (!v.contains(alvo.vivo)) return acertarLista(v, vs, ns, null, alvo);
+  // o caminho até o comparativo fica; antes e depois dele, acerta
+  const iv = vs.findIndex(x => x.contains(alvo.vivo));
+  const iN = ns.findIndex(x => x.contains(alvo.novo));
+  if (iN < 0 || !mesmoTipoNo(vs[iv], ns[iN])) return false;
+  return acertarLista(v, vs.slice(0, iv), ns.slice(0, iN), vs[iv], alvo)
+    && acertarLista(v, vs.slice(iv + 1), ns.slice(iN + 1), null, alvo)
+    && acertarNo(vs[iv], ns[iN], alvo);
+}
+/** Linhas do comparativo: troca só as que mudaram; total e condições são acertados nó a nó. */
+function trocarLinhasComp(vivo, novo, linhas, alvo) {
+  const itens = [], extras = [];
+  for (const tr of vivo.children) (tr.hasAttribute('data-comp-linha') ? itens : extras).push(tr);
+  if (itens.length !== linhas.length || (extras.length && itens.length && extras[0].compareDocumentPosition(itens[itens.length - 1]) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+  const mudou = [];
+  for (let k = 0; k < linhas.length; k++) if (htmlDaLinhaComp.get(itens[k]) !== linhas[k]) mudou.push(k);
+  if (mudou.length) {
+    const t = document.createElement('template');
+    t.innerHTML = mudou.map(k => linhas[k]).join('');
+    const novas = [...t.content.children];
+    if (novas.length !== mudou.length || novas.some(x => x.tagName !== 'TR')) return false;
+    mudou.forEach((k, x) => { itens[k].replaceWith(novas[x]); htmlDaLinhaComp.set(novas[x], linhas[k]); });
+  }
+  const novasExtras = [...novo.children];
+  return acertarLista(vivo, extras, novasExtras, null, alvo);
+}
+/** Redesenha a cotação já aberta trocando só o que mudou. false = não deu (o render() regrava a tela inteira). */
+function redesenharSoMudancasCot(app, prefixo) {
+  const p = paginaCot;
+  const vivo = app.querySelector('.tab-comp > tbody');
+  if (!p || !vivo) return false;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = prefixo + p.semLinhas;
+  const novo = tpl.content.querySelector('.tab-comp > tbody');
+  if (!novo) return false;
+  const alvo = { vivo, novo, trocar: n => trocarLinhasComp(vivo, n, p.linhas, alvo) };
+  return acertarFilhos(app, tpl.content, alvo);
+}
+
 /** Posição de rolagem da página e das tabelas com rolagem própria (comparativo, listas). */
 /**
  * Seções "▸ abrir" (details) continuam como a pessoa deixou depois de redesenhar a tela
@@ -9074,7 +9183,18 @@ function render() {
   };
   app.dataset.tela = nome;
   try {
-    app.innerHTML = avisoBackup() + (views[nome] || renderCotacoes)();
+    paginaCot = null;
+    const prefixo = avisoBackup();
+    const html = prefixo + (views[nome] || renderCotacoes)();
+    let rapido = false;
+    // mesma cotação na tela: troca só o que mudou (se algo der errado, regrava tudo como antes)
+    if (nome === 'cotacao' && rolagem && paginaCot?.cotId === id) {
+      try { rapido = redesenharSoMudancasCot(app, prefixo); } catch (e) { console.error(e); rapido = false; }
+    }
+    if (!rapido) {
+      app.innerHTML = html;
+      if (nome === 'cotacao') anotarLinhasComp(app);
+    }
   } catch (e) {
     console.error(e);
     app.innerHTML = `<section class="card"><h2>Não foi possível abrir esta tela</h2>
