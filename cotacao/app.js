@@ -70,6 +70,8 @@ const STATUS = {
   cancelada: ['Cancelada', 'danger'],
 };
 
+// desfazer/refazer da cotação (Ctrl+Z / Ctrl+Y): só neste computador; o histórico vai junto com a cotação
+var desfazer = { pilha: [], refazer: [], base: new Map(), aplicando: false };
 let db = carregar();
 let versaoDados = 0; // muda a cada gravação (invalida caches)
 let cacheHist = null;
@@ -194,6 +196,7 @@ function gravarLocal() {
 
 /** Salva sem travar a digitação: grava depois de uma pequena pausa. */
 function salvar() {
+  try { registrarMudancasCot(); } catch (e) { console.error(e); }
   cacheBusca = null;
   versaoDados++;
   clearTimeout(timerLocal);
@@ -361,6 +364,7 @@ function aplicarDoc(caminho, valor, antes = []) {
       if (valor.divisoes) c.divisoes = structuredClone(valor.divisoes); else delete c.divisoes;
     }
     else qtdsSoltas[id] = { qtds: structuredClone(valor.qtds || {}), divisoes: structuredClone(valor.divisoes || {}) }; // chegou antes da cotação
+    rebaseDesfazer(id);
   } else if (col === 'cotacoes') {
     const i = db.cotacoes.findIndex(c => c.id === id);
     const cot = valor === undefined ? undefined : structuredClone(valor);
@@ -378,6 +382,7 @@ function aplicarDoc(caminho, valor, antes = []) {
     if (cot) ajustarKaizen(cot);
     if (cot === undefined) { if (i >= 0) db.cotacoes.splice(i, 1); } else if (i >= 0) db.cotacoes[i] = cot;
     else db.cotacoes.push(cot);
+    rebaseDesfazer(id);
   } else if (caminho === 'sistema/config') {
     db.config = ordenarLojas({ ...structuredClone(DEFAULT_DB.config), ...structuredClone(valor || {}) });
   } else if (caminho === 'sistema/extra') {
@@ -6401,6 +6406,196 @@ function ehAdmin() {
   return !nuvem.usuario || nuvem.admin === true;
 }
 
+
+/* ---------------- desfazer (Ctrl+Z), refazer (Ctrl+Y) e histórico da cotação ---------------- */
+/** Tudo o que se decide numa cotação, por item: "campo|item" (respostas: "resp|item|fornecedor"). */
+function caminhosCot(c) {
+  const m = new Map();
+  for (const campo of ['qtds', 'escolhas', 'recusadas', 'permitidas', 'comprados', 'divisoes', 'difConferida']) {
+    for (const [i, v] of Object.entries(c[campo] || {})) if (v !== undefined) m.set(`${campo}|${i}`, JSON.stringify(v));
+  }
+  for (const f of c.fornecedores || []) for (const [i, v] of Object.entries(f.respostas || {})) if (v !== undefined) m.set(`resp|${i}|${f.fornecedorId}`, JSON.stringify(v));
+  m.set('status|', JSON.stringify(c.status));
+  return m;
+}
+function idsCotDesfazer() {
+  const ids = [];
+  try { if (rota().nome === 'cotacao' && rota().id) ids.push(rota().id); } catch (e) { /* abrindo */ }
+  if (typeof pip !== 'undefined' && pip.win && !pip.win.closed && pip.cotId && !ids.includes(pip.cotId)) ids.push(pip.cotId);
+  return ids;
+}
+function garantirBaseDesfazer(c) {
+  if (c && !desfazer.base.has(c.id)) desfazer.base.set(c.id, caminhosCot(c));
+}
+function rebaseDesfazer(id) {
+  if (!desfazer.base.has(id)) return;
+  const c = db.cotacoes.find(x => x.id === id);
+  if (c) desfazer.base.set(id, caminhosCot(c)); else desfazer.base.delete(id);
+}
+/** Chamado a cada salvar(): o que mudou na cotação aberta vira um passo do Ctrl+Z e (menos quantidades) uma linha do histórico. */
+function registrarMudancasCot() {
+  if (!desfazer || typeof db === 'undefined') return;
+  for (const id of idsCotDesfazer()) {
+    const c = db.cotacoes.find(x => x.id === id);
+    if (!c) continue;
+    const agora = caminhosCot(c);
+    const antes = desfazer.base.get(id);
+    desfazer.base.set(id, agora);
+    if (!antes || desfazer.aplicando) continue;
+    const mud = [];
+    for (const [k, v] of agora) if (antes.get(k) !== v) mud.push([k, antes.get(k), v]);
+    for (const [k, v] of antes) if (!agora.has(k)) mud.push([k, v, undefined]);
+    if (!mud.length) continue;
+    const semStatus = mud.filter(([k]) => k !== 'status|');
+    if (semStatus.length) {
+      const ult = desfazer.pilha[desfazer.pilha.length - 1];
+      // digitando uma quantidade ("1", "12"): um passo só
+      if (ult && ult.cotId === id && semStatus.length === 1 && ult.mud.length === 1 && ult.mud[0][0] === semStatus[0][0]
+        && semStatus[0][0].startsWith('qtds|') && Date.now() - ult.em < 4000) {
+        ult.mud[0][2] = semStatus[0][2];
+        ult.em = Date.now();
+      } else {
+        desfazer.pilha.push({ cotId: id, mud: semStatus, em: Date.now() });
+        if (desfazer.pilha.length > 100) desfazer.pilha.shift();
+      }
+      desfazer.refazer = [];
+    }
+    // histórico da cotação (quantidades ficam de fora: são muitas e têm o desfazer)
+    const decisoes = mud.filter(([k]) => !k.startsWith('qtds|'));
+    if (decisoes.length) anotarHistoricoCot(c, resumoMudancas(c, decisoes));
+    atualizarBotaoDesfazer();
+  }
+}
+function anotarHistoricoCot(c, texto) {
+  if (!texto) return;
+  const por = (typeof nuvem !== 'undefined' && (nuvem.nome || nuvem.usuario)) || 'este computador';
+  c.historico = [...(c.historico || []), { em: new Date().toISOString(), por, t: texto }].slice(-150);
+}
+const lerJson = v => (v === undefined ? undefined : JSON.parse(v));
+/** Uma frase para cada mudança. */
+function descreverMudanca(c, [k, a, d]) {
+  const [campo, i, fid] = k.split('|');
+  const A = lerJson(a), D = lerJson(d);
+  const nomeF = id => c.fornecedores.find(f => f.fornecedorId === id)?.nome || '?';
+  const it = `item ${+i + 1}${c.itens[i]?.codigo ? ` (${c.itens[i].codigo})` : ''}`;
+  const lj = id => lojas().find(l => l.id === id)?.nome || id;
+  switch (campo) {
+    case 'qtds': return [...new Set([...Object.keys(A || {}), ...Object.keys(D || {})])].filter(l => A?.[l] !== D?.[l]).map(l => `qtd. ${lj(l)} do ${it}: ${A?.[l] ?? 'vazio'} → ${D?.[l] ?? 'vazio'}`).join(', ');
+    case 'escolhas': return D ? `${it}: escolhido ${nomeF(D)}` : `${it}: volta ao menor preço`;
+    case 'recusadas': return D ? `${it}: marca recusada (${Object.keys(D).filter(f => !A?.[f]).map(nomeF).join(', ') || 'atualizada'})` : `${it}: recusa de marca desfeita`;
+    case 'permitidas': return D ? `${it}: marca permitida nesta cotação` : `${it}: marca deixou de ser permitida`;
+    case 'comprados': return D ? `${it}: marcado como já comprado` : `${it}: volta a ser comprado pela cotação`;
+    case 'divisoes': return D ? `${it}: compra dividida` : `${it}: divisão da compra tirada`;
+    case 'difConferida': return D ? `${it}: diferença de preço conferida` : `${it}: diferença volta a ser conferida`;
+    case 'resp': return D
+      ? `${it}: ${nomeF(fid)} ${A?.preco != null && A.preco !== D.preco ? `${fmtMoeda(A.preco)} → ` : ''}${D.preco != null ? fmtMoeda(D.preco) : ''}${D.marca && D.marca !== A?.marca ? ` · marca ${D.marca}` : ''}`
+      : `${it}: preço de ${nomeF(fid)} apagado`;
+    case 'status': return `status: ${STATUS[A]?.[0] || A} → ${STATUS[D]?.[0] || D}`;
+    default: return '';
+  }
+}
+/** Resumo de um passo: até 2 mudanças por extenso; mais que isso, contadas por tipo. */
+function resumoMudancas(c, mud) {
+  if (mud.length <= 2) return mud.map(x => descreverMudanca(c, x)).filter(Boolean).join(' · ');
+  const nomes = { qtds: 'quantidade(s)', escolhas: 'escolha(s)', recusadas: 'recusa(s) de marca', permitidas: 'marca(s) permitida(s)', comprados: 'item(ns) já comprado(s)', divisoes: 'divisão(ões)', difConferida: 'diferença(s) conferida(s)', resp: 'preço(s)', status: 'status' };
+  const cont = new Map();
+  for (const [k] of mud) { const campo = k.split('|')[0]; cont.set(campo, (cont.get(campo) || 0) + 1); }
+  const fs = [...new Set(mud.filter(([k]) => k.startsWith('resp|')).map(([k]) => k.split('|')[2]))];
+  return [...cont].map(([campo, n]) => `${n} ${nomes[campo] || campo}${campo === 'resp' && fs.length === 1 ? ` de ${c.fornecedores.find(f => f.fornecedorId === fs[0])?.nome || '?'}` : ''}`).join(', ');
+}
+function definirCaminhoCot(c, k, v) {
+  const [campo, i, fid] = k.split('|');
+  if (campo === 'resp') {
+    c.fornecedores = c.fornecedores.map(f => {
+      if (f.fornecedorId !== fid) return f;
+      const r = { ...(f.respostas || {}) };
+      if (v === undefined) delete r[i]; else r[i] = v;
+      return { ...f, respostas: r };
+    });
+    return;
+  }
+  const o = { ...(c[campo] || {}) };
+  if (v === undefined) delete o[i]; else o[i] = v;
+  c[campo] = o;
+}
+/** Desfaz (ou refaz) o último passo. O que outra pessoa mudou depois fica como está. */
+function desfazerCot(refazer = false) {
+  const de = refazer ? desfazer.refazer : desfazer.pilha;
+  const ids = idsCotDesfazer();
+  let k = de.length - 1;
+  while (k >= 0 && !ids.includes(de[k].cotId)) k--;
+  if (k < 0) { toast(refazer ? 'Nada para refazer.' : 'Nada para desfazer nesta cotação.'); return; }
+  const e = de[k];
+  const c = db.cotacoes.find(x => x.id === e.cotId);
+  if (!c) { de.splice(k, 1); return; }
+  if (cotTravada(c)) { avisarTravada(); return; }
+  de.splice(k, 1);
+  const atual = caminhosCot(c);
+  let ok = 0, conflito = 0;
+  for (const [cam, antes, depois] of e.mud) {
+    const alvo = refazer ? depois : antes, esperado = refazer ? antes : depois;
+    if (atual.get(cam) !== esperado) { conflito++; continue; }
+    definirCaminhoCot(c, cam, lerJson(alvo));
+    ok++;
+  }
+  const texto = resumoMudancas(c, e.mud);
+  desfazer.aplicando = true;
+  try {
+    if (ok) {
+      const decisoes = e.mud.filter(([cam]) => !cam.startsWith('qtds|'));
+      if (decisoes.length) anotarHistoricoCot(c, `${refazer ? 'refez' : 'desfez'}: ${resumoMudancas(c, decisoes)}`);
+      salvar();
+    }
+  } finally { desfazer.aplicando = false; }
+  (refazer ? desfazer.pilha : desfazer.refazer).push(e);
+  render();
+  if (pip.win && !pip.win.closed && pip.cotId === c.id) desenharPip(false);
+  atualizarBotaoDesfazer();
+  toast(`${refazer ? '↷ Refeito' : '↶ Desfeito'}: ${texto}${conflito ? ` · ${conflito} mudança(s) já tinham sido alteradas depois (por outra pessoa) e ficaram como estão` : ''}`, 6000);
+}
+function atualizarBotaoDesfazer() {
+  const b = document.getElementById('btnDesfazer');
+  if (!b) return;
+  const ids = idsCotDesfazer();
+  const ult = [...desfazer.pilha].reverse().find(x => ids.includes(x.cotId));
+  b.hidden = !ult;
+  if (ult) {
+    const c = db.cotacoes.find(x => x.id === ult.cotId);
+    b.title = `Desfazer (Ctrl+Z): ${c ? resumoMudancas(c, ult.mud) : ''}`;
+  }
+}
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k !== 'z' && k !== 'y') return;
+  const refazer = k === 'y' || e.shiftKey;
+  const t = e.target;
+  // nos campos de texto vale o desfazer do próprio campo (menos nas quantidades)
+  if (t.closest?.('textarea, [contenteditable], .dlg-fundo') || (t.matches?.('input, select') && t.dataset.qtdLoja == null)) return;
+  if (!idsCotDesfazer().length || document.querySelector('.dlg-fundo')) return;
+  e.preventDefault();
+  desfazerCot(refazer);
+});
+
+/** Histórico da cotação: quem mudou o quê e quando (escolhas, preços, marcas, compras, status). */
+function mostrarHistoricoCot(c) {
+  const h = [...(c.historico || [])].reverse();
+  const fundo = document.createElement('div');
+  fundo.className = 'dlg-fundo';
+  fundo.innerHTML = `<div class="dlg dlg-historico" role="dialog" aria-modal="true" aria-label="Histórico da cotação">
+    <h3 class="dlg-tit">🕘 Histórico da cotação nº ${esc(c.numero)}</h3>
+    <p class="small muted">Escolhas, preços, marcas, compras e status: quem mudou e quando (as últimas ${h.length}). As quantidades não entram aqui: para voltar uma quantidade use <kbd>Ctrl</kbd>+<kbd>Z</kbd>.</p>
+    ${h.length ? `<ul class="hist-lista">${h.map(x => `<li><span class="hist-quando">${esc(new Date(x.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))}</span><span class="hist-por">${esc(String(x.por).split('@')[0])}</span><span class="hist-txt">${esc(x.t)}</span></li>`).join('')}</ul>` : '<p class="empty">Nenhuma alteração registrada ainda.</p>'}
+    <div class="actions"><button type="button" class="primary" data-fechar>Fechar</button></div>
+  </div>`;
+  const fechar = () => { fundo.remove(); document.removeEventListener('keydown', tecla, true); };
+  const tecla = e => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); fechar(); } };
+  fundo.addEventListener('click', e => { e.stopPropagation(); if (e.target === fundo || e.target.closest('[data-fechar]')) fechar(); });
+  document.addEventListener('keydown', tecla, true);
+  document.body.appendChild(fundo);
+  fundo.querySelector('[data-fechar]').focus();
+}
+
 /** Status da cotação em três botões (troca com confirmação). */
 function seletorStatusCot(c) {
   const [t, cls] = STATUS[c.status] || STATUS.aberta;
@@ -6458,7 +6653,7 @@ function htmlResumoCot(c, comp = comparar(c)) {
   return `<div class="resumo-cot">
     ${semQtd
       ? kpi('💰 Total do pedido', '<span class="rc-espera">aguardando quantidades</span>', `estimativa ${fmtMoeda(total)}`, 'espera', ' title="Ainda não há quantidade das lojas: o valor de baixo é só uma estimativa com a quantidade da lista (normalmente 1 de cada)"')
-      : kpi('💰 Total do pedido', fmtMoeda(total), `${peds.reduce((t, p) => t + p.itens.length, 0)} itens · sem os em dúvida`)}
+      : kpi('💰 Total do pedido', fmtMoeda(total), `${(n => `${n} ${n === 1 ? 'item' : 'itens'}`)(peds.reduce((t, p) => t + p.itens.length, 0))} · sem os em dúvida`)}
     ${semQtd
       ? kpi('📉 Economia vs média', '—', media > 0 ? `estimativa ${fmtMoeda(media)}` : 'depois das quantidades', 'espera')
       : kpi('📉 Economia vs média', media > 0 ? fmtMoeda(media) : '—', media > 0 && base ? `${fmtPct(media / (base + media))} a menos` : 'onde houve 2+ preços', media > 0 ? 'bom' : '')}
@@ -6843,6 +7038,7 @@ function renderCotacao(id) {
       <div class="cab-cot-acoes">
         <details class="menu-acoes-cot"><summary class="btn sm" title="Duplicar, arquivar ou excluir a cotação">⋯ Mais</summary>
           <div class="menu-pop">
+            <button type="button" data-act="historicoCot">🕘 Histórico de alterações</button>
             <button type="button" data-act="duplicarCot">📄 Duplicar como nova cotação</button>
             <button type="button" data-act="arquivarCot" title="${c.arquivada ? 'Volta para a lista de cotações' : 'Tira da lista de cotações (continua no histórico e nos relatórios)'}">${c.arquivada ? '↩ Desarquivar' : '🗂️ Arquivar'}</button>
             <button type="button" class="danger" data-act="excluirCot">🗑 Excluir cotação</button>
@@ -6869,6 +7065,7 @@ function renderCotacao(id) {
     <button type="button" data-act="irSecaoCot" data-alvo="secForn">🏭 Fornecedores <b>${c.fornecedores.filter(respondeu).length}/${nf}</b></button>
     ${temResposta ? `<button type="button" data-act="irSecaoCot" data-alvo="secComp">⚖️ Comparativo</button>
     <button type="button" data-act="irSecaoCot" data-alvo="secPedidos">🧾 Pedidos</button>` : `<button type="button" data-act="irSecaoCot" data-alvo="secComp">📋 Itens</button>`}
+    <button type="button" class="btn-desfazer" id="btnDesfazer" data-act="desfazerCot" hidden>↶ Desfazer</button>
     <button type="button" data-act="irSecaoCot" data-alvo="topo">↑ Topo</button>
   </nav>
 
@@ -8861,7 +9058,7 @@ function render() {
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
-  if (nome === 'cotacao') { ajustarColunasFixasDepois(); vigiarLarguraComp(); }
+  if (nome === 'cotacao') { ajustarColunasFixasDepois(); vigiarLarguraComp(); garantirBaseDesfazer(cotAtual()); atualizarBotaoDesfazer(); }
   if (nome === 'nova') setTimeout(avisarControladosNova, 50);
   anunciarPresenca();
   anotarUltimoLugar();
@@ -9764,6 +9961,8 @@ const acoes = {
     tr?.scrollIntoView({ block: 'center' });
     inp?.focus();
   },
+  desfazerCot: () => desfazerCot(false),
+  historicoCot: el => { el.closest('details')?.removeAttribute('open'); const c = cotAtual(); if (c) mostrarHistoricoCot(c); },
   esquecerMarca: el => {
     const mapa = el.dataset.tipo === 'eq' ? 'marcasEquivalentes' : 'marcasDiferentes';
     const m = { ...(db.config[mapa] || {}) };

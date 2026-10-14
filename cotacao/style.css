@@ -2573,3 +2573,19 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 .cab-cot-acoes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .status-cot.menu-acoes-cot { overflow: visible; display: inline-block; border-radius: 0; }
 .status-cot .menu-pop button { height: auto; min-height: 32px; padding: 6px 10px; border-left: 0 !important; color: var(--text); font-size: var(--fs-sm); }
+
+/* desfazer e histórico da cotação */
+.secoes-cot .btn-desfazer { margin-left: auto; color: var(--primary-2); border-color: color-mix(in srgb, var(--primary-2) 35%, var(--line)); }
+.secoes-cot .btn-desfazer:not([hidden]) + button:last-child { margin-left: 0; }
+.dlg.dlg-historico { width: min(var(--dlg-l, 720px), 100%); }
+.hist-lista { list-style: none; margin: 8px 0 0; padding: 0; max-height: 60vh; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.hist-lista li { display: grid; grid-template-columns: 92px 110px 1fr; gap: 10px; align-items: baseline; padding: 7px 10px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
+.hist-lista li:last-child { border-bottom: 0; }
+.hist-quando { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hist-por { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) { .hist-lista li { grid-template-columns: 1fr; gap: 2px; } }
+.secoes-cot .btn-desfazer[hidden] { display: none; }
+@media (max-width: 760px) {
+  .camp-fora { white-space: normal; text-align: left; line-height: 1.3; }
+  .card-cab-cot .rc-kpi .rc-sub { white-space: normal; overflow: visible; }
+}
