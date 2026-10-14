@@ -2614,3 +2614,7 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 @media (max-width: 760px) {
   .cab-cot-acoes > details, .cab-cot-acoes > details > summary, .cab-cot-acoes > .sm { height: 36px; min-height: 36px; }
 }
+
+/* janela flutuante: ✎ editar o preço, ao lado do ❓ */
+.pip-btn-edit { flex: none; padding: 1px 7px; font-size: var(--fs-md); border-radius: var(--r-pill); background: var(--card); border: 1px solid var(--primary-2); color: var(--primary-2); }
+.pip-btn-edit:hover { background: var(--blue-bg); }

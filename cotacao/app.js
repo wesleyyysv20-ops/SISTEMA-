@@ -9168,12 +9168,44 @@ function aceitarDifCorrigida(c, i) {
 }
 
 /** Altera o preço que o fornecedor respondeu (guarda o valor original). */
-async function alterarPrecoResposta(c, i, fi) {
+/**
+ * ✎ do preço escolhido: o fornecedor respondeu errado. Corrigir o valor, a marca ou tirar o preço.
+ * `doc`: onde as perguntas aparecem (a janela flutuante usa a dela).
+ */
+async function editarPrecoItem(c, i, fi, doc = document) {
+  const f = c?.fornecedores[fi];
+  const o = f?.respostas?.[i];
+  if (!o) return;
+  if (cotTravada(c)) { avisarTravada(); return; }
+  const it = c.itens[i];
+  const escolha = await abrirDialogo(`${it.codigo || '—'} · ${it.descricao}
+${f.nome}: ${fmtMoeda(o.preco)}${o.marca ? ` · marca ${o.marca}` : ''}${o.precoOriginal != null ? ` (valor original ${fmtMoeda(o.precoOriginal)})` : ''}
+
+Este preço está errado?`, [
+    { txt: 'Cancelar', valor: null },
+    { txt: 'Corrigir o valor…', valor: 'corrigir' },
+    { txt: 'Corrigir a marca…', valor: 'marca' },
+    { txt: 'Remover o preço', valor: 'remover', cls: 'danger' },
+  ], doc, { titulo: `✎ Editar o preço de ${f.nome}` });
+  if (!escolha) return;
+  if (escolha === 'corrigir') await alterarPrecoResposta(c, i, fi, doc);
+  else if (escolha === 'marca') {
+    const nova = await pedirValor(`Qual é a marca certa de ${f.nome} para ${it.codigo || it.descricao}?`, { valor: o.marca || '', ok: 'Salvar', doc });
+    if (nova == null || nova.trim().toUpperCase() === String(o.marca || '').toUpperCase()) return;
+    f.respostas = { ...f.respostas, [i]: { ...o, marca: nova.trim().toUpperCase(), marcaOriginal: o.marcaOriginal || o.marca || '' } };
+    salvar();
+    render();
+    toast(`Marca de ${f.nome} corrigida para ${nova.trim().toUpperCase()}.`);
+  } else removerPrecoResposta(c, i, fi);
+  if (pip.win && !pip.win.closed && pip.cotId === c.id) desenharPip(false);
+}
+
+async function alterarPrecoResposta(c, i, fi, doc = document) {
   const f = c.fornecedores[fi];
   const o = f?.respostas?.[i];
   if (!o) return;
   const it = c.itens[i];
-  const v = await pedirValor(`Valor correto de ${f.nome} para ${it.codigo || it.descricao}:${o.precoOriginal != null ? ` (valor original ${fmtMoeda(o.precoOriginal)})` : ''}`, { valor: fmtNum(o.preco, 2), ok: 'Salvar' });
+  const v = await pedirValor(`Valor correto de ${f.nome} para ${it.codigo || it.descricao}:${o.precoOriginal != null ? ` (valor original ${fmtMoeda(o.precoOriginal)})` : ''}`, { valor: fmtNum(o.preco, 2), ok: 'Salvar', doc });
   if (v == null) return;
   const novo = parseNum(v);
   if (!(novo > 0)) return avisar('Valor inválido. Para tirar o preço, use "Remover o preço".');
@@ -9489,32 +9521,7 @@ const acoes = {
     render();
     toast('Diferença marcada como conferida. Se algum preço mudar, o aviso volta.');
   },
-  removerPreco: async el => {
-    // o fornecedor respondeu um valor errado: tira o preço dele deste item (ou corrige o valor)
-    const c = cotAtual();
-    const i = +el.dataset.i, fi = +el.dataset.f;
-    const f = c?.fornecedores[fi];
-    const o = f?.respostas?.[i];
-    if (!o) return;
-    const it = c.itens[i];
-    const escolha = await abrirDialogo(`${it.codigo || '—'} · ${it.descricao}\n${f.nome}: ${fmtMoeda(o.preco)}${o.marca ? ` · marca ${o.marca}` : ''}${o.precoOriginal != null ? ` (valor original ${fmtMoeda(o.precoOriginal)})` : ''}\n\nEste preço está errado?`, [
-      { txt: 'Cancelar', valor: null },
-      { txt: 'Corrigir o valor…', valor: 'corrigir' },
-      { txt: 'Corrigir a marca…', valor: 'marca' },
-      { txt: 'Remover o preço', valor: 'remover', cls: 'danger' },
-    ], document, { titulo: `✎ Editar o preço de ${f.nome}` });
-    if (!escolha) return;
-    if (escolha === 'corrigir') return alterarPrecoResposta(c, i, fi);
-    if (escolha === 'marca') {
-      const nova = await pedirValor(`Qual é a marca certa de ${f.nome} para ${it.codigo || it.descricao}?`, { valor: o.marca || '', ok: 'Salvar' });
-      if (nova == null || nova.trim().toUpperCase() === String(o.marca || '').toUpperCase()) return;
-      f.respostas = { ...f.respostas, [i]: { ...o, marca: nova.trim().toUpperCase(), marcaOriginal: o.marcaOriginal || o.marca || '' } };
-      salvar();
-      render();
-      return toast(`Marca de ${f.nome} corrigida para ${nova.trim().toUpperCase()}.`);
-    }
-    return removerPrecoResposta(c, i, fi);
-  },
+  removerPreco: el => editarPrecoItem(cotAtual(), +el.dataset.i, +el.dataset.f),
   mostrarSemResposta: () => { ui.mostrarSemResposta = !ui.mostrarSemResposta; render(); },
   exportarPedidoForn: el => exportarPedidoForn(cotAtual(), +el.dataset.f),
   reabrirForn: async el => {
@@ -11405,6 +11412,7 @@ async function abrirPip() {
     else if (acao === 'prox') irPip(1);
     else if (acao === 'copiar') copiarCodigoPip(b);
     else if (acao === 'duvida') duvidaPip();
+    else if (acao === 'editar') editarPip();
     else if (acao === 'escolher') escolherPip(+b.dataset.f);
     else if (acao === 'comprado') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) alternarComprado(cot, pip.i); }
     else if (acao === 'dividir') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) dividirCompraItem(cot, pip.i, b.dataset.f != null ? +b.dataset.f : null, pip.win.document); }
@@ -11447,12 +11455,13 @@ function teclaPip(e, d) {
   if (t.tagName === 'SELECT' || d.querySelector('.dlg-fundo')) return; // lista de fornecedores ou diálogo aberto
   // atalhos de uma tecla (as quantidades só aceitam números, então as letras ficam livres)
   const naQtd = t.dataset?.qtdLoja != null;
-  const atalho = e.key === '/' ? 'buscar' : /^[cC]$/.test(e.key) ? 'copiar' : /^[dD]$/.test(e.key) ? 'duvida'
+  const atalho = e.key === '/' ? 'buscar' : /^[cC]$/.test(e.key) ? 'copiar' : /^[dD]$/.test(e.key) ? 'duvida' : /^[eE]$/.test(e.key) ? 'editar'
     : /^[sS]$/.test(e.key) || (e.key === '2' && !naQtd) ? 'segundo' : null;
   if (atalho && !(t.matches?.('input, textarea') && !naQtd)) {
     e.preventDefault();
     if (atalho === 'copiar') { const b = d.querySelector('.pip-cod'); if (b) copiarCodigoPip(b); }
     else if (atalho === 'duvida') { if (d.querySelector('.pip-btn-duv')) duvidaPip(); }
+    else if (atalho === 'editar') { if (d.querySelector('.pip-btn-edit')) editarPip(); }
     else if (atalho === 'segundo') { const b = d.querySelector('.pip-segundo'); if (b) escolherPip(+b.dataset.f); }
     else buscarPip();
     return;
@@ -11703,6 +11712,14 @@ async function buscarPip() {
   desenharPip(true);
 }
 
+/** ✎ na janela flutuante: corrigir o preço/marca do vencedor do item, com as perguntas na própria janela. */
+function editarPip() {
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  if (!c || !pip.win) return;
+  const l = comparar(c).linhas[pip.i];
+  if (l?.vencedor >= 0) editarPrecoItem(c, pip.i, l.vencedor, pip.win.document);
+}
+
 /** ❓ na janela flutuante: a janela de perguntar à loja abre nela mesma (fica por cima do DataCar). */
 async function duvidaPip() {
   if (cotTravada(db.cotacoes.find(x => x.id === pip.cotId))) { avisarTravada(); return; }
@@ -11810,7 +11827,7 @@ function desenharPip(focar) {
               <span class="pip-seg-info"><span class="pip-seg-rot">🏷️ campanha ${esc(l.campanhas[jc].marca)}</span><span class="pip-seg-preco">${fmtMoeda(l.precos[jc])}</span><span class="pip-seg-forn">${esc(c.fornecedores[jc].nome)}</span>${dc != null ? `<span class="pip-seg-dif">${dc >= 0 ? '+' : '−'}${fmtPct(Math.abs(dc))} vs escolhido</span>` : ''}</span><span class="pip-seg-acao">Escolher ›</span>
             </button>` : '';
           return `<div class="pip-ganhador">
-            <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span><span class="pip-forn">🏆 ${esc(f.nome)}</span><button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja) · tecla D">❓</button></div>
+            <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span><span class="pip-forn">🏆 ${esc(f.nome)}</span><button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja) · tecla D" aria-label="Pôr em Dúvidas">❓</button><button type="button" class="pip-btn-edit" data-pip="editar" title="Editar o preço ou a marca de ${esc(f.nome)} (quando o fornecedor informou errado) · tecla E" aria-label="Editar o preço ou a marca de ${esc(f.nome)}">✎</button></div>
             ${(() => { const u = ultimoPrecoPip(c, l.it); return u ? `<div class="pip-ultimo" title="Último preço pago: ${esc(u.fornecedor)}, cotação nº ${esc(u.numero)} (${fmtData(u.data)})">último ${fmtMoeda(u.preco)}${varUltimo(l.preco, u.preco)} <small>· ${esc(u.fornecedor)}</small></div>` : ''; })()}
             ${marcasPip(l, marcaVenc)}
             ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
@@ -11836,7 +11853,7 @@ function desenharPip(focar) {
       </div>
     </div>
     <div id="pipProximos">${htmlProximosPip(c, lista)}</div>
-    <p class="pip-ajuda" title="Atalhos de uma tecla">C copia · D dúvida · S 2º lugar · / buscar${pip.flutuante ? '' : ' · sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)'}</p>`;
+    <p class="pip-ajuda" title="Atalhos de uma tecla">C copia · D dúvida · E edita o preço · S 2º lugar · / buscar${pip.flutuante ? '' : ' · sempre por cima: <b>Win + Ctrl + T</b> (PowerToys)'}</p>`;
   const campos = [...d.querySelectorAll('input[data-qtd-loja]')];
   if (sel) {
     const el = campos.find(x => x.dataset.qtdLoja === sel[0]);
