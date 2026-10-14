@@ -1441,7 +1441,7 @@ function renderConta() {
     ${nuvem.admin ? `<h3 style="margin-top:18px">Usuários</h3>
       <p class="muted small" style="margin-top:0">Cadastre quem pode usar o sistema. A pessoa entra com o e-mail e a senha que você definir aqui (e pode trocar a senha depois, em Configurações).</p>
       ${!U || U.carregando ? '<p class="muted small">Carregando…</p>' : U.erro ? `<p class="aviso-erro small">Não consegui ler os usuários: ${esc(U.erro)}</p>` : `<div class="table-wrap"><table>
-        <thead><tr><th>Usuário</th><th>Acesso</th><th>Último acesso</th><th></th></tr></thead>
+        <thead><tr><th>Usuário</th><th>Acesso</th><th>Último acesso</th><th><span class="sr-only">Ações</span></th></tr></thead>
         <tbody>${U.lista.map(u => `<tr>
           <td><b>${esc(u.nome || u.email)}</b>${u.nome ? `<br><span class="small muted">${esc(u.email)}</span>` : ''}</td>
           <td>${u.admin ? '<span class="badge ok">administrador</span>' : '<span class="badge">usuário</span>'}${u.email !== String(nuvem.usuario || '').toLowerCase() ? `<br><button type="button" class="link small" data-act="alternarAdmin" data-email="${esc(u.email)}" data-admin="${u.admin ? '0' : '1'}">${u.admin ? 'tirar administrador' : '⭐ tornar administrador'}</button>` : ''}</td>
@@ -5414,7 +5414,7 @@ function renderNova() {
         const o = ui.ordemItens || 'desc';
         const bt = (k, rot, tit) => `<button type="button" class="th-ordem${o === k ? ' ativa' : ''}" data-act="ordemItens" data-ordem="${k}" title="${tit}">${rot}${o === k ? ' ↓' : ''}</button>`;
         return `${bt('cod', 'Código', 'Ordenar por código')} <span class="muted">·</span> ${bt('obs', 'OBS', 'Ordenar pela OBS do DataCar (mesma ordem da conferência)')}</th><th>Marca</th><th>${bt('desc', 'Descrição', 'Ordenar pela descrição (A→Z, a ordem da planilha)')}`;
-      })()}</th><th></th></tr></thead>
+      })()}</th><th><span class="sr-only">Ações</span></th></tr></thead>
       <tbody>${linhas}</tbody></table></div>
       <details class="atalhos-itens small muted"><summary>⌨ Atalhos do teclado na lista</summary>Clique numa linha e use <span class="kbd">↑</span> <span class="kbd">↓</span> para navegar · digite para preencher a marca (sugere as marcas do cadastro; <span class="kbd">Delete</span> apaga a sugestão) · <span class="kbd">Enter</span> salva nesta cotação e vai para o próximo · <span class="kbd">Enter</span> <span class="kbd">Enter</span> salva como padrão no cadastro · <span class="kbd">Esc</span> desfaz · <span class="kbd">F2</span> completa a marca sem apagar · <span class="kbd">Ctrl</span>+<span class="kbd">Delete</span> ou ✕ tira o item (pede confirmação) · em KIT CORREIA e KIT TENSOR o código pode ser trocado só nesta cotação</details>` : ''}
   </section>
@@ -5659,7 +5659,7 @@ function painelEnvioPedidos(c) {
         <span class="small muted">Ou baixe o de cada um na linha dele (⬇ Pedido).</span>
       </div>
       <div class="table-wrap"><table class="tab-lote">
-        <thead><tr><th></th><th>Fornecedor</th><th class="r">Pedido</th><th>E-mail</th><th>Abrir o e-mail (e anexar o pedido)</th><th></th></tr></thead>
+        <thead><tr><th><span class="sr-only">Situação</span></th><th>Fornecedor</th><th class="r">Pedido</th><th>E-mail</th><th>Abrir o e-mail (e anexar o pedido)</th><th><span class="sr-only">Ações</span></th></tr></thead>
         <tbody>${peds.map(p => {
           const f = p.f, fi = p.fi;
           const m = dadosEmail(c, f, 'pedido', L.formato);
@@ -5716,7 +5716,7 @@ function painelLote(c) {
         <span class="small muted">No .zip: botão direito → <b>Extrair tudo</b>, e anexe a planilha de cada um.</span>
       </div>` : '<p class="small" style="margin:4px 0 8px">O e-mail de lembrete já vai preenchido. Se o fornecedor pedir, reenvie a planilha (⬇ Excel).</p>'}
       <div class="table-wrap"><table class="tab-lote">
-        <thead><tr><th></th><th>Fornecedor</th><th>E-mail</th><th>Abrir o e-mail ${cob ? '' : '(e anexar a planilha)'}</th><th></th></tr></thead>
+        <thead><tr><th><span class="sr-only">Situação</span></th><th>Fornecedor</th><th>E-mail</th><th>Abrir o e-mail ${cob ? '' : '(e anexar a planilha)'}</th><th><span class="sr-only">Ações</span></th></tr></thead>
         <tbody>${lista.map(fi => {
           const f = c.fornecedores[fi];
           const m = dadosEmail(c, f, L.tipo);
@@ -5845,7 +5845,7 @@ function seletorMarca(c, comp) {
   if (!cont.size) return '';
   const atual = filtroMarcaComp(c);
   return `<label class="filtro-venc filtro-marca" title="Mostrar só os itens em que algum fornecedor mandou preço desta marca"><span class="filtro-venc-rot">Marca:</span>
-    <select id="filtroMarca"><option value="">Todas as marcas</option>${[...cont].sort((a, b) => b[1].n - a[1].n || COLLATOR.compare(a[1].nome, b[1].nome)).map(([k, x]) => `<option value="${esc(k)}" ${atual === k ? 'selected' : ''}>${esc(x.nome)} (${x.n})</option>`).join('')}</select></label>`;
+    <select id="filtroMarca" aria-label="Filtrar por marca"><option value="">Todas as marcas</option>${[...cont].sort((a, b) => b[1].n - a[1].n || COLLATOR.compare(a[1].nome, b[1].nome)).map(([k, x]) => `<option value="${esc(k)}" ${atual === k ? 'selected' : ''}>${esc(x.nome)} (${x.n})</option>`).join('')}</select></label>`;
 }
 /** Filtro pelas etiquetas de aviso ('aguardando', 'dif', 'marca', 'regra', 'demora', 'alertas'); '' = nenhum. */
 function filtroAviso(c) {
@@ -5956,7 +5956,7 @@ function definirFiltroVencedor(c, valor) {
 function seletorVencedor(c, comp) {
   const atual = filtroVencedor(c);
   return `<label class="filtro-venc" title="Mostrar só os itens que um fornecedor ganhou"><span class="filtro-venc-rot">Itens de:</span>
-    <select id="filtroVencedor" data-cot="${esc(c.id)}">
+    <select id="filtroVencedor" aria-label="Filtrar pelo fornecedor vencedor" data-cot="${esc(c.id)}">
       ${opcoesVencedor(c, comp, atual)}
     </select></label>${seletorMarca(c, comp)}${botaoPedidoFiltro(c, atual)}<button type="button" class="sm btn-pip" data-act="abrirPip" title="Abre uma janela pequena com o item e as quantidades das lojas, para usar ao lado do DataCar (no Chrome/Edge ela fica sempre por cima). Enter vai para o próximo item.">🗗 Janela flutuante</button>`;
 }
@@ -6374,7 +6374,7 @@ function secaoPedidos(c, comp) {
     <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${emDuvida ? ` <b class="txt-duvida">❓ ${emDuvida} item(ns) em Dúvidas ficam fora dos pedidos até saírem da fila.</b>` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
     ${avisosMinimo(c, an)}
     <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th>${temFrete ? '<th class="r">Frete / mínimo</th>' : ''}<th>Pagamento / entrega</th><th>Recebimento</th><th></th></tr></thead>
+      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th>${temFrete ? '<th class="r">Frete / mínimo</th>' : ''}<th>Pagamento / entrega</th><th>Recebimento</th><th><span class="sr-only">Ações</span></th></tr></thead>
       <tbody>${peds.map(p => `<tr>
         <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span>${p.f.pedidoEnviadoEm ? `<br><span class="badge ok">✉ pedido enviado ${fmtData(p.f.pedidoEnviadoEm)}</span>` : ''}</td>
         ${comp.porLoja ? LJ.map(lj => `<td class="r">${itensLoja(p, lj) ? `${fmtMoeda(totLoja(p, lj))}<br><span class="small muted">${itensLoja(p, lj)} item(ns)</span>` : '<span class="muted">—</span>'}</td>`).join('') : ''}
@@ -7006,7 +7006,7 @@ function renderCotacao(id) {
             const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
             const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
               ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${fmtMoeda(l.precos[alvoS])} · ${esc(c.fornecedores[alvoS].nome)}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
-            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b></div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}<div class="esc-info">${ult ? `<span class="small muted ult-preco" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}${varUltimo(l.preco, ult.preco)}</span>` : ''}${segMini}</div>${campMini}${htmlDivisoes(c, l, { semBotao: true })}<div class="esc-acoes">${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)">✎</button>` : ''}${fv && l.precos.some((p, j) => p != null && j !== l.vencedor) ? `<button type="button" class="sm link div-add" data-act="dividirCompra" data-i="${l.i}" title="Dividir a compra: comprar uma parte deste item em outra empresa (pelo preço dela)">➗</button>` : ''}${l.preco != null || l.comprado ? `<button type="button" class="sm link btn-comprado${l.comprado ? ' ativo' : ''}" data-act="marcarComprado" data-i="${l.i}" title="${l.comprado ? 'Desfazer: voltar a comprar este item pela cotação' : 'Já comprado por fora (ex.: o chefe comprou): o item sai de todos os pedidos'}">${l.comprado ? '↺' : '🛒'}</button>` : ''}</div></td>`;
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b></div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}<div class="esc-info">${ult ? `<span class="small muted ult-preco" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}${varUltimo(l.preco, ult.preco)}</span>` : ''}${segMini}</div>${campMini}${htmlDivisoes(c, l, { semBotao: true })}<div class="esc-acoes">${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)" aria-label="Pôr em Dúvidas">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)" aria-label="Editar o preço ou a marca de ${esc(fv.nome)}">✎</button>` : ''}${fv && l.precos.some((p, j) => p != null && j !== l.vencedor) ? `<button type="button" class="sm link div-add" data-act="dividirCompra" data-i="${l.i}" title="Dividir a compra: comprar uma parte deste item em outra empresa (pelo preço dela)" aria-label="Dividir a compra">➗</button>` : ''}${l.preco != null || l.comprado ? `<button type="button" class="sm link btn-comprado${l.comprado ? ' ativo' : ''}" data-act="marcarComprado" data-i="${l.i}" aria-label="${l.comprado ? 'Desfazer: voltar a comprar pela cotação' : 'Marcar como já comprado por fora'}" title="${l.comprado ? 'Desfazer: voltar a comprar este item pela cotação' : 'Já comprado por fora (ex.: o chefe comprou): o item sai de todos os pedidos'}">${l.comprado ? '↺' : '🛒'}</button>` : ''}</div></td>`;
           })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
@@ -7399,7 +7399,7 @@ function renderProdutos() {
       </div>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Código</th><th>Descrição</th><th class="c">Unid.</th><th>Marca exigida</th><th>Categoria</th><th class="r">Último preço pago</th><th></th></tr></thead>
+      <thead><tr><th>Código</th><th>Descrição</th><th class="c">Unid.</th><th>Marca exigida</th><th>Categoria</th><th class="r">Último preço pago</th><th><span class="sr-only">Ações</span></th></tr></thead>
       <tbody id="tbProd">${linhasProdutos()}</tbody>
     </table></div>
     <p class="tip">Para importar sua lista de produtos, use uma planilha com as colunas <b>Código, Descrição, Unidade, Similar, Marca, Categoria</b> (a primeira linha é o cabeçalho). Produtos com o mesmo código são atualizados.</p>
@@ -7596,7 +7596,7 @@ function renderRelatorios() {
     <div class="row-between cab-pagina">
       <div class="cab-tit"><h2>Relatórios</h2><p class="cab-sub">Compras, economia e desempenho dos fornecedores</p></div>
       <div class="row">
-        <select id="periodoRel" style="width:auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${ui.periodoRel === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <select id="periodoRel" aria-label="Período do relatório" style="width:auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${ui.periodoRel === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
         ${res.cotacoes ? '<button type="button" class="sm" data-act="exportarRelatorio" title="Resumo, fornecedores, por cotação e a nota dos fornecedores numa planilha">⬇ Excel</button>' : ''}
       </div>
     </div>
@@ -7613,7 +7613,7 @@ function renderRelatorios() {
       ${melhorCot ? `<li>💰 Maior economia: <a href="#" data-route="cotacao" data-id="${esc(melhorCot.c.id)}"><b>cotação nº ${esc(melhorCot.c.numero)}</b></a>${melhorCot.c.titulo ? ` (${esc(melhorCot.c.titulo)})` : ''} — ${fmtMoeda(melhorCot.media)} abaixo da média</li>` : ''}
       <li>🧾 Média por cotação: ${fmtMoeda(res.total / res.cotacoes)} · ${Math.round(res.itens / res.cotacoes)} itens</li>
     </ul>
-    <nav class="atalhos-rel small"><span class="muted">Ir para:</span><a href="#" data-act="irSecaoRel" data-alvo="relForn">Fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relCot">Por cotação</a><a href="#" data-act="irSecaoRel" data-alvo="notaFornecedores">Nota dos fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relMaisCotados">Itens mais cotados</a></nav>` : '<p class="empty">Ainda não há cotações com preços neste período. Os relatórios aparecem assim que os fornecedores responderem (as cotações canceladas não entram).</p>'}
+    <nav class="atalhos-rel small" aria-label="Partes do relatório"><span class="muted">Ir para:</span><a href="#" data-act="irSecaoRel" data-alvo="relForn">Fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relCot">Por cotação</a><a href="#" data-act="irSecaoRel" data-alvo="notaFornecedores">Nota dos fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relMaisCotados">Itens mais cotados</a></nav>` : '<p class="empty">Ainda não há cotações com preços neste período. Os relatórios aparecem assim que os fornecedores responderem (as cotações canceladas não entram).</p>'}
   </section>
   ${fornecedores.length && res.cotacoes ? `<section class="card" id="relForn">
     <h3>Fornecedores</h3>
@@ -8025,7 +8025,7 @@ function linhasFornecedores() {
       <td class="acoes-cot-forn">${acoesCotForn(f, cotF)}</td>
       <td class="actions-cell">
         <button class="sm" data-act="editarForn" data-id="${f.id}">Editar</button>
-        <button class="sm danger" data-act="excluirForn" data-id="${f.id}">✕</button>
+        <button class="sm danger" data-act="excluirForn" data-id="${f.id}" title="Excluir fornecedor" aria-label="Excluir fornecedor ${esc(f.nome)}">✕</button>
       </td>
     </tr>`;
   }).join('');
@@ -8491,7 +8491,7 @@ function renderDuvidas() {
         ${fornsNaFila.map(fo => `<button type="button" data-act="filtroDuvForn" data-forn="${esc(fo)}" class="${ui.duvForn === fo ? 'ativo' : ''}">${esc(fo)} <span class="badge">${contaForn(fo)}</span></button>`).join('')}
       </div>` : ''}
       ${grupos.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>Pede</th><th>Código</th><th class="r">Valor</th><th>Marca</th><th>Observação</th><th></th></tr></thead>
+        <thead><tr><th>Pede</th><th>Código</th><th class="r">Valor</th><th>Marca</th><th>Observação</th><th><span class="sr-only">Ações</span></th></tr></thead>
         <tbody>${grupos.map(g => { const x = g[0]; return `<tr class="${g.some(y => y.id === ui.editDuvida) ? 'hist-aberto' : ''}">
           <td class="pede-duv">${qtdsGrupoDuvida(g).map(q => `<span class="nowrap"><b>${esc(q.qtd)}</b> ${esc(q.empresa)}</span>`).join(' <span class="muted">e</span> ')}</td>
           <td>${esc(x.codigo)}${x.origem ? `<br><span class="small muted">nº ${esc(x.origem.numero)} · ${esc(x.origem.fornecedor)}${x.origem.marcaExigida ? ' · exigida ' + esc(x.origem.marcaExigida) : ''}</span>` : ''}</td>
@@ -8541,7 +8541,7 @@ function renderFornecedores() {
     ${barraCotForn()}
     <input id="filtroForn" placeholder="Buscar fornecedor…" value="${esc(ui.filtroForn)}" style="margin-bottom:10px">
     <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th><th>Contato</th><th>E-mail</th><th>Telefone</th><th class="c">Cotações</th><th class="c" title="Nota de 0 a 10 (detalhes em Relatórios)">Nota</th><th>Cotação aberta</th><th></th></tr></thead>
+      <thead><tr><th>Fornecedor</th><th>Contato</th><th>E-mail</th><th>Telefone</th><th class="c">Cotações</th><th class="c" title="Nota de 0 a 10 (detalhes em Relatórios)">Nota</th><th>Cotação aberta</th><th><span class="sr-only">Ações</span></th></tr></thead>
       <tbody id="tbForn">${linhasFornecedores()}</tbody>
     </table></div>
   </section>`;
@@ -8694,7 +8694,7 @@ function renderControladosCfg() {
     <h2>🔒 Itens controlados</h2>
     <p class="muted small">Quando algum destes itens entra na <b>nova cotação</b> (DataCar, papelzinhos, busca ou duplicar), o sistema <b>avisa na hora</b> qual item entrou e o deixa <b>bloqueado</b>: a cotação só é criada depois que um administrador clicar em <b>✓ Autorizar</b> (ou se o item for tirado).${adm ? '' : ' <b>Só administradores mudam esta lista.</b>'}</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Código</th><th>Descrição</th><th></th></tr></thead>
+      <thead><tr><th>Código</th><th>Descrição</th><th><span class="sr-only">Ações</span></th></tr></thead>
       <tbody>${lista.length ? lista.map((c, k) => `<tr><td><b class="cod-comp">${esc(c.codigo)}</b></td><td>${esc(c.descricao || '')}</td><td class="actions-cell">${adm ? `<button type="button" class="sm danger" data-act="tirarControlado" data-k="${k}" title="Tirar da lista">✕</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="3" class="empty">Nenhum item controlado.</td></tr>'}</tbody>
     </table></div>
     ${adm ? `<div class="row" style="margin-top:12px">
@@ -8793,7 +8793,7 @@ function renderConfig() {
       <h3 style="margin-top:16px">Lojas</h3>
       <p class="muted small">A compra é dividida entre estas lojas: no comparativo aparece uma coluna de quantidade para cada uma, e os pedidos saem separados. O endereço vai no pedido como local de entrega.</p>
       <div class="table-wrap"><table class="tab-lojas">
-        <thead><tr><th>Loja</th><th>Sigla</th><th>CNPJ</th><th>Endereço de entrega</th><th></th></tr></thead>
+        <thead><tr><th>Loja</th><th>Sigla</th><th>CNPJ</th><th>Endereço de entrega</th><th><span class="sr-only">Ações</span></th></tr></thead>
         <tbody id="lojasCfg">${lojas().map(linhaLojaCfg).join('')}</tbody>
       </table></div>
       <button type="button" class="sm" data-act="addLojaCfg" style="margin-top:6px">+ Adicionar loja</button>
@@ -8857,7 +8857,7 @@ function renderBackupsNuvem() {
   return `${intro}
     <div class="row" style="margin-bottom:8px"><button class="sm primary" data-act="backupNuvemAgora">☁️ Fazer uma cópia agora</button></div>
     ${!B || B.carregando ? '<p class="muted small">Carregando as cópias…</p>' : B.erro ? `<p class="aviso-erro small">Não consegui ler as cópias: ${esc(B.erro)}</p>` : !B.lista.length ? '<p class="muted small">Nenhuma cópia ainda.</p>' : `<div class="table-wrap"><table>
-      <thead><tr><th>Quando</th><th>Motivo</th><th class="r">Documentos</th><th class="r">Tamanho</th><th></th></tr></thead>
+      <thead><tr><th>Quando</th><th>Motivo</th><th class="r">Documentos</th><th class="r">Tamanho</th><th><span class="sr-only">Ações</span></th></tr></thead>
       <tbody>${B.lista.map((b, k) => `<tr>
         <td><b>${esc(fmtQuando(b.criado_em))}</b>${k === 0 ? ' <span class="badge ok">mais nova</span>' : ''}</td>
         <td class="small">${esc(b.motivo)}</td>
@@ -11705,6 +11705,17 @@ function copiarCodigoPip(b) {
   });
 }
 
+/**
+ * Último preço pago do item, para a janela flutuante. As outras cotações quase não mudam enquanto se digita:
+ * a conta é refeita só ao trocar de cotação ou a cada minuto (não a cada quantidade digitada).
+ */
+function ultimoPrecoPip(c, it) {
+  if (!pip.ult || pip.ult.cotId !== c.id || pip.ult.n !== db.cotacoes.length || Date.now() - pip.ult.t > 60000) {
+    pip.ult = { cotId: c.id, n: db.cotacoes.length, t: Date.now(), map: ultimosPrecos(c.id) };
+  }
+  return pip.ult.map[idProdutoItem(it)] || null;
+}
+
 /** Desenha a janela flutuante. `focar`: põe o cursor na quantidade (senão só mantém onde estava). */
 function desenharPip(focar) {
   if (!pip.win || pip.win.closed) { pip.win = null; return; }
@@ -11774,6 +11785,7 @@ function desenharPip(focar) {
             </button>` : '';
           return `<div class="pip-ganhador">
             <div class="pip-preco-linha"><span class="pip-preco">${fmtMoeda(l.preco)}</span><span class="pip-forn">🏆 ${esc(f.nome)}</span><button type="button" class="pip-btn-duv" data-pip="duvida" title="Pôr em Dúvidas (perguntar à loja) · tecla D">❓</button></div>
+            ${(() => { const u = ultimoPrecoPip(c, l.it); return u ? `<div class="pip-ultimo" title="Último preço pago: ${esc(u.fornecedor)}, cotação nº ${esc(u.numero)} (${fmtData(u.data)})">último ${fmtMoeda(u.preco)}${varUltimo(l.preco, u.preco)} <small>· ${esc(u.fornecedor)}</small></div>` : ''; })()}
             ${marcasPip(l, marcaVenc)}
             ${tags ? `<div class="pip-tags">${tags}</div>` : ''}
             ${htmlDivisoes(c, l, { pip: true })}

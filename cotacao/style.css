@@ -90,7 +90,7 @@
   --card: #fffdf9;
   --card-2: #f8f4ed;
   --text: #29241c;
-  --muted: #776d5f;
+  --muted: #675e51; /* escurecido p/ contraste AA (4,5:1) nos fundos coloridos */
   --line: #e9e2d5;
   --input-line: #d9cdb9;
   --primary: #2e4a7d;
@@ -220,6 +220,8 @@ h2 { margin: 0 0 12px; font-size: var(--fs-2xl); font-weight: 700; letter-spacin
 h3 { margin: 0 0 12px; font-size: var(--fs-lg); font-weight: 700; letter-spacing: -.005em; }
 .muted { color: var(--muted); }
 .small { font-size: var(--fs-sm); }
+/* texto só para leitores de tela (não aparece nem ocupa espaço) */
+.sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 label { display: block; font-size: var(--fs-sm); color: var(--muted); margin-bottom: 10px; }
 label > input, label > select, label > textarea { margin-top: 4px; }
@@ -1363,6 +1365,8 @@ main { padding-top: 20px; }
 nav a { font-weight: 500; border-radius: var(--r-pill); }
 nav a:hover { background: var(--hover); }
 nav a.active { background: color-mix(in srgb, var(--primary-2) 14%, var(--card)); color: var(--primary); box-shadow: none; font-weight: 600; }
+:root:is([data-theme="escuro"], [data-theme="grafite"]) nav a.active { color: var(--primary-2); } /* contraste AA no tema escuro */
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) nav a.active { color: var(--primary-2); } }
 .status-nuvem { background: transparent; }
 /* cartões: sem peso visual, só uma sombra leve */
 .card { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 20px 22px; box-shadow: var(--shadow-card); }
@@ -1667,7 +1671,7 @@ nav a { font-size: var(--fs-md); padding: 6px 10px; }
 
 /* marca pedida numa linha só */
 .prod-tags .marca-pedida { max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
-.chip-marca.neutra { background: color-mix(in srgb, var(--muted) 12%, transparent); color: var(--muted); }
+.chip-marca.neutra { background: color-mix(in srgb, var(--muted) 12%, transparent); color: color-mix(in srgb, var(--muted) 80%, var(--text)); }
 .chip-marca.recusada { max-width: 150px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
 /* cotação finalizada: só leitura */
@@ -1844,7 +1848,7 @@ br + .sim-item { margin-left: 0; }
 /* papelzinhos de São Sebastião */
 .papel-box { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 8px 0 0; padding: 6px 10px; border: 1px dashed var(--line); border-radius: var(--r-sm); }
 .papel-box.feito { border-style: solid; border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); background: color-mix(in srgb, var(--ok) 5%, var(--card)); }
-.tag-papel { display: inline-block; padding: 0 6px; border-radius: var(--r-xs); font-family: var(--font); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: .03em; background: color-mix(in srgb, var(--laranja) 15%, var(--card)); color: var(--laranja-texto, #8a4b00); border: 1px solid color-mix(in srgb, var(--laranja) 45%, transparent); vertical-align: middle; }
+.tag-papel { display: inline-block; padding: 0 6px; border-radius: var(--r-xs); font-family: var(--font); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: .03em; background: color-mix(in srgb, var(--laranja) 15%, var(--card)); color: color-mix(in srgb, var(--laranja-texto, #8a4b00) 85%, var(--text)); border: 1px solid color-mix(in srgb, var(--laranja) 45%, transparent); vertical-align: middle; }
 .conf-desc-novo { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; font-size: var(--fs-xs); color: var(--muted); }
 .conf-desc-novo input { height: 32px; font-size: var(--fs-md); }
 .modo-papel .cg-obs > b + span { display: none; }
@@ -2589,3 +2593,8 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
   .camp-fora { white-space: normal; text-align: left; line-height: 1.3; }
   .card-cab-cot .rc-kpi .rc-sub { white-space: normal; overflow: visible; }
 }
+
+/* janela flutuante: último preço pago e a variação */
+.pip-ultimo { margin-top: 2px; font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pip-ultimo .var-ult { font-size: var(--fs-sm); }
+.pip-ultimo small { font-size: var(--fs-xs); }
