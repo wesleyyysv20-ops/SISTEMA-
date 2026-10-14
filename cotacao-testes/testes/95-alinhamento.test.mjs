@@ -42,6 +42,13 @@ function problemas() {
   for (const el of document.querySelectorAll('#app .rc-kpi b, #app .rc-kpi .rc-sub, #app .stat b')) {
     if (visivel(el) && el.scrollWidth > el.clientWidth + 1) res.push(`cortado: ${nome(el)}`);
   }
+  // grupos de botões lado a lado: mesma altura e mesmo topo (menus "⋯ Mais" e status iguais aos botões)
+  for (const grupo of document.querySelectorAll('#app .cab-cot-acoes')) {
+    const bts = [...grupo.querySelectorAll(':scope > .sm, :scope > details > summary')].filter(visivel).map(b => b.getBoundingClientRect());
+    // na mesma linha (as caixas se sobrepõem na vertical): mesmo topo e mesma altura; em linhas diferentes (celular) tudo bem
+    const torto = bts.some(a => bts.some(b => a !== b && Math.abs(a.top - b.top) < Math.min(a.height, b.height) && (Math.abs(a.top - b.top) > 1 || Math.abs(a.height - b.height) > 1)));
+    if (torto) res.push(`botões desalinhados: ${nome(grupo)}`);
+  }
   // barras de ferramentas: tudo na mesma altura (uma linha só) quando há espaço
   if (W >= 1000) {
     for (const barra of document.querySelectorAll('#secComp > .row-between > .row')) {

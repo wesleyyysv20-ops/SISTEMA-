@@ -6678,7 +6678,7 @@ function htmlResumoCot(c, comp = comparar(c)) {
   return `<div class="resumo-cot">
     ${semQtd
       ? kpi('💰 Total do pedido', '<span class="rc-espera">aguardando quantidades</span>', `estimativa ${fmtMoeda(total)}`, 'espera', ' title="Ainda não há quantidade das lojas: o valor de baixo é só uma estimativa com a quantidade da lista (normalmente 1 de cada)"')
-      : kpi('💰 Total do pedido', fmtMoeda(total), `${(n => `${n} ${n === 1 ? 'item' : 'itens'}`)(peds.reduce((t, p) => t + p.itens.length, 0))} · sem os em dúvida`)}
+      : kpi('💰 Total do pedido', fmtMoeda(total), `${(n => `${n} ${n === 1 ? 'item' : 'itens'}`)(peds.reduce((t, p) => t + p.itens.length, 0))} no pedido`)}
     ${semQtd
       ? kpi('📉 Economia vs média', '—', media > 0 ? `estimativa ${fmtMoeda(media)}` : 'depois das quantidades', 'espera')
       : kpi('📉 Economia vs média', media > 0 ? fmtMoeda(media) : '—', media > 0 && base ? `${fmtPct(media / (base + media))} a menos` : 'onde houve 2+ preços', media > 0 ? 'bom' : '')}

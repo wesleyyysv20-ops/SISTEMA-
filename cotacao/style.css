@@ -2603,3 +2603,14 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 
 /* escolhido por um colega: destaca o nome */
 .pip-tag.outro { background: var(--warn-bg); color: var(--warn); font-weight: 700; }
+
+/* cabeçalho da cotação: os menus (Mais, status) na mesma altura dos botões */
+.cab-cot { align-items: center; }
+.cab-cot-acoes { align-items: center; }
+.cab-cot-acoes > details { display: flex; align-items: center; }
+.cab-cot-acoes > details > summary, .cab-cot-acoes > .sm { height: 32px; min-height: 32px; box-sizing: border-box; }
+.cab-cot-acoes > details { height: 32px; margin: 0; padding: 0; border: 0; }
+.cab-cot-acoes > details > summary { margin: 0; }
+@media (max-width: 760px) {
+  .cab-cot-acoes > details, .cab-cot-acoes > details > summary, .cab-cot-acoes > .sm { height: 36px; min-height: 36px; }
+}
