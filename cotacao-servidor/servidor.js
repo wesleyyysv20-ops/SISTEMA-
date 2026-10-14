@@ -226,7 +226,8 @@ function arquivoDoSite(req, res, url) {
   let rel = decodeURIComponent(url.pathname)
   if (rel === '/' || rel === '') rel = '/index.html'
   const alvo = path.normalize(path.join(PASTA_SITE, rel))
-  if (!alvo.startsWith(PASTA_SITE)) return json(res, 403, { msg: 'proibido' })
+  // com a barra no fim: "cotacao" não pode servir arquivos de pastas vizinhas como "cotacao-servidor"
+  if (!alvo.startsWith(PASTA_SITE + path.sep)) return json(res, 403, { msg: 'proibido' })
   fs.stat(alvo, (e, st) => {
     if (e || !st.isFile()) return json(res, 404, { msg: 'não encontrado' })
     const ext = path.extname(alvo).toLowerCase()

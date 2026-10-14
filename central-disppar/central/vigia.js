@@ -149,7 +149,7 @@ function servidorCentral() {
     }
     let rel = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname)
     const alvo = path.normalize(path.join(PORTAL, rel))
-    if (!alvo.startsWith(PORTAL) || !fs.existsSync(alvo) || !fs.statSync(alvo).isFile()) { res.writeHead(404); return res.end('não encontrado') }
+    if (!alvo.startsWith(PORTAL + path.sep) || !fs.existsSync(alvo) || !fs.statSync(alvo).isFile()) { res.writeHead(404); return res.end('não encontrado') }
     res.writeHead(200, { 'Content-Type': TIPOS[path.extname(alvo)] || 'application/octet-stream', 'Cache-Control': 'no-cache' })
     fs.createReadStream(alvo).pipe(res)
   })

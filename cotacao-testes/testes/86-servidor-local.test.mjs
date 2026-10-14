@@ -104,3 +104,11 @@ test('servidor local: sem login não lê nem grava nada', async () => {
   const fora = await fetch(BASE + '/../../banco.js');
   assert.notEqual(fora.status, 200);
 });
+
+test('servidor local: não entrega arquivos de pastas vizinhas (cotacao-servidor, dados)', async () => {
+  for (const p of ['/..%2Fcotacao-servidor%2Fservidor.js', '/..%5Ccotacao-servidor%5Cservidor.js', '/..%2Fcotacao-servidor%2Fpackage.json']) {
+    const r = await fetch(BASE + p);
+    assert.notEqual(r.status, 200, p);
+  }
+  assert.equal((await fetch(BASE + '/index.html')).status, 200);
+});
