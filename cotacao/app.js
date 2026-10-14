@@ -115,7 +115,7 @@ const PREFERENCIA = { teste: f => /\bcomando\b/.test(semAcento(f?.nome)), ate: 0
 
 /** Rio Juntas: item com a marca "GO" demora mais para chegar (só para a Rio Juntas). */
 function entregaDemorada(f, o) {
-  return !!o && /\brio\s*juntas\b/.test(semAcento(f?.nome)) && normMarca(o.marca).split(' ').includes('GO');
+  return !!o && /\brio\s*juntas\b/.test(semAcento(f?.nome)) && normMarcaBruta(o.marca).split(' ').includes('GO'); // o que o fornecedor escreveu (o dicionário não esconde o GO)
 }
 const chipDemora = '<span class="chip-demora" title="Rio Juntas: os itens com marca GO demoram mais para chegar. Considere o prazo antes de fechar o pedido.">🐢 GO · demora para chegar</span>';
 
@@ -1908,8 +1908,81 @@ function novoFornCot(f) {
 
 /* ---------------- marcas ---------------- */
 
-function normMarca(v) {
+function normMarcaBruta(v) {
   return semAcento(v).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+/**
+ * Marca normalizada, já pelo dicionário de marcas (Configurações → Marcas): "FRA", "FRASSLE" e "FRAS LE"
+ * viram a mesma marca em todo o sistema (filtro, campanha, conferência da marca pedida, relatórios).
+ */
+function normMarca(v) {
+  const k = normMarcaBruta(v);
+  let d = null;
+  try { d = db?.config?.dicionarioMarcas; } catch (e) { /* carregando: ainda sem dados */ }
+  return d && d[k] ? normMarcaBruta(d[k]) : k;
+}
+/** Nome para mostrar de uma marca já normalizada (o nome certo do dicionário, se houver). */
+function nomeMarcaDic(k, bruto = k) {
+  const d = db?.config?.dicionarioMarcas || {};
+  return Object.values(d).find(v => normMarcaBruta(v) === k) || String(bruto).trim().toUpperCase();
+}
+
+/** Marcas que os fornecedores escreveram nas cotações (normalizadas, sem o dicionário), com quantas vezes. */
+function marcasRespondidas() {
+  const cont = new Map();
+  for (const c of db.cotacoes) {
+    if (c.status === 'cancelada') continue;
+    for (const f of c.fornecedores) for (const o of Object.values(f.respostas || {})) {
+      const k = normMarcaBruta(o?.marca);
+      if (k && o.preco > 0 && !/^\d+$/.test(k)) cont.set(k, (cont.get(k) || 0) + 1);
+    }
+  }
+  return cont;
+}
+
+/**
+ * Prováveis marcas repetidas com nomes diferentes ("FRA" e "FRAS LE", "BOS" e "BOSCH"): a abreviação aponta para
+ * a forma mais completa. Só sugere: quem decide é você (Juntar / Não é a mesma).
+ */
+let cacheSugDic = null;
+function sugestoesDicionario() {
+  if (cacheSugDic && cacheSugDic.db === db && cacheSugDic.v === versaoDados) return cacheSugDic.res;
+  const res = calcularSugestoesDicionario();
+  cacheSugDic = { db, v: versaoDados, res };
+  return res;
+}
+/** Marca "limpa": só o nome, sem anotação do fornecedor (GO, VALOR UNITARIO, ACIMA DE 3, códigos com número). */
+const PALAVRAS_ANOTACAO = new Set(['GO', 'VALOR', 'UNITARIO', 'UNIT', 'ACIMA', 'ABAIXO', 'DE', 'ATE', 'CX', 'CAIXA', 'JOGO', 'KIT', 'PC', 'PECA', 'SPA', 'ORIGINAL', 'PAR', 'UN']);
+const marcaLimpa = k => k.split(' ').every(w => !/\d/.test(w) && !PALAVRAS_ANOTACAO.has(w)) && k.split(' ').length <= 2;
+
+function calcularSugestoesDicionario() {
+  const d = db.config.dicionarioMarcas || {};
+  const nao = new Set(db.config.dicionarioNao || []);
+  const cont = marcasRespondidas();
+  const marcas = [...cont.keys()].filter(k => !d[k] && marcaLimpa(k));
+  const sem = k => k.replace(/ /g, '');
+  // é a forma curta da outra? começo do nome (BOS → BOSCH), iniciais (MM → MAGNETI MARELLI),
+  // uma das palavras (MARELLI → MAGNETI MARELLI) ou sigla de consoantes de até 4 letras (AXS → AXIOS, FRX → FREMAX)
+  const abrevia = (curta, longa) => {
+    const c = sem(curta), l = sem(longa), pl = longa.split(' ');
+    if (l.startsWith(c)) return true;
+    if (pl.length > 1 && (c === pl.map(w => w[0]).join('') || pl.includes(curta))) return true;
+    return c.length <= 4 && !/[AEIOU]/.test(c.slice(1)) && c.slice(0, 2) === l.slice(0, 2) && ehSubsequencia(c, l);
+  };
+  const res = [];
+  for (const curta of marcas) {
+    if (sem(curta).length < 3) continue;
+    let melhor = null;
+    for (const longa of marcas) {
+      if (longa === curta || sem(longa).length <= sem(curta).length || nao.has(curta + '|' + longa)) continue;
+      if (!abrevia(curta, longa)) continue;
+      // forma rara (erro de digitação, anotação) ou só uma versão estendida bem menos usada que ela: não sugere
+      if (cont.get(longa) < 3 || (sem(longa).startsWith(sem(curta)) && cont.get(curta) > 2 * cont.get(longa))) continue;
+      if (!melhor || cont.get(longa) > cont.get(melhor)) melhor = longa;
+    }
+    if (melhor) res.push({ curta, longa: normMarca(melhor), n: cont.get(curta), nLonga: cont.get(melhor) });
+  }
+  return res.sort((a, b) => b.n - a.n).slice(0, 40);
 }
 
 /** A marca pedida pode ter mais de uma opção: "NSK/SKF", "COFAP ou MONROE". */
@@ -2292,7 +2365,7 @@ function compararCalculo(c) {
       const qx = Object.values(qtdsX).reduce((a, b) => a + b, 0);
       return qx > 0 ? { fi, preco: precos[fi], qtds: qtdsX, q: qx } : null;
     }).filter(Boolean);
-    return { it, i, q, extras, comprado, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, campanhas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
+    return { it, i, q, semQtdLojas: !porLoja, extras, comprado, naoComprar, duvida, recusadaGanhou, precos, marcas, recusas, permitidas, campanhas, aguardando, estoque, min, minIdx, vencedor, preco, manual, preferencia, difConferida, segundo: seg, segundoIdx: segIdx, difSegundo };
   });
   const totais = c.fornecedores.map((f, fi) => {
     let total = 0, cotados = 0, vencidos = 0, valorVencido = 0;
@@ -2857,7 +2930,7 @@ function qtdComprada(c, l, porLoja = temQtdLojas(c)) {
 }
 
 /** Etiquetas da compra dividida (comparativo e janela flutuante): empresa, quantidade por loja e valor. */
-function htmlDivisoes(c, l, { pip = false } = {}) {
+function htmlDivisoes(c, l, { pip = false, semBotao = false } = {}) {
   const outros = l.precos.some((p, j) => p != null && j !== l.vencedor);
   if (l.vencedor < 0 || !outros) return '';
   const LJ = lojas();
@@ -2866,7 +2939,8 @@ function htmlDivisoes(c, l, { pip = false } = {}) {
     return `<button type="button" class="div-chip${filtroVencedor(c) === c.fornecedores[x.fi].fornecedorId ? ' div-destaque' : ''}" data-forn="${esc(c.fornecedores[x.fi].fornecedorId)}" ${pip ? `data-pip="dividir" data-f="${x.fi}"` : `data-act="dividirCompra" data-i="${l.i}" data-f="${x.fi}"`} title="Parte comprada de ${esc(c.fornecedores[x.fi].nome)} por ${fmtMoeda(x.preco)}/un. Clique para mudar ou tirar.">➗ ${esc(c.fornecedores[x.fi].nome)} · ${fmtNum(x.q)} un.${LJ.length > 1 && porLoja ? ` (${porLoja})` : ''} · ${fmtMoeda(x.preco * x.q)}</button>`;
   }).join('');
   const botao = `<button type="button" class="link small div-add" ${pip ? 'data-pip="dividir"' : `data-act="dividirCompra" data-i="${l.i}"`} title="Comprar uma parte deste item em outra empresa (pelo preço dela)">➗ dividir compra</button>`;
-  return `<span class="divisoes">${chips}${botao}</span>`;
+  if (semBotao && !chips) return '';
+  return `<span class="divisoes">${chips}${semBotao ? '' : botao}</span>`;
 }
 
 /**
@@ -5676,6 +5750,22 @@ function painelLote(c) {
   </section>`;
 }
 
+/** O que a faixa colorida à esquerda de cada item quer dizer. */
+const SIT_COMP = { ok: 'Verde: preço escolhido, nada para conferir', conferir: 'Laranja: tem algo para conferir (marca, diferença de preço, demora…)', aguardando: 'Vermelho: marca recusada, aguardando outro preço', sem: 'Cinza: ninguém mandou preço', duvida: 'Roxo: item em Dúvidas (fora do pedido)' };
+function legendaComp() {
+  const cor = { ok: 'var(--verde-linha)', conferir: 'var(--laranja-suave)', aguardando: 'var(--danger)', sem: 'var(--faixa-neutra)', duvida: 'var(--roxo)' };
+  const rot = { ok: 'ok', conferir: 'conferir', aguardando: 'aguardando marca', sem: 'sem preço', duvida: 'em dúvida' };
+  return `<div class="legenda-comp small muted"><span>Faixa:</span>${Object.keys(rot).map(k => `<span title="${esc(SIT_COMP[k])}"><i style="background:${cor[k]}"></i>${rot[k]}</span>`).join('')}<span class="leg-sep">·</span><span>❓ pôr em Dúvidas · ✎ corrigir preço/marca · ➗ dividir compra · 🛒 já comprado por fora</span><span class="leg-sep">·</span><span>⌨ digite um número: vai para a quantidade · ↑ ↓ itens · ← → lojas</span></div>`;
+}
+
+/** Setinha da variação do preço escolhido contra o último pago (▲ subiu, em vermelho; ▼ caiu, em verde). */
+function varUltimo(preco, ultimo) {
+  if (!(preco > 0) || !(ultimo > 0)) return '';
+  const d = preco / ultimo - 1;
+  if (Math.abs(d) < 0.005) return ' <span class="var-ult igual" title="Mesmo preço da última compra">=</span>';
+  return ` <span class="var-ult ${d > 0 ? 'subiu' : 'caiu'}" title="${d > 0 ? 'Mais caro' : 'Mais barato'} que a última compra">${d > 0 ? '▲' : '▼'} ${fmtPct(Math.abs(d))}</span>`;
+}
+
 function celTotal(l) {
   if (l.preco == null) return '—';
   const acima = l.estoque != null && l.q > l.estoque
@@ -5686,6 +5776,7 @@ function celTotal(l) {
   const alerta = a && a.it === l.it && l.estoque != null
     ? `<div class="alerta-estoque" role="alert">⚠ <b>Estoque insuficiente</b>: você digitou <b>${fmtNum(a.digitado)}</b>${a.nomeLoja ? ` para ${esc(a.nomeLoja)}` : ''}, mas ${esc(a.forn)} informou só <b>${fmtNum(a.estoque)}</b> em estoque${a.outras ? ` (${fmtNum(a.outras)} já na outra loja)` : ''}. Ficou <b>${fmtNum(a.max)}</b>.</div>` : '';
   if (l.comprado) return '<span class="ja-comprado" title="Comprado por fora: não vai em nenhum pedido">✓ já comprado</span>';
+  if (l.semQtdLojas && !(l.extras || []).length) return `<span class="tot-un" title="Nenhuma quantidade digitada ainda: este é o preço de 1 unidade, não o total do pedido">${fmtMoeda(l.preco)}<small>/un.</small></span><br><span class="muted small">sem qtd.</span>${est}${alerta}`;
   if (!l.q && !(l.extras || []).length) return (l.naoComprar ? '<span class="nao-comprar" title="0 nas duas lojas: não vai em nenhum pedido">não comprar</span>' : '<span class="muted small">sem qtd.</span>') + est + alerta;
   const vx = (l.extras || []).reduce((t, x) => t + x.preco * x.q, 0);
   const qx = (l.extras || []).reduce((t, x) => t + x.q, 0);
@@ -5741,7 +5832,7 @@ function seletorMarca(c, comp) {
       const k = normMarca(m);
       if (!k || l.precos[j] == null || vistas.has(k)) return;
       vistas.add(k);
-      const x = cont.get(k) || { nome: String(m).trim().toUpperCase(), n: 0 };
+      const x = cont.get(k) || { nome: nomeMarcaDic(k, m), n: 0 };
       x.n++;
       cont.set(k, x);
     });
@@ -5749,7 +5840,7 @@ function seletorMarca(c, comp) {
   if (!cont.size) return '';
   const atual = filtroMarcaComp(c);
   return `<label class="filtro-venc filtro-marca" title="Mostrar só os itens em que algum fornecedor mandou preço desta marca"><span class="filtro-venc-rot">Marca:</span>
-    <select id="filtroMarca"><option value="">Todas</option>${[...cont].sort((a, b) => b[1].n - a[1].n || COLLATOR.compare(a[1].nome, b[1].nome)).map(([k, x]) => `<option value="${esc(k)}" ${atual === k ? 'selected' : ''}>${esc(x.nome)} (${x.n})</option>`).join('')}</select></label>`;
+    <select id="filtroMarca"><option value="">Todas</option>${[...cont].sort((a, b) => b[1].n - a[1].n || COLLATOR.compare(a[1].nome, b[1].nome)).map(([k, x]) => `<option value="${esc(k)}" ${atual === k ? 'selected' : ''}>${esc(x.nome)} (${x.n})</option>`).join('')}</select></label>${sugestoesDicionario().length ? `<button type="button" class="link small btn-dic" data-act="irDicionarioMarcas" title="Há marcas que parecem a mesma escrita de jeitos diferentes (ex.: FRA e FRAS-LE). Clique para juntar no dicionário de marcas.">📖 ${sugestoesDicionario().length} marca(s) repetida(s)?</button>` : ''}`;
 }
 /** Filtro pelas etiquetas de aviso ('aguardando', 'dif', 'marca', 'regra', 'demora', 'alertas'); '' = nenhum. */
 function filtroAviso(c) {
@@ -6121,7 +6212,7 @@ function linhaTotalComp(c, comp) {
   const LJ = lojas();
   const qtdL = lj => comp.linhas.reduce((s, l) => s + qtdLoja(c, l.i, lj.id), 0);
   return `<tr class="total" id="totalComp">
-    <td></td><td>Total dos itens cotados${comp.porLoja ? '<br><span class="small muted">com as quantidades das lojas</span>' : '<br><span class="small muted">1 unidade de cada</span>'}</td>
+    <td></td><td>Total dos itens cotados${comp.porLoja ? '<br><span class="small muted">com as quantidades das lojas</span>' : '<br><span class="small muted">sem quantidades: soma de 1 unidade de cada (não é o pedido)</span>'}</td>
     ${fornecedoresVisiveisComp(c).map(j => comp.totais[j]).map(t => `<td class="r">${t.cotados ? fmtMoeda(t.total) : '—'}<br><span class="small muted">${t.cotados}/${c.itens.length} itens · ${t.vencidos} ganho(s)</span></td>`).join('')}
     <td class="fd">${comp.escolhasManuais ? 'Total com suas escolhas' : 'Melhor combinação'}</td>${nf > 1 ? '<td class="fd col-dif"></td>' : ''}
     ${LJ.map(lj => `<td class="c col-qtd fd">${qtdL(lj) ? `${fmtNum(qtdL(lj))} un.<br><span class="small">${fmtMoeda(comp.porLojaTotal[lj.id])}</span>` : '<span class="muted">—</span>'}</td>`).join('')}
@@ -6477,6 +6568,46 @@ window.addEventListener('resize', () => { clearTimeout(timerColFixas); timerColF
 // a largura do comparativo muda sem a janela mudar (barra de rolagem aparece, quadro abre/fecha): mede de novo
 const vigiaLarguraComp = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { clearTimeout(timerColFixas); timerColFixas = setTimeout(() => { ui.colFixas = null; ajustarColunasFixas(); }, 120); }) : null;
 let painelVigiado = null;
+/**
+ * Rodapé fixo do comparativo: total dos itens que estão na tela (com o filtro), por loja, e quantos ainda estão
+ * sem quantidade. A mesma conta do total do comparativo e dos pedidos (preço escolhido × quantidade + divisões).
+ */
+let vigiaRodape = null;
+function atualizarRodapeComp() {
+  const el = document.getElementById('rodapeComp');
+  const c = cotAtual();
+  if (!el || !c) return;
+  const comp = comparar(c);
+  const LJ = lojas();
+  const vis = new Set([...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]:not([hidden])')].map(tr => +tr.dataset.compLinha));
+  const linhas = comp.linhas.filter(l => vis.has(l.i));
+  const porLoja = Object.fromEntries(LJ.map(lj => [lj.id, { q: 0, v: 0 }]));
+  for (const l of linhas) for (const lj of LJ) {
+    const q = l.preco != null ? qtdLoja(c, l.i, lj.id) : 0;
+    porLoja[lj.id].q += q + l.extras.reduce((t, x) => t + (x.qtds[lj.id] || 0), 0);
+    porLoja[lj.id].v += (l.preco != null ? l.preco * q : 0) + l.extras.reduce((t, x) => t + x.preco * (x.qtds[lj.id] || 0), 0);
+  }
+  const total = Object.values(porLoja).reduce((t, x) => t + x.v, 0);
+  const semQtd = linhas.filter(l => l.preco != null && !l.comprado && !l.duvida && !LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null && c.qtds[l.i][lj.id] !== ''));
+  const filtrado = vis.size < comp.linhas.length;
+  el.innerHTML = `<span class="rc-itens">${filtrado ? `<b>${linhas.length}</b> de ${comp.linhas.length} itens (filtro)` : `<b>${comp.linhas.length}</b> itens`}</span>
+    ${comp.porLoja ? LJ.map(lj => `<span class="rc-loja"><span class="muted">${esc(lj.nome)}</span> <b>${fmtNum(porLoja[lj.id].q)} un.</b> ${fmtMoeda(porLoja[lj.id].v)}</span>`).join('') + `<span class="rc-total"><span class="muted">Total${filtrado ? ' do filtro' : ''}</span> <b>${fmtMoeda(total)}</b></span>` : '<span class="muted">Nenhuma quantidade digitada ainda</span>'}
+    ${semQtd.length ? `<button type="button" class="sm rc-semqtd" data-act="irSemQtd" title="Itens com preço que ainda não têm quantidade em nenhuma loja">⚠ ${semQtd.length} sem quantidade →</button>` : '<span class="rc-ok">✓ todos com quantidade</span>'}`;
+}
+let rodapeAgendado = 0;
+function agendarRodapeComp() {
+  if (rodapeAgendado) return;
+  rodapeAgendado = requestAnimationFrame(() => { rodapeAgendado = 0; atualizarRodapeComp(); });
+}
+function vigiarRodapeComp() {
+  const tb = document.querySelector('.tab-comp tbody');
+  if (!tb) return;
+  if (!vigiaRodape) vigiaRodape = new MutationObserver(agendarRodapeComp);
+  vigiaRodape.disconnect();
+  vigiaRodape.observe(tb, { attributes: true, attributeFilter: ['hidden'], subtree: true, childList: true });
+  agendarRodapeComp();
+}
+
 function vigiarLarguraComp() {
   const pc = document.querySelector('.painel-comp');
   if (!vigiaLarguraComp || !pc || pc === painelVigiado) return;
@@ -6486,6 +6617,7 @@ function vigiarLarguraComp() {
 }
 
 function atualizarTotaisComp(c, i = null) {
+  agendarRodapeComp();
   const comp = comparar(c);
   // quando as quantidades passam a valer (1ª digitada) todos os totais mudam; senão, só o da linha digitada
   const todas = i == null || ui.porLojaComp?.cotId !== c.id || ui.porLojaComp.v !== comp.porLoja;
@@ -6683,7 +6815,7 @@ function renderCotacao(id) {
           const fa = filtroAviso(c);
           const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => !['regra', 'campanha', 'comprado'].includes(a)) ? 'conferir' : 'ok';
           return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''}${l.comprado ? ' linha-comprada' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && linhaNaMarca(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
-          <td class="c">${l.i + 1}</td>
+          <td class="c" title="${SIT_COMP[situacao] || ''}">${l.i + 1}</td>
           <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
             <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
             <span class="prod-tags">${l.it.papelzinho ? '<span class="tag-papel" title="Veio dos papelzinhos de São Sebastião">PAPELZINHOS</span>' : ''}${l.it.marca ? `<span class="marca-pedida" title="Marca pedida: ${esc(l.it.marca)}">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
@@ -6709,7 +6841,7 @@ function renderCotacao(id) {
             const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
             const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
               ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${fmtMoeda(l.precos[alvoS])} · ${esc(c.fornecedores[alvoS].nome)}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
-            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b>${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)">✎</button>` : ''}</div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult ? `<br><span class="small muted" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}</span>` : ''}${segMini}${campMini}${htmlDivisoes(c, l)}${l.preco != null || l.comprado ? `<button type="button" class="link small btn-comprado" data-act="marcarComprado" data-i="${l.i}" title="${l.comprado ? 'Voltar a comprar este item pela cotação' : 'O item já foi comprado por fora (ex.: o chefe comprou): sai de todos os pedidos'}">${l.comprado ? '↺ desfazer' : '🛒 já comprado'}</button>` : ''}</td>`;
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b><span class="esc-acoes">${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)">✎</button>` : ''}${fv && l.precos.some((p, j) => p != null && j !== l.vencedor) ? `<button type="button" class="sm link div-add" data-act="dividirCompra" data-i="${l.i}" title="Dividir a compra: comprar uma parte deste item em outra empresa (pelo preço dela)">➗</button>` : ''}${l.preco != null || l.comprado ? `<button type="button" class="sm link btn-comprado${l.comprado ? ' ativo' : ''}" data-act="marcarComprado" data-i="${l.i}" title="${l.comprado ? 'Desfazer: voltar a comprar este item pela cotação' : 'Já comprado por fora (ex.: o chefe comprou): o item sai de todos os pedidos'}">${l.comprado ? '↺' : '🛒'}</button>` : ''}</span></div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${ult || segMini ? `<div class="esc-info">${ult ? `<span class="small muted ult-preco" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}${varUltimo(l.preco, ult.preco)}</span>` : ''}${segMini}</div>` : ''}${campMini}${htmlDivisoes(c, l, { semBotao: true })}</td>`;
           })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)
@@ -6717,7 +6849,7 @@ function renderCotacao(id) {
               const acao = alvo >= 0 && alvo !== l.vencedor ? ` class="r fd col-dif escolhe-dif" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvo}" title="Clique para comprar de ${esc(c.fornecedores[alvo].nome)} (${fmtMoeda(l.precos[alvo])})"` : ' class="r fd col-dif"';
               return `<td${acao}>${celulaDifSegundo(c, l)}</td>`;
             })() : ''}
-            ${LJ.map(lj => `<td class="c col-qtd fd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}"${cotTravada(c) ? ' readonly' : ''} title="0 = não comprar nesta loja" placeholder="0" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
+            ${LJ.map(lj => `<td class="c col-qtd fd"><input class="qtd-loja${qtdLoja(c, l.i, lj.id) ? ' preenchida' : c.qtds?.[l.i]?.[lj.id] === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${c.qtds?.[l.i]?.[lj.id] ?? ''}"${cotTravada(c) ? ' readonly' : ''} title="Vazio = ainda não preenchido · 0 = não comprar nesta loja" placeholder="" aria-label="Quantidade ${esc(lj.nome)}"></td>`).join('')}
             <td class="r fd" id="tot-${l.i}">${celTotal(l)}</td>` : ''}
         </tr>`;
         }).join('')}
@@ -6727,7 +6859,8 @@ function renderCotacao(id) {
           ${ordemForn.map(j => `<td class="r small">${esc(c.fornecedores[j].cond?.[k] || '—')}</td>`).join('')}
           <td colspan="${(nf > 1 ? 3 : 2) + LJ.length}"></td></tr>` : '').join('') : ''}
       </tbody>
-    </table></div>`;
+    </table></div>
+    <div class="rodape-comp" id="rodapeComp" aria-live="polite"></div>`;
 
   return `
   <section class="card card-cab-cot">
@@ -6808,6 +6941,7 @@ function renderCotacao(id) {
     <div class="faixa-comp">
     ${temResposta ? `<div class="barra-comp small">
       ${escondidos ? `<span class="muted">${escondidos} fornecedor(es) ainda sem resposta não aparecem na tabela.</span> <button type="button" class="link" data-act="mostrarSemResposta">mostrar</button>` : ui.mostrarSemResposta && c.fornecedores.some(f => !Object.values(f.respostas || {}).some(o => o?.preco > 0)) ? '<button type="button" class="link" data-act="mostrarSemResposta">esconder quem não respondeu</button>' : ''}
+      ${legendaComp()}
       <details class="ajuda-comp"><summary title="Como usar o comparativo${comp.escolhasManuais ? ' e mais opções' : ''}">ⓘ${comp.escolhasManuais ? ' mais opções' : ' Como usar'}</summary>
         ${comp.escolhasManuais ? `<p><button type="button" class="sm danger" data-act="limparEscolhas">↺ Desfazer as ${comp.escolhasManuais} escolha(s) feitas na mão</button> <span class="small muted">volta todos esses itens para o menor preço (pede confirmação)</span></p>` : ''}
         ${nf > 1 ? '<p>O vencedor de cada item fica em <b>verde</b>. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço. Preços iguais: ganha quem respondeu primeiro.</p>' : ''}
@@ -8404,6 +8538,30 @@ function renderControladosCfg() {
   </section>`;
 }
 
+function renderDicionarioMarcas() {
+  const d = db.config.dicionarioMarcas || {};
+  const grupos = new Map();
+  for (const [k, v] of Object.entries(d)) { const g = grupos.get(v) || []; g.push(k); grupos.set(v, g); }
+  const sug = sugestoesDicionario();
+  return `<section class="card" id="dicMarcas">
+    <h2>📖 Dicionário de marcas</h2>
+    <p class="muted small">Cada fornecedor escreve a marca de um jeito (FRA, FRASSLE, FRAS-LE). Junte aqui as que são a <b>mesma marca</b>: o filtro do comparativo, as campanhas, a conferência da marca pedida e os relatórios passam a contar tudo junto. O que o fornecedor escreveu continua guardado como veio.</p>
+    <form data-form="dicMarca" class="row" style="align-items:flex-end">
+      <label style="margin:0">Marca certa<input name="marca" placeholder="Ex.: FRAS-LE" required autocomplete="off"></label>
+      <label class="grow" style="margin:0">Também escrita como (separe por vírgula)<input name="formas" placeholder="Ex.: FRA, FRASSLE, FRAS LE" required autocomplete="off"></label>
+      <button class="sm primary">+ Juntar</button>
+    </form>
+    ${grupos.size ? `<div class="table-wrap" style="margin-top:10px"><table>
+      <thead><tr><th>Marca certa</th><th>Também escrita como</th></tr></thead>
+      <tbody>${[...grupos].sort((a, b) => COLLATOR.compare(a[0], b[0])).map(([v, ks]) => `<tr><td><b>${esc(v)}</b></td><td>${ks.sort(COLLATOR.compare).map(k => `<span class="chip-marca ok">${esc(k)} <button type="button" class="link" data-act="tirarDicMarca" data-k="${esc(k)}" title="Separar de novo">✕</button></span>`).join(' ')}</td></tr>`).join('')}</tbody>
+    </table></div>` : ''}
+    ${sug.length ? `<h3 style="margin-top:14px">Parecem a mesma marca <span class="badge">${sug.length}</span></h3>
+      <p class="muted small" style="margin-top:0">Encontradas nas respostas dos fornecedores. Confira e junte só as que forem mesmo iguais.</p>
+      <div class="dic-sug">${sug.map(x => `<div class="dic-sug-item"><span><b>${esc(x.curta)}</b> <span class="muted small">(${x.n}×)</span> → <b>${esc(nomeMarcaDic(x.longa))}</b> <span class="muted small">(${x.nLonga}×)</span></span>
+        <span><button type="button" class="sm primary" data-act="juntarDicMarca" data-k="${esc(x.curta)}" data-v="${esc(nomeMarcaDic(x.longa))}">Juntar</button> <button type="button" class="sm" data-act="naoDicMarca" data-k="${esc(x.curta)}" data-v="${esc(x.longa)}">Não é a mesma</button></span></div>`).join('')}</div>` : ''}
+  </section>`;
+}
+
 function renderMarcasCfg() {
   const eq = db.config.marcasEquivalentes || {};
   const dif = db.config.marcasDiferentes || {};
@@ -8496,7 +8654,7 @@ function renderConfig() {
     <div class="barra-salvar-cfg"${['loja', 'emails', 'marcas'].includes(aba) ? '' : ' hidden'}><span class="small muted">As mudanças das abas Loja, E-mails e Marcas são salvas juntas.</span><button class="primary">Salvar configurações</button></div>
   </form>
   <div data-aba-cfg="conta"${ver('conta')}>${renderConta()}</div>
-  <div data-aba-cfg="marcas"${ver('marcas')}>${renderMarcasCfg()}</div>
+  <div data-aba-cfg="marcas"${ver('marcas')}>${aba === 'marcas' ? renderDicionarioMarcas() : ''}${renderMarcasCfg()}</div>
   <div data-aba-cfg="controlados"${ver('controlados')}>${renderControladosCfg()}</div>
   <div data-aba-cfg="dados"${ver('dados')}>${aba === 'dados' ? renderIntegridadeCfg() : ''}</div>
   <section class="card" data-aba-cfg="backup"${ver('backup')}>
@@ -8733,7 +8891,7 @@ function render() {
   if (rolagem) voltarRolagem(rolagem);
   if (foco) voltarFoco(foco);
   if (pip.win) desenharPip(false);
-  if (nome === 'cotacao') { ajustarColunasFixasDepois(); vigiarLarguraComp(); }
+  if (nome === 'cotacao') { ajustarColunasFixasDepois(); vigiarLarguraComp(); vigiarRodapeComp(); }
   if (nome === 'nova') setTimeout(avisarControladosNova, 50);
   anunciarPresenca();
   anotarUltimoLugar();
@@ -9600,6 +9758,41 @@ const acoes = {
     el.closest('tr').remove();
     toast('Loja removida. Clique em "Salvar configurações" para confirmar.');
   },
+  juntarDicMarca: el => {
+    const k = normMarcaBruta(el.dataset.k), v = String(el.dataset.v || '').trim().toUpperCase();
+    if (!k || !v || normMarcaBruta(v) === k) return;
+    db.config.dicionarioMarcas = { ...(db.config.dicionarioMarcas || {}), [k]: v };
+    salvar();
+    render();
+    toast(`${k} agora conta como ${v}.`);
+  },
+  naoDicMarca: el => {
+    db.config.dicionarioNao = [...new Set([...(db.config.dicionarioNao || []), `${el.dataset.k}|${el.dataset.v}`])];
+    salvar();
+    render();
+  },
+  tirarDicMarca: el => {
+    const d = { ...(db.config.dicionarioMarcas || {}) };
+    delete d[el.dataset.k];
+    db.config.dicionarioMarcas = d;
+    salvar();
+    render();
+  },
+  irDicionarioMarcas: () => { ui.abaConfig = 'marcas'; try { localStorage.setItem('cotacao.abaConfig', 'marcas'); } catch (e) { /* sem acesso */ } ir('config'); setTimeout(() => document.getElementById('dicMarcas')?.scrollIntoView({ block: 'start' }), 50); },
+  irSemQtd: () => {
+    const c = cotAtual();
+    if (!c) return;
+    const LJ = lojas();
+    const comp = comparar(c);
+    const linhas = [...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]:not([hidden])')].map(tr => +tr.dataset.compLinha);
+    const atual = ui.linhaComp?.cotId === c.id ? ui.linhaComp.i : -1;
+    const falta = linhas.filter(i => { const l = comp.linhas[i]; return l.preco != null && !l.comprado && !l.duvida && !LJ.some(lj => c.qtds?.[i]?.[lj.id] != null && c.qtds[i][lj.id] !== ''); });
+    const i = falta.find(x => x > atual) ?? falta[0];
+    if (i == null) return;
+    const inp = document.querySelector(`.tab-comp tr[data-comp-linha="${i}"] input[data-qtd-loja]`);
+    inp?.scrollIntoView({ block: 'center' });
+    inp?.focus();
+  },
   esquecerMarca: el => {
     const mapa = el.dataset.tipo === 'eq' ? 'marcasEquivalentes' : 'marcasDiferentes';
     const m = { ...(db.config[mapa] || {}) };
@@ -10215,6 +10408,21 @@ const formularios = {
     toast(`Preços de ${f.nome} salvos.`);
   },
 
+  dicMarca: form => {
+    const d = formDados(form);
+    const v = String(d.marca || '').trim().toUpperCase();
+    const formas = String(d.formas || '').split(/[,;]+/).map(normMarcaBruta).filter(k => k && k !== normMarcaBruta(v));
+    if (!v || !formas.length) return avisar('Informe a marca certa e pelo menos uma outra forma de escrever.');
+    const dic = { ...(db.config.dicionarioMarcas || {}) };
+    for (const k of formas) dic[k] = v;
+    // quem apontava para uma das formas passa a apontar para a marca certa
+    for (const [k, alvo] of Object.entries(dic)) if (formas.includes(normMarcaBruta(alvo))) dic[k] = v;
+    db.config.dicionarioMarcas = dic;
+    form.reset();
+    salvar();
+    render();
+    toast(`${formas.join(', ')} agora conta(m) como ${v}.`);
+  },
   equivMarca: form => {
     const d = formDados(form);
     const op = normMarca(d.marca);
@@ -11413,7 +11621,7 @@ function desenharPip(focar) {
       <div class="pip-col-qtd">
         <div class="pip-qtds">${LJ.map(lj => {
           const v = c.qtds?.[l.i]?.[lj.id];
-          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span class="pip-loja-nome">${esc(lj.nome)}</span><span class="pip-loja-sigla">${esc(siglaLoja(lj))}</span><span class="pip-campo-qtd"><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder="0"><small class="pip-sub" data-sub-loja="${esc(lj.id)}">${subLojaPip(c, l, lj)}</small></span></label>`;
+          return `<label title="Quantidade ${esc(lj.nome)} · Enter/↓ próximo · ↑ anterior · ←→ ou Tab troca a loja"><span class="pip-loja-nome">${esc(lj.nome)}</span><span class="pip-loja-sigla">${esc(siglaLoja(lj))}</span><span class="pip-campo-qtd"><input class="qtd-loja${v > 0 ? ' preenchida' : v === 0 ? ' zerada' : ''}${ui.alertaEstoque?.it === l.it && ui.alertaEstoque.loja === lj.id ? ' no-limite' : ''}" inputmode="numeric" autocomplete="off" data-qtd-loja="${esc(lj.id)}" data-i="${l.i}" value="${v ?? ''}"${cotTravada(c) ? ' readonly' : ''} placeholder=""><small class="pip-sub" data-sub-loja="${esc(lj.id)}">${subLojaPip(c, l, lj)}</small></span></label>`;
         }).join('')}<div id="pipEstoque">${estoquePip(c, l)}</div></div>
         <div class="pip-total" id="pipTotal">${celTotal(l)}</div>
       </div>
