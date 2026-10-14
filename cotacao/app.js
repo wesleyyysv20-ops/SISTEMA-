@@ -308,17 +308,22 @@ function mesclarValor(base, local, remoto) {
   if (Array.isArray(local) && Array.isArray(remoto)) {
     // listas de registros com identificação (dúvidas, fornecedores da cotação…): junta registro a registro
     const todos = [...local, ...remoto];
-    const chave = ['id', 'fornecedorId'].find(k => todos.every(x => ehObjeto(x) && x[k] != null));
-    if (chave) return mesclarLista(Array.isArray(base) ? base : [], local, remoto, chave);
+    const campo = ['id', 'fornecedorId'].find(k => todos.every(x => ehObjeto(x) && x[k] != null));
+    // itens da nova cotação: produto + código do arquivo (só se não houver repetidos, para não perder nenhum)
+    const chave = campo ? (x => x[campo])
+      : todos.every(x => ehObjeto(x) && x.produtoId != null) ? (x => `${x.produtoId}|${chaveCodigo(x.codigoArquivo || '')}`) : null;
+    const unica = l => new Set(l.map(chave)).size === l.length;
+    if (chave && unica(local) && unica(remoto)) return mesclarLista(Array.isArray(base) ? base.filter(ehObjeto) : [], local, remoto, chave);
   }
   return local;
 }
 
 function mesclarLista(base, local, remoto, chave) {
-  const mapa = l => new Map(l.filter(ehObjeto).map(x => [x[chave], x]));
+  const k = typeof chave === 'function' ? chave : x => x[chave];
+  const mapa = l => new Map(l.filter(ehObjeto).map(x => [k(x), x]));
   const B = mapa(base), L = mapa(local), R = mapa(remoto);
   // ordem deste navegador; o que só existe do outro lado entra no fim
-  const ids = [...new Set([...local.map(x => x[chave]), ...remoto.map(x => x[chave]).filter(id => !L.has(id))])];
+  const ids = [...new Set([...local.map(k), ...remoto.map(k).filter(id => !L.has(id))])];
   const saida = [];
   for (const id of ids) {
     const v = mesclarValor(B.get(id), L.get(id), R.get(id));
@@ -3039,7 +3044,7 @@ async function avisarControladosNova() {
   const r2 = await dialogoControlados(novos, prod);
   avisandoControlados = false;
   if (r2) {
-    if (r2.saem.length) r.itens = r.itens.filter(x => !r2.saem.includes(x));
+    if (r2.saem.length) { const sai = new Set(r2.saem.map(chaveItemRasc)); const atual = rascunho(); atual.itens = atual.itens.filter(x => !sai.has(chaveItemRasc(x))); }
     if (r2.vao.length) { autorizarItensControlados(r2.vao); } else { salvar(); render(); }
     toast([r2.vao.length && `${r2.vao.length} autorizado(s): vão para a cotação`, r2.saem.length && `${r2.saem.length} tirado(s) da cotação`].filter(Boolean).join(' · '), 5000);
   } else { render(); setTimeout(avisarControladosNova, 50); } // decidir depois: ficam bloqueados (pode ter entrado outro enquanto a janela estava aberta)
@@ -3107,7 +3112,8 @@ function dialogoControlados(itens, prod) {
 function autorizarItensControlados(itens) {
   if (!ehAdmin()) return avisar('Só um administrador pode autorizar item controlado.');
   const quem = { por: nuvem.usuario || 'administrador', em: new Date().toISOString() };
-  itens.forEach(x => { x.autorizado = quem; });
+  const chaves = new Set(itens.map(chaveItemRasc));
+  for (const x of rascunho().itens) if (chaves.has(chaveItemRasc(x))) x.autorizado = quem;
   salvar();
   render();
   toast(`${itens.length} item(ns) controlado(s) autorizado(s).`);
@@ -6362,8 +6368,7 @@ function secaoPedidos(c, comp) {
   const temFrete = an.lista.some(x => x.r.frete || x.r.minimo);
   const totLoja = (p, lj) => p.itens.reduce((s, x) => s + x.preco * (x.qtds[lj.id] || 0), 0);
   const itensLoja = (p, lj) => p.itens.filter(x => x.qtds[lj.id] > 0).length;
-  return `
-  <section class="card" id="secPedidos">
+  return `<section class="card" id="secPedidos">
     <div class="row-between">
       <h3>Pedidos de compra</h3>
       <div class="row">
@@ -9158,7 +9163,17 @@ function abrirMenuMais() {
   document.body.appendChild(fundo);
 }
 
+/**
+ * Redesenhar com o botão do mouse apertado troca o botão que está sendo clicado e o clique se perde
+ * (o "precisa clicar duas vezes"). Então o redesenho espera: roda logo depois que o clique acontecer.
+ */
+let renderAdiado = false;
+document.addEventListener('pointerup', () => { if (renderAdiado) setTimeout(() => { if (renderAdiado) render(); }, 0); }, true);
+document.addEventListener('pointercancel', () => { if (renderAdiado) setTimeout(() => { if (renderAdiado) render(); }, 0); }, true);
+
 function render() {
+  if (ponteiroApertado) { renderAdiado = true; return; }
+  renderAdiado = false;
   const { nome, id } = rota();
   const app = $('#app');
   // redesenhar a mesma tela (ex.: escolher o preço de outra empresa) não pode jogar a rolagem para o começo
@@ -11042,7 +11057,14 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('pointerup', e => {
   const a = botaoApertado;
   botaoApertado = null;
-  if (!a || a.b.isConnected) return; // o clique normal acontece
+  if (!a) return;
+  const dentro = r => r && e.clientX >= r.left - 2 && e.clientX <= r.right + 2 && e.clientY >= r.top - 2 && e.clientY <= r.bottom + 2;
+  if (a.b.isConnected) {
+    // o mesmo botão, mas a tela andou no meio do clique (um aviso cresceu e empurrou as linhas): soltou onde ele
+    // estava ao apertar, e não está mais em cima dele → o clique é dele
+    if (!dentro(a.b.getBoundingClientRect()) && dentro(a.r)) a.b.click();
+    return; // senão o clique normal acontece
+  }
   // o mesmo botão pode existir em dois lugares (ex.: painel de repetidos e a lista): fica com o do mesmo lugar
   const doPainel = !!a.b.closest('.painel-dup');
   const candidatos = [...document.querySelectorAll(a.sel)];
@@ -11260,19 +11282,28 @@ function aplicarFiltroItens() {
   if (v.length && !v.includes(ui.cursorItem)) moverCursorItem(v[0], false);
 }
 
+/** Identidade de um item da nova cotação: o produto e o código do arquivo (dois códigos compostos do mesmo produto são itens diferentes). */
+const chaveItemRasc = x => `${x?.produtoId || ''}|${chaveCodigo(x?.codigoArquivo || '')}`;
+/** Posição atual do item na lista (a lista pode ter sido trocada pela gravação de um colega enquanto uma janela estava aberta). */
+function posItemRasc(chave) {
+  return rascunho().itens.findIndex(y => chaveItemRasc(y) === chave);
+}
+
 /** Tira um item da cotação depois de confirmar (o produto continua no cadastro). */
 async function perguntarRemoverItem(i, focar = true, doPainel = false) {
-  const r = rascunho();
-  const x = r.itens[i];
+  const x = rascunho().itens[i];
   if (!x) return;
+  const chave = chaveItemRasc(x);
   const p = db.produtos.find(y => y.id === x.produtoId);
   const nome = `${x.codigoArquivo || p?.codigo || ''}${p ? ' · ' + p.descricao : ''}`;
   if (!(await confirmar(`Tirar este item da cotação?\n\n${nome}\n\nO produto continua no cadastro.`, 'Tirar da cotação'))) {
     if (focar) moverCursorItem(i);
     return;
   }
-  const pos = r.itens.indexOf(x);
-  if (pos < 0) return;
+  // a lista pode ter chegado de novo da nuvem enquanto a pergunta estava aberta: acha o item de novo
+  const r = rascunho();
+  const pos = posItemRasc(chave);
+  if (pos < 0) { render(); toast(`${nome} já tinha saído da lista (outra pessoa tirou).`, 5000); return; }
   r.itens.splice(pos, 1);
   salvar();
   if (doPainel) {
@@ -11526,6 +11557,14 @@ async function abrirPip() {
     t.select();
     pip.loja = Math.max(0, lojas().findIndex(lj => lj.id === t.dataset.qtdLoja));
   });
+  // redesenhar a janela com o mouse apertado faria o clique se perder: espera soltar (como na tela principal)
+  const soltar = () => {
+    pip.apertado = false;
+    if (pip.desenharAdiado) setTimeout(() => { const f = pip.desenharAdiado; if (!f) return; pip.desenharAdiado = null; desenharPip(f === 'focar'); }, 0);
+  };
+  d.addEventListener('pointerdown', () => { pip.apertado = true; }, true);
+  d.addEventListener('pointerup', soltar, true);
+  d.addEventListener('pointercancel', soltar, true);
   d.addEventListener('click', e => {
     const b = e.target.closest('[data-pip]');
     if (!b) return;
@@ -11884,6 +11923,8 @@ function ultimoPrecoPip(c, it) {
 /** Desenha a janela flutuante. `focar`: põe o cursor na quantidade (senão só mantém onde estava). */
 function desenharPip(focar) {
   if (!pip.win || pip.win.closed) { pip.win = null; return; }
+  if (pip.apertado) { pip.desenharAdiado = focar || pip.desenharAdiado === 'focar' ? 'focar' : 'nao'; return; }
+  pip.desenharAdiado = null;
   const d = pip.win.document;
   const raiz = d.getElementById('pip');
   if (!raiz) return;
