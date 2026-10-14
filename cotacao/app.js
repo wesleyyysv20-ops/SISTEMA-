@@ -6596,6 +6596,31 @@ function mostrarHistoricoCot(c) {
   fundo.querySelector('[data-fechar]').focus();
 }
 
+/* ---------------- quem escolheu o fornecedor de cada item ---------------- */
+const meuNomeEscolha = () => (typeof nuvem !== 'undefined' && (nuvem.nome || nuvem.usuario)) || '';
+/** Guarda quem escolheu (c.escolhidoPor[i] = { f, por, em }); vale enquanto a escolha do item for esse fornecedor. */
+function marcarEscolhidoPor(c, i, fornecedorId) {
+  c.escolhidoPor = { ...(c.escolhidoPor || {}), [i]: { f: fornecedorId, por: meuNomeEscolha(), em: new Date().toISOString() } };
+}
+/** Primeiro nome ("sandro@disppar.com" ou "SANDRO SILVA" → "Sandro"). */
+function nomeCurtoPessoa(v) {
+  const p = String(v || '').split('@')[0].trim().split(/[\s._-]+/)[0] || '';
+  return p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : '';
+}
+/** Quem escolheu o fornecedor do item: "você", o nome do colega, ou null (escolha antiga, sem registro). */
+function quemEscolheu(c, i) {
+  const x = c.escolhidoPor?.[i];
+  if (!x || x.f !== c.escolhas?.[i]) return null;
+  const eu = meuNomeEscolha();
+  if (!x.por || (eu && x.por === eu)) return 'você';
+  return nomeCurtoPessoa(x.por) || null;
+}
+function tituloEscolha(c, i) {
+  const x = c.escolhidoPor?.[i];
+  if (!x || x.f !== c.escolhas?.[i]) return 'Escolhido na mão (clique no preço dele para voltar ao menor preço)';
+  return `Escolhido por ${quemEscolheu(c, i)} em ${new Date(x.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`;
+}
+
 /** Status da cotação em três botões (troca com confirmação). */
 function seletorStatusCot(c) {
   const [t, cls] = STATUS[c.status] || STATUS.aberta;
@@ -6974,7 +6999,7 @@ function renderCotacao(id) {
             if (demora) { qtdDemora++; avisosLinha.add('demora'); }
             const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? (l.permitidas[j] ? 'marca-permitida' : 'marca-errada') : '', p != null && filtroMarcaComp(c) && normMarca(o?.marca) === filtroMarcaComp(c) ? 'marca-filtrada' : '', l.recusas[j] && p != null ? (j === l.vencedor ? 'recusada-venc' : 'recusada') : ''].filter(Boolean).join(' ');
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ' <span class="tag-escolha">escolhido</span>' : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${p != null && l.campanhas[j] ? '<br>' + chipCampanha(l.campanhas[j]) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
+            return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ` <span class="tag-escolha" title="${esc(tituloEscolha(c, l.i))}">escolhido${quemEscolheu(c, l.i) && quemEscolheu(c, l.i) !== 'você' ? ` · ${esc(quemEscolheu(c, l.i))}` : ''}</span>` : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${p != null && l.campanhas[j] ? '<br>' + chipCampanha(l.campanhas[j]) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
           }).join('');
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
@@ -8570,7 +8595,7 @@ function cadastroProprio(cod, base, desc, extra = {}) {
 }
 
 /** Campos da cotação guardados por número do item (c.campo[i]). */
-const CAMPOS_POR_ITEM = ['qtds', 'escolhas', 'divisoes', 'comprados', 'recusadas', 'permitidas', 'difConferida'];
+const CAMPOS_POR_ITEM = ['qtds', 'escolhas', 'escolhidoPor', 'divisoes', 'comprados', 'recusadas', 'permitidas', 'difConferida'];
 const descPlaceholder = it => !String(it.descricao || '').trim() || chaveCodigo(it.descricao) === chaveCodigo(it.codigo || '');
 
 /**
@@ -9859,7 +9884,7 @@ const acoes = {
     const f = c.fornecedores[fi];
     if (!(await confirmar(`Passar ${sim.moves.length} item(ns) de ${f.nome} para o 2º colocado?\n\n${sim.moves.map(m => `• ${m.l.it.descricao}: ${fmtMoeda(m.l.preco)} → ${c.fornecedores[m.j].nome} ${fmtMoeda(m.preco)}`).join('\n')}\n\nDiferença total (itens + frete): ${sim.saldo >= 0 ? '+' : '−'}${fmtMoeda(Math.abs(sim.saldo))}. Dá para desfazer clicando nos preços ou em "Desfazer as escolhas".`, 'Passar os itens'))) return;
     c.escolhas = { ...(c.escolhas || {}) };
-    for (const m of sim.moves) c.escolhas[m.l.i] = c.fornecedores[m.j].fornecedorId;
+    for (const m of sim.moves) { c.escolhas[m.l.i] = c.fornecedores[m.j].fornecedorId; marcarEscolhidoPor(c, m.l.i, c.escolhas[m.l.i]); }
     salvar();
     render();
     toast(`${sim.moves.length} item(ns) passados para o 2º colocado.`);
@@ -11296,6 +11321,7 @@ async function escolherVencedorItem(c, i, fi, doc = document) {
     const menor = l.minIdx >= 0 && l.minIdx !== fi && l.min > 0 ? `\nMenor preço: ${nome(l.minIdx)} ${fmtMoeda(l.min)} (${f.nome} está +${fmtPct(p / l.min - 1)}).` : '';
     if (!(await confirmar(`${titulo}\n\nComprar este item de ${f.nome} por ${fmtMoeda(p)}?${atual}${menor}`, `Escolher ${f.nome}`, doc))) return;
     c.escolhas = { ...(c.escolhas || {}), [i]: f.fornecedorId };
+    marcarEscolhidoPor(c, i, f.fornecedorId);
   }
   salvar();
   render();
@@ -11758,7 +11784,7 @@ function desenharPip(focar) {
         ${f ? (() => {
           const tags = [
             l.recusadaGanhou ? '<span class="pip-tag recusada">⚠ marca recusada</span>' : '',
-            l.manual ? '<span class="pip-tag">escolhido por você</span>' : '',
+            l.manual ? `<span class="pip-tag${quemEscolheu(c, l.i) === 'você' ? '' : ' outro'}" title="${esc(tituloEscolha(c, l.i))}">escolhido ${quemEscolheu(c, l.i) ? `por ${esc(quemEscolheu(c, l.i))}` : 'manualmente'}</span>` : '',
             l.comprado ? '<span class="pip-tag comprado">✓ já comprado</span>' : '',
             l.campanhas[l.vencedor] ? `<span class="pip-tag campanha">🏷️ campanha ${esc(l.campanhas[l.vencedor].marca)}</span>` : '',
             l.preferencia ? `<span class="pip-tag regra">⭐ regra 5% (+${fmtPct(l.preco / l.min - 1)})</span>` : '',

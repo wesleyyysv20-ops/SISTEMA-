@@ -2554,6 +2554,8 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 .tab-comp td.col-escolhido .esc-acoes:empty { display: none; }
 .tab-comp td.col-escolhido .esc-acoes > button { padding: 0 3px; text-decoration: none; }
 .tab-comp td.col-escolhido .esc-acoes .btn-comprado.ativo { color: var(--ok); font-weight: 800; }
+/* celular/tablet (toque): ícones de ação com área mínima de 28px para o dedo acertar (WCAG 2.5.8) */
+@media (pointer: coarse) { .tab-comp td.col-escolhido .esc-acoes > button { min-width: 28px; min-height: 28px; } .tab-comp td.col-escolhido .esc-acoes { gap: 4px; } }
 
 /* ===== cabeçalho da cotação: alinhado e sem número que engana ===== */
 .rc-kpi.espera b { color: var(--muted); }
@@ -2598,3 +2600,6 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 .pip-ultimo { margin-top: 2px; font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pip-ultimo .var-ult { font-size: var(--fs-sm); }
 .pip-ultimo small { font-size: var(--fs-xs); }
+
+/* escolhido por um colega: destaca o nome */
+.pip-tag.outro { background: var(--warn-bg); color: var(--warn); font-weight: 700; }
