@@ -6600,7 +6600,7 @@ function renderCotacao(id) {
           <thead><tr><th class="c">#</th><th>Código</th><th>Marca pedida</th><th>Descrição</th><th class="r">Qtd.</th><th class="r">Preço unit. (R$)</th><th>Marca</th><th>Prazo</th><th>Observação</th></tr></thead>
           <tbody>${c.itens.map((it, i) => {
             const rr = f.respostas?.[i] || {};
-            return `<tr>
+            return `<tr data-dig="${i}"${ui.digitando.sel === i ? ' class="linha-dig-sel"' : ''}>
               <td class="c">${i + 1}</td>
               <td class="cod-digitar">${esc(it.codigo || '—')}</td>
               <td>${it.marca ? `<span class="marca-pedida">${esc(it.marca)}</span>` : '<span class="muted">—</span>'}</td>
@@ -6613,12 +6613,12 @@ function renderCotacao(id) {
             </tr>`;
           }).join('')}</tbody>
         </table></div>
-        <p class="small muted" style="margin:8px 0 0">⌨ <kbd>↑</kbd> <kbd>↓</kbd> ou <kbd>Enter</kbd> mudam de item · <kbd>←</kbd> <kbd>→</kbd> no começo/fim do campo mudam de coluna.</p>
+        <p class="small muted" style="margin:8px 0 0">⌨ Clique num item e use <kbd>↑</kbd> <kbd>↓</kbd> para andar pela lista · digite o valor (vai direto para o <b>Preço unit.</b>) · <kbd>Enter</kbd> salva o item e passa para o próximo · <kbd>Esc</kbd> volta para a lista · <kbd>←</kbd> <kbd>→</kbd> no começo/fim do campo mudam de coluna · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> salva tudo e fecha.</p>
         <div class="grid" style="margin-top:12px">
           ${COND_CAMPOS.map(([k, label]) => `<label>${label}<input name="c_${k}" value="${esc(val(`c_${k}`, f.cond?.[k]))}"></label>`).join('')}
         </div>
         <div class="actions">
-          <button type="button" data-act="fecharDigitar">Cancelar</button>
+          <button type="button" data-act="fecharDigitar">${ui.digitando.salvouLinha ? 'Fechar' : 'Cancelar'}</button>
           <button class="primary">Salvar preços</button>
         </div>
       </form>
@@ -11507,32 +11507,134 @@ document.addEventListener('keydown', e => {
   teclaItens({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey, target: tab, preventDefault: () => e.preventDefault() });
 });
 
-/* Digitar preços: setas e Enter andam pela tabela (Enter não salva o formulário no meio da digitação). */
-document.addEventListener('keydown', e => {
-  const t = e.target;
-  const m = t.name?.match?.(/^([pmzo])_(\d+)$/);
-  if (!m || !t.closest('#painelDigitar') || e.ctrlKey || e.altKey || e.metaKey) return;
-  const cols = ['p', 'm', 'z', 'o'];
-  const col = m[1], i = +m[2];
-  const form = t.form;
-  const campo = (c, k) => form.querySelector(`[name="${c}_${k}"]`);
-  let alvo = null;
-  if (e.key === 'ArrowDown' || e.key === 'Enter') alvo = campo(col, i + 1) || (e.key === 'Enter' ? form.querySelector('button.primary') : null);
-  else if (e.key === 'ArrowUp') alvo = campo(col, i - 1);
-  else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-    const noInicio = t.selectionStart === 0 && t.selectionEnd === 0;
-    const noFim = t.selectionStart === t.value.length && t.selectionEnd === t.value.length;
-    const tudo = t.selectionStart === 0 && t.selectionEnd === t.value.length && t.value.length > 0;
-    if (e.key === 'ArrowLeft' && (noInicio || tudo)) alvo = campo(cols[cols.indexOf(col) - 1], i);
-    if (e.key === 'ArrowRight' && (noFim || tudo)) alvo = campo(cols[cols.indexOf(col) + 1], i);
-  }
-  if (e.key === 'Enter') e.preventDefault();
-  if (!alvo) return;
-  e.preventDefault();
-  alvo.focus();
-  if (alvo.select) alvo.select();
-  alvo.scrollIntoView({ block: 'nearest' });
+/**
+ * Digitar preços: salva um item só (Enter), sem fechar o painel. A mesma regra do "Salvar preços":
+ * preço vazio ou 0 tira a resposta; marca trocada aqui vale a digitada; preço corrigido aceita a diferença.
+ */
+function salvarLinhaDigitar(form, i) {
+  const c = cotAtual();
+  const f = c?.fornecedores[+form.dataset.f];
+  if (!f || !c.itens[i]) return false;
+  const v = k => form.querySelector(`[name="${k}_${i}"]`)?.value ?? '';
+  const txt = v('p').trim();
+  const preco = parseNum(txt);
+  if (txt && preco == null) { toast(`Preço inválido no item ${i + 1}: use números, ex.: 12,50`, 5000); return false; }
+  const ant = f.respostas?.[i] || {};
+  const resp = { ...(f.respostas || {}) };
+  if (preco != null && preco > 0) {
+    const marca = v('m').trim();
+    const r = { ...ant, preco, prazo: v('z'), obs: v('o') };
+    if (marca !== (ant.marca || '')) { r.marca = marca; delete r.marcaOriginal; delete r.estoque; }
+    resp[i] = r;
+  } else delete resp[i];
+  f.respostas = resp;
+  if (ant.preco > 0 && Math.round(ant.preco * 100) !== Math.round((resp[i]?.preco || 0) * 100)) aceitarDifCorrigida(c, i);
+  f.respondidoEm = Object.keys(resp).length ? f.respondidoEm || new Date().toISOString() : null;
+  ajustarKaizen(c); // Kaizen: "NGK/685" = marca NGK e estoque 685
+  for (const k of 'pmzo') delete ui.digitando?.rasc?.[`${k}_${i}`];
+  if (ui.digitando) ui.digitando.salvouLinha = true;
+  salvar();
+  // mostra como ficou salvo
+  const r = f.respostas[i];
+  const campo = k => form.querySelector(`[name="${k}_${i}"]`);
+  if (campo('p')) campo('p').value = r ? r.preco.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '';
+  if (campo('m')) campo('m').value = r?.marca || '';
+  const tr = form.querySelector(`tr[data-dig="${i}"]`);
+  if (tr) { tr.classList.remove('linha-dig-salva'); void tr.offsetWidth; tr.classList.add('linha-dig-salva'); }
+  const fechar = form.querySelector('[data-act=fecharDigitar]');
+  if (fechar) fechar.textContent = 'Fechar';
+  return true;
+}
+
+/** Linha marcada no Digitar preços (as setas andam por ela; o que for digitado vai para o preço dela). */
+function selecionarLinhaDigitar(i, rolar = true) {
+  const painel = document.getElementById('painelDigitar');
+  const tr = painel?.querySelector(`tr[data-dig="${i}"]`);
+  if (!tr || !ui.digitando) return;
+  painel.querySelectorAll('tr.linha-dig-sel').forEach(x => x.classList.remove('linha-dig-sel'));
+  tr.classList.add('linha-dig-sel');
+  ui.digitando.sel = i;
+  if (rolar) tr.scrollIntoView({ block: 'nearest' });
+}
+
+document.addEventListener('click', e => {
+  const tr = e.target.closest?.('#painelDigitar tr[data-dig]');
+  if (!tr) return;
+  selecionarLinhaDigitar(+tr.dataset.dig, false);
+  if (!e.target.closest('input, button, a')) document.activeElement?.blur?.(); // modo lista: as setas andam pelos itens
 });
+document.addEventListener('focusin', e => {
+  const m = e.target.name?.match?.(/^[pmzo]_(\d+)$/);
+  if (m && e.target.closest('#painelDigitar')) selecionarLinhaDigitar(+m[1], false);
+});
+
+/* Digitar preços pelo teclado (antes dos atalhos da tela da cotação). */
+document.addEventListener('keydown', e => {
+  const painel = document.getElementById('painelDigitar');
+  if (!painel || !ui.digitando || e.altKey || e.metaKey) return;
+  const t = e.target;
+  const form = painel.querySelector('form[data-form=precosManuais]');
+  const campo = (c, k) => form.querySelector(`[name="${c}_${k}"]`);
+  const ir = el => { if (!el) return; el.focus(); if (el.select) el.select(); el.scrollIntoView({ block: 'nearest' }); };
+  const m = t.name?.match?.(/^([pmzo])_(\d+)$/);
+  if (m && t.closest('#painelDigitar')) {
+    const cols = ['p', 'm', 'z', 'o'];
+    const col = m[1], i = +m[2];
+    let alvo = null;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.ctrlKey) { form.requestSubmit(); return; }
+      if (!salvarLinhaDigitar(form, i)) return;
+      // salvo: volta para a lista, já no próximo item
+      t.blur();
+      selecionarLinhaDigitar(campo('p', i + 1) ? i + 1 : i);
+      return;
+    }
+    if (e.ctrlKey) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); t.blur(); selecionarLinhaDigitar(i); return; }
+    if (e.key === 'ArrowDown') alvo = campo(col, i + 1);
+    else if (e.key === 'ArrowUp') alvo = campo(col, i - 1);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const noInicio = t.selectionStart === 0 && t.selectionEnd === 0;
+      const noFim = t.selectionStart === t.value.length && t.selectionEnd === t.value.length;
+      const tudo = t.selectionStart === 0 && t.selectionEnd === t.value.length && t.value.length > 0;
+      if (e.key === 'ArrowLeft' && (noInicio || tudo)) alvo = campo(cols[cols.indexOf(col) - 1], i);
+      if (e.key === 'ArrowRight' && (noFim || tudo)) alvo = campo(cols[cols.indexOf(col) + 1], i);
+    }
+    if (!alvo) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    ir(alvo);
+    return;
+  }
+  // modo lista: nenhum campo com o cursor e um item marcado
+  if (t.closest?.('input, textarea, select, button, a, [contenteditable], .dlg-fundo') || document.querySelector('.dlg-fundo')) return;
+  const sel = ui.digitando.sel;
+  if (sel == null || !campo('p', sel)) return;
+  const pare = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    pare();
+    const prox = sel + (e.key === 'ArrowDown' ? 1 : -1);
+    if (campo('p', prox)) selecionarLinhaDigitar(prox);
+  } else if (e.key === 'Enter' || e.key === 'F2') {
+    pare();
+    if (e.ctrlKey) { form.requestSubmit(); return; }
+    ir(campo('p', sel));
+  } else if (e.key === 'Escape') {
+    pare();
+    painel.querySelectorAll('tr.linha-dig-sel').forEach(x => x.classList.remove('linha-dig-sel'));
+    ui.digitando.sel = null;
+  } else if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey) {
+    // digitou: o valor vai para o Preço unit. do item marcado
+    pare();
+    const inp = campo('p', sel);
+    inp.focus();
+    inp.value = e.key;
+    inp.setSelectionRange(1, 1);
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}, true);
 
 /** Campo de quantidade para onde vai o teclado: o último usado, senão o da linha marcada, senão o 1º item mostrado. */
 function campoQtdAtual() {

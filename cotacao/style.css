@@ -2498,3 +2498,11 @@ td input.qtd-loja { height: var(--campo-h-xs); }
 .integ-erro { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: var(--danger-bg); }
 .integ-aviso { border-color: color-mix(in srgb, var(--warn, #b7791f) 45%, var(--line)); }
 .aviso-integ { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+
+/* digitar preços: item marcado (setas) e item salvo (Enter) */
+#painelDigitar tr[data-dig] { cursor: pointer; }
+#painelDigitar tr.linha-dig-sel > td { background: color-mix(in srgb, var(--accent, #2f5bd3) 10%, transparent); }
+#painelDigitar tr.linha-dig-sel > td:first-child { box-shadow: inset 4px 0 0 var(--accent, #2f5bd3); font-weight: 800; }
+#painelDigitar tr.linha-dig-salva > td { animation: dig-salva 1.4s ease-out; }
+#painelDigitar tr.linha-dig-salva > td:first-child::after { content: ' ✓'; color: var(--ok); font-weight: 800; }
+@keyframes dig-salva { from { background: var(--ok-bg); } }
