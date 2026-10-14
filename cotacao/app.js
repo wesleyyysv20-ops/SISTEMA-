@@ -1663,8 +1663,10 @@ function pedirValor(msg, { valor = '', opcoes = [], tipo = 'texto', ok = 'OK', d
   });
 }
 
+/** Confirmação: o botão diz a ação ("Excluir cotação", não "OK"); o que apaga ou tira fica em vermelho. */
 function confirmar(msg, ok = 'Confirmar', doc = document) {
-  return abrirDialogo(msg, [{ txt: 'Cancelar', valor: false }, { txt: ok, valor: true, cls: 'primary' }], doc);
+  const destrutiva = /^(Excluir|Remover|Apagar|Limpar|Tirar|Substituir|Cancelar a)/i.test(ok);
+  return abrirDialogo(msg, [{ txt: 'Cancelar', valor: false }, { txt: ok, valor: true, cls: destrutiva ? 'primary danger' : 'primary' }], doc);
 }
 
 function avisar(msg, doc = document) {
@@ -2765,7 +2767,7 @@ async function importarRespostaArquivo(file, cotId, fiSugerido) {
       const dona = db.cotacoes.find(x => x.id === meta.cotId);
       if (!dona) throw new Error(`Esta planilha é da cotação nº ${meta.numero}, que não existe mais neste sistema.`);
       if (c && dona.id !== c.id) {
-        if (!(await confirmar(`Esta planilha pertence à cotação nº ${dona.numero}, não à nº ${c.numero}. Importar na cotação nº ${dona.numero}?`))) return;
+        if (!(await confirmar(`Esta planilha pertence à cotação nº ${dona.numero}, não à nº ${c.numero}. Importar na cotação nº ${dona.numero}?`, `Importar na nº ${dona.numero}`))) return;
       }
       c = dona;
     }
@@ -2784,7 +2786,7 @@ async function importarRespostaArquivo(file, cotId, fiSugerido) {
     if (meta) {
       const idx = c.fornecedores.findIndex(f => f.fornecedorId === meta.fornecedorId);
       if (idx >= 0 && fi != null && idx !== fi) {
-        if (!(await confirmar(`Esta planilha foi gerada para "${c.fornecedores[idx].nome}". Importar os preços para "${c.fornecedores[idx].nome}"?`))) return;
+        if (!(await confirmar(`Esta planilha foi gerada para "${c.fornecedores[idx].nome}". Importar os preços para "${c.fornecedores[idx].nome}"?`, 'Importar os preços'))) return;
       }
       if (idx >= 0) fi = idx;
     }
@@ -2806,7 +2808,7 @@ async function importarRespostaArquivo(file, cotId, fiSugerido) {
     if (fi == null || !c.fornecedores[fi]) throw new Error('Não consegui identificar o fornecedor. Abra a cotação e use o botão "Importar" na linha do fornecedor.');
 
     const f = c.fornecedores[fi];
-    if (Object.keys(f.respostas || {}).length && !(await confirmar(`${f.nome} já tem preços lançados. Substituir pelos da planilha?`))) return;
+    if (Object.keys(f.respostas || {}).length && !(await confirmar(`${f.nome} já tem preços lançados. Substituir pelos da planilha?`, 'Substituir os preços'))) return;
     const qtd = aplicarResposta(c, fi, ws, meta);
     return { cotacao: c, fornecedor: f.nome, qtd, ignorados: ignoradosNaImportacao };
   }
@@ -3555,7 +3557,7 @@ async function importarNFe(file, cotId, fiSugerido) {
 
   // 4. nota repetida
   const ja = (c.recebimentos || []).find(r => r.nf.chave && r.nf.chave === nf.chave);
-  if (ja && !(await confirmar(`A NF-e nº ${nf.numero} já foi conferida nesta cotação. Conferir de novo (substitui a anterior)?`))) return;
+  if (ja && !(await confirmar(`A NF-e nº ${nf.numero} já foi conferida nesta cotação. Conferir de novo (substitui a anterior)?`, 'Conferir de novo'))) return;
 
   const noPedido = new Set(itensPedido(c, fornCad.id, lojaId).map(p => p.i));
   const { itens, ...cab } = nf;
@@ -9563,7 +9565,7 @@ const acoes = {
     render();
   },
   limparRascunho: async () => {
-    if (!(await confirmar('Limpar todos os itens e fornecedores desta nova cotação?'))) return;
+    if (!(await confirmar('Limpar todos os itens e fornecedores desta nova cotação?', 'Limpar tudo'))) return;
     db.rascunho = null;
     salvar();
     render();
@@ -9739,7 +9741,7 @@ const acoes = {
   removerFornCot: async el => {
     const c = cotAtual();
     const f = c.fornecedores[+el.dataset.f];
-    if (!(await confirmar(`Remover ${f.nome} desta cotação? Os preços lançados dele serão perdidos.`))) return;
+    if (!(await confirmar(`Remover ${f.nome} desta cotação? Os preços lançados dele serão perdidos.`, 'Remover fornecedor'))) return;
     c.fornecedores.splice(+el.dataset.f, 1);
     ui.digitando = null;
     salvar();
@@ -9921,7 +9923,7 @@ const acoes = {
     const c = cotAtual();
     const forn = byId(db.fornecedores);
     const r = rascunho();
-    if (r.itens.length && !(await confirmar('Já existe uma nova cotação em andamento. Substituir pelos itens desta?'))) return;
+    if (r.itens.length && !(await confirmar('Já existe uma nova cotação em andamento. Substituir pelos itens desta?', 'Substituir'))) return;
     db.rascunho = {
       titulo: c.titulo,
       prazoResposta: '',
@@ -9937,7 +9939,7 @@ const acoes = {
 
   excluirCot: async () => {
     const c = cotAtual();
-    if (!(await confirmar(`Excluir a cotação nº ${c.numero}? Isso não pode ser desfeito.`))) return;
+    if (!(await confirmar(`Excluir a cotação nº ${c.numero}? Isso não pode ser desfeito.`, 'Excluir cotação'))) return;
     db.cotacoes = db.cotacoes.filter(x => x.id !== c.id);
     salvar();
     ir('cotacoes');
@@ -10046,7 +10048,7 @@ const acoes = {
     const p = db.produtos.find(x => x.id === el.dataset.id);
     const uso = usoDoProduto(p.id);
     if (uso) return avisar(`O produto ${p.codigo || ''} "${p.descricao}" não pode ser excluído agora: ${uso}.\n\nTire o item de lá primeiro (ou espere a cotação ser finalizada).`);
-    if (!(await confirmar(`Excluir o produto "${p.descricao}"? (As cotações antigas não são alteradas.)`))) return;
+    if (!(await confirmar(`Excluir o produto "${p.descricao}"? (As cotações antigas não são alteradas.)`, 'Excluir produto'))) return;
     db.produtos = db.produtos.filter(x => x.id !== p.id);
     salvar();
     render();
@@ -10072,7 +10074,7 @@ const acoes = {
   cancelarForn: () => { ui.editForn = null; render(); },
   excluirForn: async el => {
     const f = db.fornecedores.find(x => x.id === el.dataset.id);
-    if (!(await confirmar(`Excluir o fornecedor "${f.nome}"? (As cotações antigas não são alteradas.)`))) return;
+    if (!(await confirmar(`Excluir o fornecedor "${f.nome}"? (As cotações antigas não são alteradas.)`, 'Excluir fornecedor'))) return;
     db.fornecedores = db.fornecedores.filter(x => x.id !== f.id);
     salvar();
     render();
@@ -10488,7 +10490,7 @@ const formularios = {
     if (!d.marca) return avisar('Informe a marca exigida (ex.: QUALQUER, SÓ COFAP). Produto sem marca exigida não entra no banco.');
     d.unidade = (d.unidade || 'UN').toUpperCase();
     const dup = d.codigo && db.produtos.find(p => p.id !== ui.editProd && semAcento(p.codigo) === semAcento(d.codigo));
-    if (dup && !(await confirmar(`O código ${d.codigo} já é usado por "${dup.descricao}". Salvar mesmo assim?`))) return;
+    if (dup && !(await confirmar(`O código ${d.codigo} já é usado por "${dup.descricao}". Salvar mesmo assim?`, 'Salvar mesmo assim'))) return;
     if (ui.editProd) {
       const p = db.produtos.find(x => x.id === ui.editProd);
       const antes = { ...p };
@@ -10940,7 +10942,7 @@ document.addEventListener('click', e => {
   if (ACOES_TRAVADAS.has(el.dataset.act) && el.closest('#app') && cotTravada(cotAtual())) { avisarTravada(); return; }
   Promise.resolve(acoes[el.dataset.act](el, e)).catch(err => {
     console.error(err);
-    avisar('Ocorreu um erro: ' + err.message);
+    avisar(`Não deu certo: ${err.message}\n\nTente de novo. Se continuar, recarregue a página (F5) e avise com esta mensagem.`);
   });
 });
 
@@ -12346,7 +12348,7 @@ async function aoMudarCampo(e) {
       try {
         const dados = JSON.parse(await file.text());
         if (!dados || !Array.isArray(dados.produtos) || !dados.config) throw new Error('Arquivo não é um backup deste sistema.');
-        if (!(await confirmar(`Restaurar backup com ${dados.produtos.length} produtos, ${(dados.fornecedores || []).length} fornecedores e ${(dados.cotacoes || []).length} cotações? Os dados atuais serão substituídos.`))) return;
+        if (!(await confirmar(`Restaurar backup com ${dados.produtos.length} produtos, ${(dados.fornecedores || []).length} fornecedores e ${(dados.cotacoes || []).length} cotações? Os dados atuais serão substituídos.`, 'Restaurar backup'))) return;
         db = normalizar(dados);
         salvar();
         render();

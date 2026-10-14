@@ -2629,3 +2629,6 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 .status-cot .seta-status { font-size: 11px; }
 /* títulos dos cartões das Configurações iguais aos das outras telas */
 [data-aba-cfg] > h2, [data-aba-cfg] > section > h2, section.card[data-aba-cfg] > h2 { font-size: 16px; }
+/* confirmação de ação que apaga ou tira: botão principal em vermelho */
+button.primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; box-shadow: none; }
+button.primary.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 85%, #000); border-color: color-mix(in srgb, var(--danger) 85%, #000); color: #fff; }
