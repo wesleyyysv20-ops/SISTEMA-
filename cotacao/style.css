@@ -2550,3 +2550,26 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 .tab-comp td.col-escolhido .esc-acoes:empty { display: none; }
 .tab-comp td.col-escolhido .esc-acoes > button { padding: 0 3px; text-decoration: none; }
 .tab-comp td.col-escolhido .esc-acoes .btn-comprado.ativo { color: var(--ok); font-weight: 800; }
+
+/* ===== cabeçalho da cotação: alinhado e sem número que engana ===== */
+.rc-kpi.espera b { color: var(--muted); }
+.rc-kpi .rc-espera { font-size: var(--fs-md); font-weight: 700; }
+.rc-kpi.clicavel:not(.atencao):hover { background: color-mix(in srgb, var(--primary-2) 7%, var(--card)); border-color: color-mix(in srgb, var(--primary-2) 35%, var(--line)); }
+.aviso-prazo { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.aviso-prazo .ap-texto { flex: 1 1 360px; min-width: 0; }
+.aviso-prazo button { margin-left: 0; flex: none; }
+.aviso-prazo.vencido-poucos { background: var(--warn-bg); color: var(--warn); }
+.camp-fora:hover { filter: brightness(.95); text-decoration: underline; }
+.cab-cot-titulo .titulo-cot b { font-weight: 600; color: var(--muted); }
+.status-cot.menu-acoes-cot { border: 0; background: none; padding: 0; }
+.status-cot > summary.ativo { font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
+.status-cot > summary.st-blue { background: var(--blue-bg); color: var(--primary-2); border-color: color-mix(in srgb, var(--primary-2) 30%, var(--line)); }
+.status-cot > summary.st-ok { background: var(--ok-bg); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 30%, var(--line)); }
+.status-cot > summary.st-danger { background: var(--danger-bg); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); }
+.status-cot .seta-status { font-size: .8em; opacity: .7; }
+.status-cot .menu-pop { min-width: 210px; }
+.status-cot .menu-pop button.st-danger { color: var(--danger); }
+.status-cot .menu-pop button.st-ok { color: var(--ok); }
+.cab-cot-acoes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.status-cot.menu-acoes-cot { overflow: visible; display: inline-block; border-radius: 0; }
+.status-cot .menu-pop button { height: auto; min-height: 32px; padding: 6px 10px; border-left: 0 !important; color: var(--text); font-size: var(--fs-sm); }
