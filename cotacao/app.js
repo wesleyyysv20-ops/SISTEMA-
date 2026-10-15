@@ -6704,7 +6704,7 @@ function htmlResumoFornCot(c) {
   const comPed = new Set([...peds.map(p => p.fi), ...c.fornecedores.map((f, fi) => (f.concluidoEm ? fi : -1)).filter(fi => fi >= 0)]);
   const exp = [...comPed].filter(fi => c.fornecedores[fi].concluidoEm).length;
   const fin = c.status === 'finalizada';
-  const pend = fin ? [] : peds.filter(p => !p.f.concluidoEm);
+  const pend = fin ? [] : peds.filter(p => !p.f.concluidoEm).sort((a, b) => COLLATOR.compare(a.f.nome || '', b.f.nome || ''));
   const conf = c.fornecedores.filter(f => f.confirmadoEm).length;
   const partes = [`${nf} fornecedor(es)`];
   if (conf && resp < nf) partes.push(`${conf} de ${nf} confirmaram o recebimento`);
@@ -6862,7 +6862,9 @@ function renderCotacao(id) {
   const prazo = situacaoPrazo(c);
   const nf = c.fornecedores.length;
   const pedidoDe = Object.fromEntries(pedidosPorFornecedor(c).map(p => [p.fi, p]));
-  const fornRows = c.fornecedores.map((f, fi) => {
+  // em ordem alfabética (fi continua sendo a posição do fornecedor na cotação)
+  const fornRows = ordemFornecedores(c).map(fi => {
+    const f = c.fornecedores[fi];
     const t = comp.totais[fi];
     const atrasado = prazo && prazo.pendentes.includes(fi);
     return `<tr>
