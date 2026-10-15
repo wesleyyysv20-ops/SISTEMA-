@@ -8897,8 +8897,11 @@ function renderConfig() {
   <div class="barra-cfg"><h2 class="cfg-titulo">Configurações</h2><nav class="abas-cfg" role="tablist" aria-label="Configurações">${ABAS_CONFIG.map(([k, rot]) => `<button type="button" role="tab" class="aba-cfg${aba === k ? ' ativa' : ''}" data-act="abaConfig" data-aba="${k}" aria-selected="${aba === k}">${rot}</button>`).join('')}</nav></div>
   <section class="card" data-aba-cfg="aparencia"${ver('aparencia')}>
     <h2>Aparência</h2>
-    <p class="muted small" style="margin-top:0">Escolha o tema deste computador (cada pessoa escolhe o seu). Também dá para trocar pelo botão 🎨 no topo.</p>
+    <p class="muted small" style="margin-top:0">Escolha o tema e o tamanho da letra deste computador (cada pessoa escolhe o seu). Também dá para trocar pelo botão 🎨 no topo.</p>
     ${htmlTemas()}
+    <h3 class="titulo-aparencia">Tamanho da letra</h3>
+    <p class="muted small" style="margin-top:0">Vale para todas as telas e para a janela flutuante.</p>
+    ${htmlFonte()}
     ${htmlGuiaVisual()}
   </section>
   <form data-form="config" class="form-cfg">
@@ -10371,6 +10374,7 @@ const acoes = {
   },
   abrirTemas: () => abrirTemas(),
   escolherTema: el => aplicarTema(el.dataset.tema),
+  escolherFonte: el => aplicarFonte(el.dataset.fonte),
   analiseForn: el => abrirAnaliseFornecedor(el.dataset.id),
   integAtualizar: () => { cacheInteg = null; render(); },
   irConferirDados: () => { ui.abaConfig = 'dados'; try { localStorage.setItem('cotacao.abaConfig', 'dados'); } catch (e) { /* sem acesso */ } ir('config'); },
@@ -10916,8 +10920,13 @@ const TEMAS = [
   ['auto', 'Automático', 'Segue o Windows: claro de dia, escuro se o Windows estiver no modo escuro', ['#ffffff', '#f4f6fa', '#ffffff', '#253d83']],
   ['claro', 'Claro', 'O padrão, com o azul da DISPPAR', ['#ffffff', '#f4f6fa', '#ffffff', '#253d83']],
   ['suave', 'Suave', 'Claro em tons quentes, cansa menos a vista', ['#fffdf9', '#f4f1eb', '#fffdf9', '#2e4a7d']],
+  ['neutro', 'Neutro', 'Claro em cinza, sem cor no fundo', ['#ffffff', '#f3f4f6', '#ffffff', '#2f3a4f']],
+  ['verde', 'Verde', 'Claro com verde-petróleo', ['#ffffff', '#f1f6f4', '#ffffff', '#0f6b62']],
+  ['contraste', 'Alto contraste', 'Preto no branco, letras e linhas mais fortes: o mais fácil de ler', ['#ffffff', '#ffffff', '#f0f0f0', '#0033a0']],
   ['escuro', 'Escuro', 'Fundo azul-escuro, bom para pouca luz', ['#151c30', '#0d1222', '#1a2238', '#7b95e3']],
   ['grafite', 'Grafite', 'Escuro neutro, minimalista', ['#19191c', '#111113', '#212125', '#8ab4ff']],
+  ['noite', 'Noite', 'Escuro em tons quentes, menos luz azul no fim do dia', ['#1d1913', '#14110d', '#241f18', '#e2a65c']],
+  ['oceano', 'Oceano', 'Escuro em azul-petróleo', ['#10222a', '#0a171b', '#152b34', '#4fc3cf']],
 ];
 const CHAVE_TEMA = 'cotacao.tema';
 function temaAtual() {
@@ -10929,7 +10938,27 @@ function aplicarTema(t) {
   for (const d of [document, pip.win && !pip.win.closed ? pip.win.document : null].filter(Boolean)) {
     if (t === 'auto') delete d.documentElement.dataset.theme; else d.documentElement.dataset.theme = t;
   }
-  document.querySelectorAll('.tema-opcao').forEach(b => b.classList.toggle('ativo', b.dataset.tema === t));
+  document.querySelectorAll('.tema-opcao').forEach(b => { const sim = b.dataset.tema === t; b.classList.toggle('ativo', sim); b.setAttribute('aria-pressed', sim); });
+}
+/** Tamanho da letra deste computador: [chave, nome, escala]. "n" é o normal (sem atributo). */
+const TAMANHOS_FONTE = [['p', 'Pequena', 0.9], ['n', 'Normal', 1], ['g', 'Grande', 1.1], ['gg', 'Maior', 1.2], ['ggg', 'Muito grande', 1.32]];
+const CHAVE_FONTE = 'cotacao.fonte';
+function fonteAtual() {
+  try { return localStorage.getItem(CHAVE_FONTE) || 'n'; } catch (e) { return 'n'; }
+}
+function aplicarFonte(t) {
+  if (!TAMANHOS_FONTE.some(([k]) => k === t)) t = 'n';
+  try { localStorage.setItem(CHAVE_FONTE, t); } catch (e) { /* sem acesso */ }
+  for (const d of [document, pip.win && !pip.win.closed ? pip.win.document : null].filter(Boolean)) {
+    if (t === 'n') delete d.documentElement.dataset.fonte; else d.documentElement.dataset.fonte = t;
+  }
+  document.querySelectorAll('.fonte-opcao').forEach(b => { const sim = b.dataset.fonte === t; b.classList.toggle('ativo', sim); b.setAttribute('aria-pressed', sim); });
+}
+function htmlFonte() {
+  const atual = fonteAtual();
+  return `<div class="fontes" role="group" aria-label="Tamanho da letra">${TAMANHOS_FONTE.map(([k, nome, f]) => `<button type="button" class="fonte-opcao${k === atual ? ' ativo' : ''}" data-act="escolherFonte" data-fonte="${k}" aria-pressed="${k === atual}">
+    <b style="font-size:${Math.round(18 * f)}px">Aa</b><span>${nome}</span>
+  </button>`).join('')}</div>`;
 }
 function htmlTemas() {
   const atual = temaAtual();
@@ -10957,9 +10986,13 @@ function abrirTemas() {
   abrirDialogo('', [{ txt: 'Fechar', valor: null, cls: 'primary' }]);
   const dlg = [...document.querySelectorAll('.dlg')].at(-1);
   dlg.classList.add('dlg-temas');
-  dlg.querySelector('p').outerHTML = `<h3 class="dlg-tit">🎨 Tema</h3><p class="small muted" style="margin:0 0 12px">Vale só para este computador: cada pessoa escolhe o seu.</p>${htmlTemas()}`;
-  // a janela não repassa os cliques para o resto do sistema: escolhe o tema aqui mesmo
-  dlg.addEventListener('click', e => { const b = e.target.closest('.tema-opcao'); if (b) aplicarTema(b.dataset.tema); });
+  dlg.querySelector('p').outerHTML = `<h3 class="dlg-tit">🎨 Tema e tamanho da letra</h3><p class="small muted" style="margin:0 0 12px">Vale só para este computador: cada pessoa escolhe o seu.</p>${htmlTemas()}<h3 class="titulo-aparencia">Tamanho da letra</h3>${htmlFonte()}`;
+  // a janela não repassa os cliques para o resto do sistema: escolhe aqui mesmo
+  dlg.addEventListener('click', e => {
+    const b = e.target.closest('.tema-opcao, .fonte-opcao');
+    if (b?.dataset.tema) aplicarTema(b.dataset.tema);
+    else if (b?.dataset.fonte) aplicarFonte(b.dataset.fonte);
+  });
 }
 
 /* ---------------- busca rápida (Ctrl+K) e atalhos (?) ---------------- */
@@ -11622,6 +11655,7 @@ async function abrirPip() {
     }
   }
   if (document.documentElement.dataset.theme) d.documentElement.dataset.theme = document.documentElement.dataset.theme;
+  if (document.documentElement.dataset.fonte) d.documentElement.dataset.fonte = document.documentElement.dataset.fonte;
   d.title = `Quantidades · cotação nº ${c.numero || ''}`;
   d.body.className = 'pip-corpo';
   d.body.innerHTML = '<div id="pip"></div>';
