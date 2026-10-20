@@ -258,7 +258,7 @@ nav a.active { background: var(--primary); color: var(--on-primary); font-weight
 }
 .status-nuvem::before { content: "●"; margin-right: 5px; color: var(--muted); }
 .status-nuvem[data-s="salvo"]::before { color: var(--ok); }
-.status-nuvem[data-s="salvando"]::before, .status-nuvem[data-s="carregando"]::before { color: var(--warn); }
+.status-nuvem[data-s="salvando"]::before, .status-nuvem[data-s="carregando"]::before, .status-nuvem[data-s="pendente"]::before, .status-nuvem[data-s="offline"]::before { color: var(--warn); }
 .status-nuvem[data-s="erro"]::before { color: var(--danger); }
 
 main { max-width: 1440px; margin: 0 auto; padding: 16px 20px; }
@@ -1747,7 +1747,8 @@ nav a { font-size: var(--fs-md); padding: 6px 10px; }
 .aviso-travada.aberta { background: color-mix(in srgb, var(--laranja) 10%, var(--card)); border-color: color-mix(in srgb, var(--laranja) 45%, var(--line)); }
 .painel-comp.travada td.escolhivel, .painel-comp.travada td.escolhe-dif, .painel-comp.travada .seg-mini, .painel-comp.travada .chip-marca[data-act] { cursor: default; }
 .painel-comp.travada td.escolhe-dif:hover { background: inherit; box-shadow: none; }
-.painel-comp.travada .rm-preco, .painel-comp.travada .btn-duvida { display: none; }
+.painel-comp.travada .rm-preco, .painel-comp.travada .btn-duvida, .painel-comp.travada .btn-tirar-duvida { display: none; }
+.btn-tirar-duvida { font-size: var(--fs-sm, 12px); padding: 0 4px; white-space: nowrap; }
 .painel-comp.travada input.qtd-loja { background: transparent; border-style: dashed; cursor: default; }
 
 /* busca do comparativo */
@@ -2016,7 +2017,7 @@ a.stat-link:hover { border-color: var(--primary-2); transform: translateY(-1px);
 .andamento-det { white-space: normal; line-height: 1.35; }
 
 /* ===== Relatórios ===== */
-.stats-rel { grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); }
+.stats-rel { grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); }
 .destaques-rel { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-md); }
 .destaques-rel .link { padding: 0; font-size: inherit; }
 .atalhos-rel { margin-top: 10px; color: var(--muted); }
@@ -2700,3 +2701,21 @@ input.qtd-loja:placeholder-shown:not(:focus) { border-style: dashed; background:
 /* confirmação de ação que apaga ou tira: botão principal em vermelho */
 button.primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; box-shadow: none; }
 button.primary.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 85%, #000); border-color: color-mix(in srgb, var(--danger) 85%, #000); color: #fff; }
+
+/* aviso fixo quando a nuvem não abriu (o app segue com os dados deste navegador) */
+#faixaSemNuvem { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 9500; padding: 8px 16px; text-align: center; font-weight: 600; background: var(--danger); color: var(--on-cor); }
+body.sem-nuvem .topbar { top: calc(env(safe-area-inset-top, 0px) + var(--faixa-h, 0px)); }
+
+/* Relatórios: filtros, compras por mês, preços suspeitos e itens mais cotados */
+.filtros-rel { flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.filtros-rel .data-rel { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: var(--fs-sm); color: var(--muted); }
+.filtros-rel .data-rel input { width: auto; }
+.filtro-ativo-rel { margin: 0 0 12px; padding: 6px 10px; border-radius: var(--r-sm); background: var(--blue-bg); }
+.filtro-ativo-rel .link { margin-left: 6px; }
+.tab-mais-cot, .tab-suspeitos, .tab-meses { font-size: var(--fs-sm); }
+.tab-mais-cot .item-rel { min-width: 220px; }
+.tab-mais-cot .item-rel > * { display: block; line-height: 1.3; }
+.tab-meses tfoot th { border-top: 2px solid var(--line); }
+.var-mes { font-weight: 600; white-space: nowrap; }
+.var-sobe { color: var(--danger); font-weight: 700; white-space: nowrap; }
+.var-desce { color: var(--warn); font-weight: 700; white-space: nowrap; }

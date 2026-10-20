@@ -75,7 +75,7 @@ var desfazer = { pilha: [], refazer: [], base: new Map(), aplicando: false };
 let db = carregar();
 let versaoDados = 0; // muda a cada gravação (invalida caches)
 let cacheHist = null;
-const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, enterPadrao: null, filtroItens: '', editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', sel: null, lote: null, verArquivadas: false, conferindo: null };
+const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, enterPadrao: null, filtroItens: '', editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', relDe: '', relAte: '', relLoja: '', relForn: '', sel: null, lote: null, verArquivadas: false, conferindo: null };
 
 /* ---------------- persistência ---------------- */
 
@@ -188,7 +188,7 @@ function gravarLocal() {
     cacheLocalOk = false;
     // sem a cópia local em dia, a lista do que falta enviar apontaria para dados velhos: descarta
     try { localStorage.removeItem(CHAVE_PENDENTES); } catch (e2) { /* sem acesso */ }
-    if (!nuvem.db) avisar('Não foi possível salvar os dados no navegador. Faça um backup em Configurações.\n\n' + e.message);
+    if (!nuvem.db) avisar('Não foi possível salvar os dados no navegador. Faça um backup em Configurações.\n\n' + erroAmigavel(e));
     return;
   }
   anotarPendentes();
@@ -209,7 +209,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     if (timerLocal) gravarLocal();
     if (nuvem.timer) sincronizar(); // saiu da aba: envia agora, sem esperar
-  } else puxarNuvem(); // voltou: traz o que mudou em outro computador
+  } else puxarAoVoltar(); // voltou: traz o que mudou em outro computador
 });
 
 try {
@@ -255,8 +255,15 @@ function docsDe(estado) {
   return docs;
 }
 
+// guarda o resultado enquanto os dados não mudam (mesma versaoDados e mesmo objeto db): salvar() e a
+// sincronização chamam isto várias vezes por alteração e cada chamada serializa o banco inteiro.
+// Quem recebe o resultado só lê (nunca altera o objeto devolvido).
+let cacheDocsEstado = null;
 function docsDoEstado() {
-  return Object.fromEntries(Object.entries(docsDe(db)).map(([k, v]) => [k, JSON.stringify(v)]));
+  if (cacheDocsEstado && cacheDocsEstado.db === db && cacheDocsEstado.v === versaoDados) return cacheDocsEstado.docs;
+  const docs = Object.fromEntries(Object.entries(docsDe(db)).map(([k, v]) => [k, JSON.stringify(v)]));
+  cacheDocsEstado = { db, v: versaoDados, docs };
+  return docs;
 }
 
 /* ---------- juntar alterações feitas em dois lugares (este navegador e outro computador) ---------- */
@@ -396,6 +403,37 @@ function aplicarDoc(caminho, valor, antes = []) {
   }
 }
 
+/**
+ * Campos de vencedor manual (cotacoes/<id>.escolhas) e de quantidade por loja (qtds/<id>.qtds) que foram
+ * mudados aqui (ainda não enviados) e também no outro lado, para valores diferentes. Só descreve: quem vence
+ * a mesclagem continua sendo a regra de mesclarValor (vale este navegador). Devolve textos para o aviso.
+ */
+function conflitosMesmoCampo(caminho, base, local, remoto) {
+  const [col, id] = caminho.split(/\/(.*)/s);
+  if ((col !== 'cotacoes' && col !== 'qtds') || !ehObjeto(local) || !ehObjeto(remoto)) return [];
+  const c = db.cotacoes.find(x => x.id === id);
+  const nomeItem = i => { const it = c?.itens?.[i]; return it ? (it.codigo || it.descricao || '') + (it.codigo && it.descricao ? ' ' + it.descricao : '') : ''; };
+  const rotulo = i => `#${+i + 1}${nomeItem(i) ? ' ' + String(nomeItem(i)).slice(0, 40) : ''}`;
+  const nomeForn = v => c?.fornecedores?.find(f => f.fornecedorId === v)?.nome || (v ? String(v) : 'menor preço');
+  const dif = (b, l, r) => chaveEstavel(l) !== chaveEstavel(b) && chaveEstavel(r) !== chaveEstavel(b) && chaveEstavel(l) !== chaveEstavel(r);
+  const saida = [];
+  if (col === 'cotacoes') {
+    const B = base?.escolhas || {}, L = local.escolhas || {}, R = remoto.escolhas || {};
+    for (const i of new Set([...Object.keys(L), ...Object.keys(R)])) {
+      if (dif(B[i], L[i], R[i])) saida.push(`o vencedor do item ${rotulo(i)} (ficou valendo: ${nomeForn(L[i])})`);
+    }
+  } else {
+    const B = base?.qtds || {}, L = local.qtds || {}, R = remoto.qtds || {};
+    for (const i of new Set([...Object.keys(L), ...Object.keys(R)])) {
+      const lb = ehObjeto(L[i]) ? L[i] : {}, rb = ehObjeto(R[i]) ? R[i] : {}, bb = ehObjeto(B[i]) ? B[i] : {};
+      for (const lj of new Set([...Object.keys(lb), ...Object.keys(rb)])) {
+        if (dif(bb[lj], lb[lj], rb[lj])) saida.push(`a quantidade do item ${rotulo(i)} na loja ${lojas().find(x => x.id === lj)?.nome || lj} (ficou valendo: ${lb[lj] ?? 'vazio'})`);
+      }
+    }
+  }
+  return saida;
+}
+
 /** Busca a versão do Supabase de um documento e junta com o que este navegador tem. */
 async function juntarComRemoto(caminho, remotoLido) {
   const rem = remotoLido || await nuvem.db.doc(caminho).get();
@@ -403,7 +441,10 @@ async function juntarComRemoto(caminho, remotoLido) {
   const localJson = docsDoEstado()[caminho];
   const local = localJson != null ? JSON.parse(localJson) : undefined;
   const remoto = rem.existe ? rem.dados : undefined;
+  let simultaneos = [];
+  try { simultaneos = conflitosMesmoCampo(caminho, base, local, remoto); } catch (e) { /* o aviso é opcional */ }
   aplicarDoc(caminho, mesclarDoc(caminho, base, local, remoto), [base, local, remoto]);
+  if (simultaneos.length) toast(`Atenção: outra pessoa mudou ao mesmo tempo ${simultaneos.slice(0, 2).join('; ')}${simultaneos.length > 2 ? ` e mais ${simultaneos.length - 2}` : ''}. Confira.`, 9000);
   if (rem.existe) { nuvem.enviado[caminho] = JSON.stringify(rem.dados); nuvem.versao[caminho] = rem.versao; }
   else { delete nuvem.enviado[caminho]; delete nuvem.versao[caminho]; }
   cacheBusca = null;
@@ -416,14 +457,17 @@ const CHAVE_PENDENTES = 'sistemaCotacao.pendentes';
 
 /** Guarda, para cada documento alterado e ainda não enviado, a versão da nuvem em que ele se baseou. */
 function anotarPendentes() {
-  if (!nuvem.db) return;
+  // sem nuvem (falhou ao abrir): a referência é a cópia que o navegador tinha ao falhar (nuvem.baseOffline),
+  // para que o trabalho feito nesse período seja juntado, e não sobrescrito, quando a nuvem voltar
+  const ref = nuvem.db && !(nuvem.carregando && nuvem.baseOffline) ? nuvem.enviado : nuvem.baseOffline;
+  if (!ref) return;
   try {
     if (!cacheLocalOk) { localStorage.removeItem(CHAVE_PENDENTES); return; }
     const atual = docsDoEstado();
     const pend = JSON.parse(localStorage.getItem(CHAVE_PENDENTES) || '{}');
-    for (const caminho of new Set([...Object.keys(atual), ...Object.keys(nuvem.enviado)])) {
-      if (atual[caminho] === nuvem.enviado[caminho]) delete pend[caminho];
-      else if (!(caminho in pend)) pend[caminho] = nuvem.enviado[caminho] ?? null;
+    for (const caminho of new Set([...Object.keys(atual), ...Object.keys(ref)])) {
+      if (atual[caminho] === ref[caminho]) delete pend[caminho];
+      else if (!(caminho in pend)) pend[caminho] = ref[caminho] ?? null;
     }
     if (Object.keys(pend).length) localStorage.setItem(CHAVE_PENDENTES, JSON.stringify(pend));
     else localStorage.removeItem(CHAVE_PENDENTES);
@@ -435,33 +479,59 @@ function lerPendentes() {
 }
 
 function agendarSincronia() {
-  if (!nuvem.db) return;
+  if (!nuvem.db || nuvem.carregando) return;
   clearTimeout(nuvem.timer);
   nuvem.timer = setTimeout(sincronizar, 1200);
+  // aviso honesto: até o envio terminar, não vale dizer "Salvo na nuvem" (um "Erro ao salvar" continua à vista)
+  if (navigator.onLine === false) mostrarStatus('offline');
+  else if (nuvem.status !== 'erro') mostrarStatus('pendente');
 }
 
+// fechar a aba com alteração ainda não enviada: o navegador pergunta (sem pendência, não pergunta nada)
+window.addEventListener('beforeunload', e => {
+  if (!nuvem.db || nuvem.carregando) return; // carregando: o que foi digitado já está nos pendentes do navegador
+  let pendente = false;
+  try { pendente = !!(nuvem.gravando || nuvem.timer || docsMudaramAqui()); } catch (err) { /* sem estado ainda */ }
+  if (!pendente) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
+
 async function sincronizar() {
-  if (!nuvem.db) return;
+  if (!nuvem.db || nuvem.carregando) return;
   clearTimeout(nuvem.timer);
   nuvem.timer = null;
   if (nuvem.gravando) { nuvem.pendente = true; return; }
+  clearTimeout(nuvem.retentar);
+  nuvem.retentar = null;
   nuvem.gravando = true;
   mostrarStatus('salvando');
   let juntou = false;
   const juntados = [];
+  const falhas = {}; // documentos que deram erro só neles: { caminho: { e, json } }
   try {
     for (let rodada = 0; ; rodada++) {
       const atual = docsDoEstado();
       const conflitos = [];
       for (const [caminho, json] of Object.entries(atual)) {
-        if (nuvem.enviado[caminho] === json) continue;
-        const r = await comRetentativa(() => gravarDoc(caminho, JSON.parse(json)));
-        if (r.ok) { nuvem.enviado[caminho] = json; if (r.versao) nuvem.versao[caminho] = r.versao; } else conflitos.push(caminho);
+        if (nuvem.enviado[caminho] === json || caminho in falhas) continue;
+        try {
+          const r = await comRetentativa(() => gravarDoc(caminho, JSON.parse(json)));
+          if (r.ok) { nuvem.enviado[caminho] = json; if (r.versao) nuvem.versao[caminho] = r.versao; } else conflitos.push(caminho);
+        } catch (e) {
+          if (erroDeTodos(e)) throw e; // rede/sessão/limite: afeta todos os documentos, para aqui
+          falhas[caminho] = { e, json }; // erro só deste documento: continua com os outros e deixa este pendente
+        }
       }
       for (const caminho of Object.keys(nuvem.enviado)) {
-        if (caminho in atual) continue;
-        const r = await comRetentativa(() => apagarDoc(caminho));
-        if (r.ok) { delete nuvem.enviado[caminho]; delete nuvem.versao[caminho]; } else conflitos.push(caminho);
+        if (caminho in atual || caminho in falhas) continue;
+        try {
+          const r = await comRetentativa(() => apagarDoc(caminho));
+          if (r.ok) { delete nuvem.enviado[caminho]; delete nuvem.versao[caminho]; } else conflitos.push(caminho);
+        } catch (e) {
+          if (erroDeTodos(e)) throw e;
+          falhas[caminho] = { e, json: null };
+        }
       }
       if (!conflitos.length) break;
       // alguém gravou antes (outro computador ou aba): junta as duas versões e grava de novo
@@ -472,7 +542,23 @@ async function sincronizar() {
     }
     anotarPendentes();
     guardarCacheDocs();
-    mostrarStatus('salvo');
+    const nFalhas = Object.keys(falhas).length;
+    if (nFalhas) {
+      // o que falhou continua pendente (docsMudaramAqui) e a retentativa de sempre tenta de novo
+      console.error(falhas);
+      mostrarStatus('erro');
+      agendarRetentativa();
+      const nomes = Object.keys(falhas).slice(0, 3).map(c => nomeDocFalhou(c, falhas[c].json)).join(', ');
+      const resumo = erroAmigavel(Object.values(falhas)[0].e);
+      const chave = Object.keys(falhas).sort().join('|');
+      if (nuvem.avisouFalhaDocs !== chave) toast(`Não foi possível salvar na nuvem: ${nomes}${nFalhas > 3 ? ` e mais ${nFalhas - 3}` : ''}. Os outros foram salvos; vou tentar de novo. ${resumo}`, 9000);
+      nuvem.avisouFalhaDocs = chave;
+      nuvem.falhouGravar = true;
+    } else {
+      nuvem.avisouFalhaDocs = null;
+      nuvem.falhouGravar = false;
+      mostrarStatus('salvo');
+    }
     if (nuvem.puxarDepois && !nuvem.timer) setTimeout(puxarNuvem, 0);
     if (juntou) {
       renderSeguro(juntados);
@@ -483,14 +569,53 @@ async function sincronizar() {
   } catch (e) {
     console.error(e);
     mostrarStatus('erro');
-    toast(e.code === 'quota_exceeded'
-      ? 'O limite de armazenamento na nuvem foi atingido. Exclua cotações antigas.'
-      : 'Não foi possível salvar na nuvem agora. Vou tentar de novo na próxima alteração.', 6000);
+    // tenta de novo sozinho (e ao voltar a internet): sem isso, o que foi digitado só subia na próxima alteração
+    // limite da nuvem atingido: só vai dar certo depois de liberar espaço, então espera bem mais
+    agendarRetentativa(e.code === 'quota_exceeded' ? ESPERA_RETENTATIVA * 10 : ESPERA_RETENTATIVA);
+    // sem internet, falha a cada tentativa: avisa só a primeira vez (o aviso de erro continua no topo)
+    if (!nuvem.falhouGravar) {
+      toast(e.code === 'quota_exceeded'
+        ? 'O limite de armazenamento na nuvem foi atingido. Exclua cotações antigas.'
+        : 'Não foi possível salvar na nuvem agora. Vou tentar de novo sozinho em instantes.', 6000);
+    }
+    nuvem.falhouGravar = true;
   } finally {
     nuvem.gravando = false;
     if (nuvem.pendente) { nuvem.pendente = false; agendarSincronia(); }
   }
 }
+
+/** Erro que afetaria qualquer documento (sem internet, sessão vencida, limite da nuvem): para o envio inteiro. */
+function erroDeTodos(e) {
+  if (navigator.onLine === false) return true;
+  if (e?.code === 'quota_exceeded' || e?.code === 'unavailable' || e?.code === 'resource_exhausted') return true;
+  const t = String(e?.message || e || '') + ' ' + String(e?.code || '') + ' ' + String(e?.name || '');
+  return /failed to fetch|networkerror|load failed|timeout|timed out|jwt|session|refresh token|not authenticated|unauthorized|\b401\b|\b429\b|quota|rate limit/i.test(t);
+}
+
+/** Nome para o aviso de falha: o nome da cotação/produto se o documento tiver, senão o caminho. */
+function nomeDocFalhou(caminho, json) {
+  try {
+    const d = json ? JSON.parse(json) : null;
+    const n = d && (d.nome || d.titulo || d.descricao);
+    if (n) return `"${String(n).slice(0, 40)}"`;
+  } catch (e) { /* usa o caminho */ }
+  return caminho;
+}
+
+// tempo máximo para carregar os dados da nuvem: cresce a cada falha (celular lento, sem cópia local, não joga fora toda vez)
+const TEMPOS_CARGA_NUVEM = [45000, 90000, 180000];
+const ESPERA_RETENTATIVA = 30000; // ms entre tentativas depois de um erro ao salvar na nuvem
+
+/** Depois de um erro ao salvar: uma nova tentativa (um timer só, nunca duplicado). */
+function agendarRetentativa(ms = ESPERA_RETENTATIVA) {
+  if (!nuvem.db) return;
+  clearTimeout(nuvem.retentar);
+  nuvem.retentar = setTimeout(() => { nuvem.retentar = null; sincronizar(); }, ms);
+}
+
+// a internet voltou: se havia tentativa esperando, salva já
+window.addEventListener('online', () => { if (nuvem.retentar) sincronizar(); });
 
 /** Grava um documento só se ninguém o alterou desde a versão que temos ({ ok:false } = conflito). */
 async function gravarDoc(caminho, dados) {
@@ -510,11 +635,16 @@ async function apagarDoc(caminho) {
  * Não mexe na tela enquanto a pessoa está digitando: tenta de novo depois.
  */
 async function puxarNuvem(soAvisos = false) {
-  if (!nuvem.db?.versoes) return;
+  if (!nuvem.db?.versoes || nuvem.carregando) return;
   if (document.hidden) { if (soAvisos === true) nuvem.precisaPuxar = true; return; } // aba escondida: puxa ao voltar
   // salvando agora: puxa logo depois (o aviso em tempo real não se perde)
   if (nuvem.gravando || nuvem.timer) { nuvem.puxarDepois = true; return; }
+  // já está puxando (ex.: "focus" e "visibilitychange" juntos): roda uma vez só, no fim desta
+  if (nuvem.puxando) { nuvem.puxarDepois = true; if (soAvisos !== true) nuvem.puxarDepoisCompleto = true; return; }
   nuvem.puxarDepois = false;
+  nuvem.puxarDepoisCompleto = false;
+  nuvem.puxando = true;
+  let foiCompleta = false;
   try {
     const rec = soAvisos === true && !nuvem.precisaPuxar ? nuvem.recebidos : null;
     nuvem.recebidos = null;
@@ -530,12 +660,16 @@ async function puxarNuvem(soAvisos = false) {
       if (nuvem.gravando || nuvem.timer) { nuvem.puxarDepois = true; return; }
     } else {
       nuvem.precisaPuxar = false;
+      foiCompleta = true;
       const remotas = await nuvem.db.versoes();
+      nuvem.ultimaCompleta = Date.now();
       mudaram = Object.keys(remotas).filter(c => !mesmaVersao(remotas[c], nuvem.versao[c]));
       sumiram = Object.keys(nuvem.versao).filter(c => !(c in remotas));
       if (!mudaram.length && !sumiram.length) return;
       if (nuvem.gravando || nuvem.timer) return; // começou a salvar: o salvamento junta
       lidos = mudaram.length ? await nuvem.db.buscar(mudaram) : {};
+      // durante a busca houve digitação/gravação aqui: a cópia lida está velha e desfaria isso; puxa de novo depois
+      if (nuvem.gravando || nuvem.timer) { nuvem.puxarDepois = true; return; }
     }
     for (const c of mudaram) await juntarComRemoto(c, lidos[c] || { existe: false });
     for (const c of sumiram) await juntarComRemoto(c, { existe: false });
@@ -544,7 +678,25 @@ async function puxarNuvem(soAvisos = false) {
     if (docsMudaramAqui()) agendarSincronia();
   } catch (e) {
     console.error(e);
+  } finally {
+    nuvem.puxando = false;
+    if (nuvem.puxarDepois && !nuvem.gravando && !nuvem.timer) {
+      // pedido no meio desta: completa só se alguém pediu completa e esta não foi; senão, só os avisos que chegaram
+      const completa = nuvem.puxarDepoisCompleto && !foiCompleta;
+      if (completa || nuvem.recebidos || nuvem.precisaPuxar) setTimeout(() => puxarNuvem(completa ? false : true), 0);
+      else nuvem.puxarDepois = false;
+    }
   }
+}
+
+/**
+ * Ao voltar para a aba/janela: com o tempo real ligado e uma verificação completa há menos de 1 minuto,
+ * basta aplicar os avisos que chegaram (sem consultar o Supabase). Senão, a verificação completa de sempre.
+ */
+function puxarAoVoltar() {
+  const leve = nuvem.tempoReal && !nuvem.precisaPuxar && Date.now() - (nuvem.ultimaCompleta || 0) < 60000;
+  if (!leve) return puxarNuvem();
+  if (nuvem.recebidos) puxarNuvem(true);
 }
 
 const docsMudaramAqui = () => { const a = docsDoEstado(); return Object.keys(a).some(c => a[c] !== nuvem.enviado[c]) || Object.keys(nuvem.enviado).some(c => !(c in a)); };
@@ -639,6 +791,18 @@ document.addEventListener('click', e => {
   for (const m of document.querySelectorAll('details.menu-acoes[open]')) {
     if (!m.contains(e.target) || e.target.closest('.menu-acoes-lista button')) m.open = false;
   }
+  for (const m of document.querySelectorAll('details.menu-acoes-cot[open]')) {
+    if (!m.contains(e.target) || e.target.closest('.menu-pop button')) m.open = false;
+  }
+}, true);
+// Esc fecha o menu "⋯" (ou o de status) aberto e devolve o foco ao botão dele
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || document.querySelector('.dlg-fundo')) return; // janela aberta por cima: o Esc é dela
+  const abertos = [...document.querySelectorAll('details.menu-acoes[open], details.menu-acoes-cot[open]')];
+  if (!abertos.length) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  abertos.forEach(m => { m.open = false; });
+  abertos[abertos.length - 1].querySelector('summary')?.focus();
 }, true);
 
 // arrastar o arquivo do DataCar ou dos papelzinhos para a caixa dele
@@ -780,7 +944,7 @@ function mostrarVersaoNova() {
   // gravar os dados de jeitos diferentes). Só quando ninguém está mexendo e não há nada por salvar.
   setInterval(() => {
     const parado = Date.now() - Math.max(ultimaTecla, ultimoClique) > 3 * 60000;
-    const livre = !nuvem.timer && !nuvem.gravando && !document.querySelector('.dlg-fundo') && !(pip.win && !pip.win.closed) && !ui.digitando && !ui.cfgSujo;
+    const livre = !nuvem.timer && !nuvem.gravando && !nuvem.retentar && !document.querySelector('.dlg-fundo') && !(pip.win && !pip.win.closed) && !ui.digitando && !ui.cfgSujo;
     if (parado && livre) atualizarSistema();
   }, 30000);
 }
@@ -792,7 +956,7 @@ async function atualizarSistema() {
 verificarVersaoNova();
 setInterval(verificarVersaoNova, 5 * 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) verificarVersaoNova(); });
-window.addEventListener('focus', () => puxarNuvem());
+window.addEventListener('focus', () => puxarAoVoltar());
 
 async function comRetentativa(fn) {
   for (let tent = 0; ; tent++) {
@@ -887,9 +1051,10 @@ async function carregarComCache() {
   return docs;
 }
 
-async function carregarNuvem() {
+async function carregarNuvem(ativa = () => true) {
   let docs = null;
   try { docs = await carregarComCache(); } catch (e) { console.error(e); docs = null; }
+  if (!ativa()) throw new Error('tempo esgotado');
   if (docs && docs.length) {
     for (const [path, data, versao] of docs) {
       nuvem.enviado[path] = JSON.stringify(data);
@@ -902,6 +1067,7 @@ async function carregarNuvem() {
   const ler = async col => (await nuvem.db.collection(col).limit(1000).get()).docs.filter(d => d.exists).map(d => [`${col}/${d.id}`, d.data(), d.versao]);
   const [sis, prods, forns, cots, qts] = await Promise.all(['sistema', 'produtos', 'fornecedores', 'cotacoes', 'qtds'].map(ler));
   const todos = [...sis, ...prods, ...forns, ...cots, ...qts];
+  if (!ativa()) throw new Error('tempo esgotado');
   if (!todos.length) return null;
   for (const [path, data, versao] of todos) {
     nuvem.enviado[path] = JSON.stringify(data);
@@ -949,7 +1115,7 @@ function mostrarStatus(s) {
 function pintarStatus(s) {
   const el = $('#statusNuvem');
   if (!el || el.dataset.s === s) return;
-  const txt = { local: 'Salvo neste navegador', salvando: 'Salvando…', salvo: 'Salvo na nuvem', erro: 'Erro ao salvar', carregando: 'Carregando…' }[s];
+  const txt = { local: 'Salvo neste navegador', salvando: 'Salvando…', pendente: 'Alterações a enviar…', offline: 'Sem internet: salvo só neste computador', salvo: 'Salvo na nuvem', erro: 'Erro ao salvar', carregando: 'Carregando…' }[s];
   el.textContent = txt;
   el.dataset.s = s;
 }
@@ -964,14 +1130,34 @@ function estadoDeBackup(mapa) {
 /** Carrega os dados de um armazenamento na nuvem (página do Claude ou Supabase) e passa a sincronizar. */
 async function usarNuvem(adaptador) {
   mostrarStatus('carregando');
+  const copiaLocal = db;
+  nuvem.carregando = true;
+  let remoto, pendentes, esgotou = false, relogio;
   try {
+    // referência do que a nuvem tinha da última vez que este navegador soube: a cópia local menos o que já
+    // estava pendente. Enquanto a nuvem carrega, o que for alterado aqui é anotado contra ela (nunca contra
+    // nuvem.enviado, que fica incompleto durante a leitura)
+    if (!nuvem.baseOffline) {
+      const base = { ...docsDoEstado() };
+      const pend = lerPendentes() || {};
+      for (const [caminho, baseJson] of Object.entries(pend)) { if (baseJson == null) delete base[caminho]; else base[caminho] = baseJson; }
+      nuvem.baseOffline = base;
+    }
     nuvem.db = adaptador;
-    const copiaLocal = db;
-    const pendentes = lerPendentes();
-    const remoto = await carregarNuvem();
+    // tempo limite: sem isso uma nuvem que nunca responde deixaria o sistema "carregando" para sempre
+    remoto = await Promise.race([
+      carregarNuvem(() => !esgotou),
+      new Promise((_, rej) => { relogio = setTimeout(() => { esgotou = true; rej(new Error('A nuvem demorou demais para responder.')); }, TEMPOS_CARGA_NUVEM[Math.min(nuvem.falhasCarga || 0, TEMPOS_CARGA_NUVEM.length - 1)]); }),
+    ]);
+    clearTimeout(relogio);
+    // o que foi alterado aqui enquanto a nuvem carregava também precisa estar na lista
+    if (timerLocal) gravarLocal();
+    pendentes = lerPendentes();
+    nuvem.carregando = false; // daqui em diante pode sincronizar (a mesclagem abaixo não espera nada)
     if (remoto) {
       db = remoto;
       cacheBusca = null;
+      versaoDados++;
       if (pendentes && Object.keys(pendentes).length) {
         // alterações que não chegaram a ir para a nuvem (a aba foi fechada antes): junta com o que está lá
         const locais = Object.fromEntries(Object.entries(docsDe(copiaLocal)).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))]));
@@ -984,22 +1170,82 @@ async function usarNuvem(adaptador) {
         agendarSincronia();
       }
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) { /* cache opcional */ }
-      render();
+      // falha ao desenhar a tela não pode desfazer os dados já juntados
+      try { render(); } catch (e) { console.error(e); }
       mostrarStatus('salvo');
     } else if (db.produtos.length || db.fornecedores.length || db.cotacoes.length || db.config.loja) {
       await sincronizar(); // primeira vez: leva para a nuvem o que já estava no navegador
     } else {
       mostrarStatus('salvo');
     }
+    nuvem.baseOffline = null;
+    nuvem.adaptadorPerdido = null;
+    nuvem.tentativasReconexao = 0;
+    nuvem.falhasCarga = 0;
+    clearTimeout(nuvem.reconectar);
+    mostrarFaixaSemNuvem(false);
+    nuvem.carregando = false;
     return true;
   } catch (e) {
     console.error(e);
+    clearTimeout(relogio);
+    esgotou = true;
+    nuvem.falhasCarga = (nuvem.falhasCarga || 0) + 1;
+    // não deixa a gravação atrasada do cache IndexedDB apagar a cópia (nuvem.versao vai ficar vazia)
+    clearTimeout(cacheDocs.timer);
+    // desfaz o que a tentativa tenha deixado pela metade: continua valendo a cópia deste navegador
+    if (db !== copiaLocal) db = copiaLocal;
+    versaoDados++;
+    cacheBusca = null;
+    nuvem.enviado = {};
+    nuvem.versao = {};
     nuvem.db = null;
+    nuvem.carregando = false;
+    nuvem.adaptadorPerdido = adaptador;
     mostrarStatus('local');
-    toast('Não consegui acessar os dados na nuvem. Usando os dados deste navegador.', 6000);
+    if (!nuvem.faixaSemNuvem) toast('Não consegui acessar os dados na nuvem. Usando os dados deste navegador.', 6000);
+    mostrarFaixaSemNuvem(true);
+    agendarReconexao();
     return false;
   }
 }
+
+/* Nuvem que falhou ao abrir: avisa com uma faixa fixa e tenta de novo (1, 2, 5 e depois a cada 10 min, e quando a internet volta). */
+function mostrarFaixaSemNuvem(ligada) {
+  nuvem.faixaSemNuvem = ligada;
+  const atual = document.getElementById('faixaSemNuvem');
+  document.body.classList.toggle('sem-nuvem', !!ligada);
+  if (!ligada) { if (atual) atual.remove(); document.documentElement.style.removeProperty('--faixa-h'); return; }
+  if (atual) return;
+  const faixa = document.createElement('div');
+  faixa.id = 'faixaSemNuvem';
+  faixa.setAttribute('role', 'alert');
+  faixa.textContent = 'Sem conexão com a nuvem: o que você fizer agora pode não ir para os outros computadores. Tentando de novo…';
+  // primeira coisa da página, grudada no topo; a barra de cima desce a altura dela (muda no celular, onde o texto quebra)
+  document.body.insertBefore(faixa, document.body.firstChild);
+  const medir = () => { const f = document.getElementById('faixaSemNuvem'); if (f) document.documentElement.style.setProperty('--faixa-h', f.offsetHeight + 'px'); };
+  medir();
+  if (!nuvem.ouvinteFaixa) { nuvem.ouvinteFaixa = true; window.addEventListener('resize', () => { if (nuvem.faixaSemNuvem) medir(); }); }
+}
+
+const ESPERAS_RECONEXAO = [60000, 120000, 300000, 600000]; // 1, 2, 5 e 10 min (teto)
+function agendarReconexao(ms) {
+  if (!nuvem.adaptadorPerdido) return;
+  if (ms == null) { ms = ESPERAS_RECONEXAO[Math.min(nuvem.tentativasReconexao || 0, ESPERAS_RECONEXAO.length - 1)]; nuvem.tentativasReconexao = (nuvem.tentativasReconexao || 0) + 1; }
+  clearTimeout(nuvem.reconectar);
+  nuvem.reconectar = setTimeout(tentarReconectar, ms);
+}
+
+async function tentarReconectar() {
+  clearTimeout(nuvem.reconectar);
+  nuvem.reconectar = null;
+  if (nuvem.db || nuvem.carregando || !nuvem.adaptadorPerdido) return;
+  // a tela é refeita quando a nuvem volta: espera a pessoa parar de digitar
+  if (Date.now() - ultimaTecla < PAUSA_DIGITACAO) return agendarReconexao(5000);
+  await usarNuvem(nuvem.adaptadorPerdido);
+}
+
+window.addEventListener('online', () => { if (nuvem.adaptadorPerdido && !nuvem.db) tentarReconectar(); });
 
 async function iniciarNuvem() {
   const cfg = window.COTACAO_CONFIG || {};
@@ -1150,7 +1396,7 @@ async function iniciarSupabase(cfg) {
       if (!error && data.length) { nuvem.nome = data[0].nome || ''; break; }
       await cli.auth.signOut();
       session = null;
-      mensagemLogin(error ? `Erro ao verificar o acesso: ${error.message}` : cfg.local ? 'Este e-mail não tem acesso ao sistema. Peça a um administrador.' : 'Este e-mail não tem acesso ao sistema. Peça para liberar em "cotacao_usuarios".');
+      mensagemLogin(error ? `Erro ao verificar o acesso: ${erroAmigavel(error)}` : cfg.local ? 'Este e-mail não tem acesso ao sistema. Peça a um administrador.' : 'Este e-mail não tem acesso ao sistema. Peça para liberar em "cotacao_usuarios".');
     }
     nuvem.usuario = session.user.email;
     fecharLogin();
@@ -1169,7 +1415,7 @@ async function iniciarSupabase(cfg) {
   } catch (e) {
     console.error(e);
     mostrarStatus('erro');
-    mensagemLogin(((window.COTACAO_CONFIG || {}).local ? 'Não consegui conectar ao servidor da loja: ' : 'Não consegui conectar ao Supabase: ') + e.message);
+    mensagemLogin(((window.COTACAO_CONFIG || {}).local ? 'Não consegui conectar ao servidor da loja: ' : 'Não consegui conectar ao Supabase: ') + erroAmigavel(e));
   }
 }
 
@@ -1199,7 +1445,7 @@ function telaLogin(cli) {
       ev.preventDefault();
       mensagemLogin('Entrando…', true);
       const { data, error } = await cli.auth.signInWithPassword({ email: form.email.value.trim(), password: form.senha.value });
-      if (error) return mensagemLogin(/invalid/i.test(error.message) ? 'E-mail ou senha incorretos.' : error.message);
+      if (error) return mensagemLogin(/invalid/i.test(error.message) ? 'E-mail ou senha incorretos.' : erroAmigavel(error));
       mensagemLogin('', true);
       resolve(data.session);
     };
@@ -1208,7 +1454,7 @@ function telaLogin(cli) {
       const email = form.email.value.trim();
       if (!email) return mensagemLogin('Digite o e-mail para receber o link de nova senha.');
       const { error } = await cli.auth.resetPasswordForEmail(email, { redirectTo: location.origin });
-      mensagemLogin(error ? error.message : 'Se o e-mail estiver cadastrado, você vai receber um link para criar uma nova senha.', !error);
+      mensagemLogin(error ? erroAmigavel(error) : 'Se o e-mail estiver cadastrado, você vai receber um link para criar uma nova senha.', !error);
     };
   });
 }
@@ -1239,7 +1485,7 @@ function telaCriarSenha(cli, tipo) {
       if (form.senha.value !== form.senha2.value) return mensagemLogin('As duas senhas não são iguais.');
       mensagemLogin('Salvando…', true);
       const { error } = await cli.auth.updateUser({ password: form.senha.value });
-      if (error) return mensagemLogin(error.message);
+      if (error) return mensagemLogin(erroAmigavel(error));
       tela.remove();
       history.replaceState(null, '', location.pathname + location.search);
       resolve();
@@ -1277,7 +1523,11 @@ function assinarMudancas(cli) {
         clearTimeout(timer);
         timer = setTimeout(() => puxarNuvem(true), 700); // junta vários avisos seguidos
       })
-      .subscribe(status => { nuvem.tempoReal = status === 'SUBSCRIBED'; });
+      .subscribe(status => {
+        // reconectou depois de cair: pode ter perdido avisos no meio, a próxima volta à aba confere tudo
+        if (status === 'SUBSCRIBED' && !nuvem.tempoReal) nuvem.ultimaCompleta = 0;
+        nuvem.tempoReal = status === 'SUBSCRIBED';
+      });
   } catch (e) {
     console.error(e); // sem tempo real: continua verificando a cada minuto
   }
@@ -1422,10 +1672,25 @@ function atualizarNavAdmin() {
 
 async function carregarUsuarios() {
   const { data, error } = await nuvem.supabase.rpc('cotacao_listar_usuarios');
-  ui.usuarios = error ? { erro: error.message } : { lista: data || [] };
+  ui.usuarios = error ? { erro: erroAmigavel(error) } : { lista: data || [] };
 }
 
-const msgErroSb = e => String(e?.message || e || 'Erro no Supabase');
+// Traduz erros técnicos para frases simples; o texto original vai no fim, como detalhe técnico.
+function erroAmigavel(e) {
+  const original = String(e?.message || e || '');
+  const cod = String(e?.code || '') + ' ' + String(e?.name || '');
+  const t = original + ' ' + cod;
+  let amigavel = '';
+  if (/failed to fetch|networkerror|load failed|timeout|timed out/i.test(t)) amigavel = 'Sem internet ou servidor fora do ar. Seus dados continuam aqui; tente de novo.';
+  else if (/jwt expired|invalid jwt|session.{0,12}(expired|not found|missing)|refresh token/i.test(t)) amigavel = 'Sua sessão venceu. Saia e entre de novo.';
+  else if (/invalid login/i.test(t)) amigavel = 'Usuário ou senha incorretos.';
+  else if (/row-level security|permission denied|\b42501\b/i.test(t)) amigavel = 'Sem permissão para fazer isso.';
+  else if (/quotaexceeded/i.test(t)) amigavel = 'O espaço do navegador encheu.';
+  if (!amigavel) return original;
+  return original ? `${amigavel} (detalhe técnico: ${original})` : amigavel;
+}
+
+const msgErroSb = e => erroAmigavel(e) || 'Erro no Supabase';
 
 function renderConta() {
   if (!nuvem.supabase) return '';
@@ -1466,7 +1731,16 @@ function renderConta() {
 
 async function sairSupabase() {
   if (!nuvem.supabase) return;
-  if (nuvem.timer || nuvem.gravando) await sincronizar();
+  // termina o salvamento em andamento (até ~15 s) e envia o que ainda não foi para a nuvem
+  const esperarGravacao = async () => { for (let t = 0; nuvem.gravando && t < 75; t++) await new Promise(r => setTimeout(r, 200)); };
+  await esperarGravacao();
+  if (nuvem.db && (nuvem.timer || nuvem.retentar || docsMudaramAqui())) { await sincronizar(); await esperarGravacao(); }
+  // ainda ficou alteração sem salvar (sem internet, erro na nuvem): sair apaga a cópia deste computador
+  if (nuvem.db && (nuvem.gravando || docsMudaramAqui())) {
+    const sair = await abrirDialogo('Há alterações que ainda não foram salvas na nuvem. Se sair agora, elas serão perdidas. Sair mesmo assim?',
+      [{ txt: 'Cancelar', valor: false }, { txt: 'Sair mesmo assim', valor: true, cls: 'danger' }]);
+    if (!sair) return;
+  }
   await nuvem.supabase.auth.signOut();
   try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(CHAVE_PENDENTES); } catch (e) { /* sem acesso */ }
   limparCacheDocs();
@@ -1486,7 +1760,12 @@ function esc(s) {
 }
 
 function hojeISO() {
-  const d = new Date();
+  return dataISOLocal(new Date());
+}
+
+/** Data de calendário (AAAA-MM-DD) no fuso deste computador. toISOString() usa UTC: depois das 21h
+ *  em Brasília já dava o dia seguinte. */
+function dataISOLocal(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
@@ -1517,13 +1796,28 @@ function fmtNum(v, dec = 3) {
   return f.format(Number(v));
 }
 
+/** Valor para preencher um campo editável que depois é lido com parseNum: sempre com
+ *  vírgula e 2 casas (1250 → "1.250,00"). Com fmtNum, 1250 virava "1.250", lido como 1,25. */
+const fmtsCampo = new Map();
+function fmtValorCampo(v, max = 2) {
+  if (v == null || isNaN(v)) return '';
+  let f = fmtsCampo.get(max);
+  if (!f) fmtsCampo.set(max, (f = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: max })));
+  return f.format(Number(v));
+}
+
 /** Aceita "1.234,56", "R$ 10,5", "10.5" ou número. */
+/** "1.250" / "1.234.567" (ponto só como separador de milhar, sem vírgula) — lido como milhar. */
+function ehMilharSemVirgula(s) {
+  return /^-?[1-9]\d{0,2}(\.\d{3})+$/.test(String(s).replace(/R\$|\s/g, ''));
+}
+
 function parseNum(v) {
   if (v == null || v === '') return null;
   if (typeof v === 'number') return isFinite(v) ? v : null;
   let s = String(v).replace(/R\$|\s/g, '');
   if (!s) return null;
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  if (s.includes(',') || ehMilharSemVirgula(s)) s = s.replace(/\./g, '').replace(',', '.');
   const n = parseFloat(s);
   return isFinite(n) ? n : null;
 }
@@ -2292,15 +2586,19 @@ function comparar(c) {
  * Itens desta cotação que estão na fila de Dúvidas: Map(i -> Set(ids das lojas)).
  * Enquanto a dúvida não sai da fila, o item não vai no pedido daquela loja.
  */
+function itemDaDuvida(c, d) {
+  const o = d.origem;
+  if (!o || o.cotId !== c.id) return -1;
+  const cod = x => String(x || '').trim().toUpperCase();
+  // dúvidas antigas não têm o número do item: acha pelo código
+  return o.i != null && c.itens[o.i] ? o.i : c.itens.findIndex(it => cod(it.codigo) && cod(it.codigo) === cod(d.codigo));
+}
+
 function duvidasPorItem(c) {
   const m = new Map();
   const LJ = lojas();
-  const cod = x => String(x || '').trim().toUpperCase();
   for (const d of db.duvidas || []) {
-    const o = d.origem;
-    if (!o || o.cotId !== c.id) continue;
-    // dúvidas antigas não têm o número do item: acha pelo código
-    const i = o.i != null && c.itens[o.i] ? o.i : c.itens.findIndex(it => cod(it.codigo) && cod(it.codigo) === cod(d.codigo));
+    const i = itemDaDuvida(c, d);
     if (i < 0) continue;
     if (!m.has(i)) m.set(i, new Set());
     const lj = LJ.find(x => siglaLoja(x) === d.empresa);
@@ -2696,7 +2994,12 @@ async function lerPlanilha(file) {
   return { meta, ws };
 }
 
+function avisoMilhar(n) {
+  return n ? ` Atenção: ${n} preço(s) com ponto de milhar, ex.: 1.250 lido como R$ 1.250,00 — confira.` : '';
+}
+
 /** Aplica os preços lidos da planilha no fornecedor `fi` da cotação `c`. Retorna qtd de preços. */
+let milharNaImportacao = 0; // preços de texto no formato ambíguo "1.250" (lidos como milhar) na última planilha
 let ignoradosNaImportacao = 0; // itens com preço 0,00 ou sem valor na última planilha importada
 
 function aplicarResposta(c, fi, ws, meta) {
@@ -2718,14 +3021,16 @@ function aplicarResposta(c, fi, ws, meta) {
   const colPreco = versao >= 3 ? 'G' : versao === 2 ? 'F' : 'G';
   const colMarca = versao >= 3 ? 'H' : versao === 2 ? 'G' : null;
   const respostas = {};
-  let qtd = 0, ignorados = 0;
+  let qtd = 0, ignorados = 0, milhar = 0;
   const limite = meta?.n || c.itens.length;
   for (let k = 0; k < limite; k++) {
     const r = first + k;
     const idx = parseInt(cellTexto(ws.getCell(`A${r}`)), 10);
     const i = Number.isInteger(idx) && idx >= 1 && idx <= c.itens.length ? idx - 1 : k;
     if (i >= c.itens.length) break;
-    const preco = parseNum(cellValue(ws.getCell(`${colPreco}${r}`)));
+    const bruto = cellValue(ws.getCell(`${colPreco}${r}`));
+    const preco = parseNum(bruto);
+    if (typeof bruto === 'string' && preco > 0 && ehMilharSemVirgula(bruto)) milhar++;
     let marca = colMarca ? cellTexto(ws.getCell(`${colMarca}${r}`)) : '';
     if (/^informar marca$/i.test(marca)) marca = ''; // o fornecedor não preencheu
     const prazo = versao >= 2 ? '' : cellTexto(ws.getCell(`I${r}`));
@@ -2735,6 +3040,7 @@ function aplicarResposta(c, fi, ws, meta) {
     else if (marca || preco === 0) ignorados++;
   }
   ignoradosNaImportacao = ignorados;
+  milharNaImportacao = milhar;
   if (!cond) {
     for (let r = first + limite; r <= first + limite + 20; r++) {
       if (/pagamento/i.test(cellTexto(ws.getCell(`A${r}`)))) { cond = r; break; }
@@ -2815,7 +3121,7 @@ async function importarRespostaArquivo(file, cotId, fiSugerido) {
     const f = c.fornecedores[fi];
     if (Object.keys(f.respostas || {}).length && !(await confirmar(`${f.nome} já tem preços lançados. Substituir pelos da planilha?`, 'Substituir os preços'))) return;
     const qtd = aplicarResposta(c, fi, ws, meta);
-    return { cotacao: c, fornecedor: f.nome, qtd, ignorados: ignoradosNaImportacao };
+    return { cotacao: c, fornecedor: f.nome, qtd, ignorados: ignoradosNaImportacao, milhar: milharNaImportacao };
   }
 }
 
@@ -2823,12 +3129,12 @@ async function importarResposta(file, cotId, fiSugerido) {
   try {
     const r = await importarRespostaArquivo(file, cotId, fiSugerido);
     if (!r) return;
-    toast(`${r.qtd} preço(s) importado(s) de ${r.fornecedor}.${r.ignorados ? ` ${r.ignorados} item(ns) com preço 0,00 ou sem valor foram desconsiderados.` : ''}`, r.ignorados ? 6000 : 3500);
+    toast(`${r.qtd} preço(s) importado(s) de ${r.fornecedor}.${r.ignorados ? ` ${r.ignorados} item(ns) com preço 0,00 ou sem valor foram desconsiderados.` : ''}${avisoMilhar(r.milhar)}`, r.ignorados || r.milhar ? 8000 : 3500);
     ir('cotacao', r.cotacao.id);
     render();
   } catch (e) {
     console.error(e);
-    avisar('Erro ao importar a planilha:\n' + e.message);
+    avisar('Erro ao importar a planilha:\n' + erroAmigavel(e));
   }
 }
 
@@ -2849,7 +3155,7 @@ async function importarRespostas(files, cotId = null) {
   if (cots.length === 1) ir('cotacao', cots[0].id);
   render();
   const linhas = [`${ok.length} de ${files.length} planilha(s) importada(s):`];
-  for (const r of ok) linhas.push(`✓ ${r.fornecedor}: ${r.qtd} preço(s)${r.ignorados ? ` (${r.ignorados} com preço 0,00 ou sem valor desconsiderados)` : ''}${cots.length > 1 ? ` (cotação nº ${r.cotacao.numero})` : ''}`);
+  for (const r of ok) linhas.push(`✓ ${r.fornecedor}: ${r.qtd} preço(s)${r.ignorados ? ` (${r.ignorados} com preço 0,00 ou sem valor desconsiderados)` : ''}${avisoMilhar(r.milhar)}${cots.length > 1 ? ` (cotação nº ${r.cotacao.numero})` : ''}`);
   for (const f of falhas) linhas.push(`✗ ${f.arquivo}: ${f.erro}`);
   for (const n of canceladas) linhas.push(`– ${n}: não importada (cancelada)`);
   await avisar(linhas.join('\n'));
@@ -3505,7 +3811,7 @@ async function importarNFes(files, cotId = null, fiSugerido = null) {
       await importarNFe(file, cotId, fiSugerido);
     } catch (e) {
       console.error(e);
-      await avisar('Erro ao importar a nota:\n' + e.message);
+      await avisar('Erro ao importar a nota:\n' + erroAmigavel(e));
     }
   }
 }
@@ -4001,7 +4307,7 @@ async function abrirArquivoPapel(file) {
     focarDataCar();
   } catch (e) {
     console.error(e);
-    avisar('Não consegui ler o arquivo:\n' + e.message);
+    avisar('Não consegui ler o arquivo:\n' + erroAmigavel(e));
   }
 }
 
@@ -4044,7 +4350,7 @@ async function abrirArquivoDataCar(file) {
     focarDataCar();
   } catch (e) {
     console.error(e);
-    avisar('Não consegui ler o arquivo:\n' + e.message);
+    avisar('Não consegui ler o arquivo:\n' + erroAmigavel(e));
   }
 }
 
@@ -4759,7 +5065,7 @@ async function importarProdutos(file) {
     else toast(resumo);
   } catch (e) {
     console.error(e);
-    avisar('Erro ao importar produtos:\n' + e.message);
+    avisar('Erro ao importar produtos:\n' + erroAmigavel(e));
   }
 }
 
@@ -5511,7 +5817,7 @@ function avisosPrazo() {
 function paraArquivar() {
   const d = new Date();
   d.setDate(d.getDate() - (Number(db.config.arquivarDias) || 60));
-  const limite = d.toISOString().slice(0, 10);
+  const limite = dataISOLocal(d);
   return db.cotacoes.filter(c => !c.arquivada && !c.manterNaLista && (c.status === 'cancelada' || (c.status === 'finalizada' && c.data < limite)))
     .sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
 }
@@ -6259,19 +6565,22 @@ function alternativaItem(l, fi) {
  */
 function simularMover(c, comp, fi) {
   const moves = [], presos = [];
+  // totais e quantidades vêm do pedido de verdade (com compra dividida e sem as lojas em Dúvidas)
+  const peds = pedidosPorFornecedor(c);
+  const qtdPed = new Map(((peds.find(p => p.fi === fi) || {}).itens || []).map(x => [x.i, x.qtd]));
   for (const l of comp.linhas) {
-    if (l.vencedor !== fi || !l.q) continue;
+    if (l.vencedor !== fi || !qtdPed.get(l.i)) continue;
     const alt = alternativaItem(l, fi);
-    if (alt) moves.push({ l, j: alt.j, preco: alt.preco }); else presos.push(l);
+    if (alt) moves.push({ l, j: alt.j, preco: alt.preco, q: qtdPed.get(l.i) }); else presos.push(l);
   }
   if (!moves.length) return null;
-  const antes = c.fornecedores.map((f, j) => comp.linhas.reduce((s, l) => s + (l.vencedor === j && l.q ? l.preco * l.q : 0), 0));
+  const antes = c.fornecedores.map((f, j) => (peds.find(p => p.fi === j) || { total: 0 }).total);
   const depois = [...antes];
   let extra = 0;
   for (const m of moves) {
-    extra += (m.preco - m.l.preco) * m.l.q;
-    depois[fi] -= m.l.preco * m.l.q;
-    depois[m.j] += m.preco * m.l.q;
+    extra += (m.preco - m.l.preco) * m.q;
+    depois[fi] -= m.l.preco * m.q;
+    depois[m.j] += m.preco * m.q;
   }
   const regras = c.fornecedores.map(f => regrasForn(f.fornecedorId));
   const frete = tot => tot.reduce((s, t, j) => s + custoFrete(regras[j], t), 0);
@@ -6411,6 +6720,27 @@ function botaoExportarForn(f, fi, n) {
 /** Administrador (ou uso local, sem login na nuvem). */
 function ehAdmin() {
   return !nuvem.usuario || nuvem.admin === true;
+}
+/** Com a nuvem ligada, guarda uma cópia no servidor antes de uma ação que apaga/substitui tudo.
+ *  Devolve false se o usuário desistir (quando a cópia falha, pergunta se quer continuar). */
+async function backupAntesDe(motivo) {
+  if (!nuvem.supabase || !nuvem.usuario) return true;
+  try {
+    if (nuvem.timer || nuvem.gravando) {
+      // termina o que está sendo gravado, envia o que faltar e espera de novo (sincronizar não espera outra gravação em andamento)
+      const esperar = async () => { for (let t = 0; nuvem.gravando && t < 75; t++) await new Promise(r => setTimeout(r, 200)); };
+      await esperar();
+      await sincronizar();
+      await esperar();
+    }
+    const { error } = await nuvem.supabase.rpc('cotacao_backup_agora', { p_motivo: motivo });
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    return await confirmar(`Não consegui guardar uma cópia de segurança na nuvem (${erroAmigavel(e)}).
+
+Continuar mesmo assim?`, 'Continuar sem cópia');
+  }
 }
 
 
@@ -6649,11 +6979,32 @@ function numeroRepetidoCot(c) {
   return mais.id === c.id;
 }
 
+/** Tira o item `i` das Dúvidas (confirmando antes) e ele volta ao pedido. Usada pelo comparativo e pela janela flutuante (`doc`). */
+async function tirarDuvidaDoItem(c, i, doc = document) {
+  if (!c) return false;
+  const alvo = (db.duvidas || []).filter(d => itemDaDuvida(c, d) === i);
+  if (!alvo.length) return false;
+  const it = c.itens[i] || {};
+  const lj = [...new Set(alvo.map(d => d.empresa))].join(' e ');
+  if (!(await confirmar(`Tirar das Dúvidas?
+
+${it.codigo || '—'} · ${it.descricao || ''}${lj ? ` (${lj})` : ''}
+
+O item volta a entrar no pedido.`, 'Tirar das Dúvidas', doc))) return false;
+  const ids = new Set(alvo.map(d => d.id));
+  db.duvidas = db.duvidas.filter(x => !ids.has(x.id));
+  if (ids.has(ui.editDuvida)) ui.editDuvida = null;
+  salvar();
+  render();
+  toast('Item tirado das Dúvidas: volta a entrar no pedido.');
+  return true;
+}
+
 /** Cotação finalizada fica só para consulta (até você destravar nesta tela). */
 function cotTravada(c) {
   return !!c && c.status === 'finalizada' && !ui.destravadas?.has(c.id);
 }
-const ACOES_TRAVADAS = new Set(['marcarComprado', 'dividirCompra', 'escolherVencedor', 'duvidaItem', 'marcaResposta', 'removerPreco', 'limparEscolhas', 'conferirPreco', 'conferirDif']);
+const ACOES_TRAVADAS = new Set(['marcarComprado', 'dividirCompra', 'escolherVencedor', 'duvidaItem', 'marcaResposta', 'removerPreco', 'limparEscolhas', 'conferirPreco', 'conferirDif', 'tirarDuvidaItem']);
 function avisarTravada() {
   toast(ehAdmin() ? '🔒 Cotação finalizada: só para consulta. Para mudar algo, clique em "Editar mesmo assim" no comparativo.'
     : '🔒 Cotação finalizada: só para consulta. Para mudar algo, peça a um administrador.');
@@ -6884,6 +7235,7 @@ function renderCotacao(id) {
       <td class="actions-cell">
         ${botaoExportarForn(f, fi, pedidoDe[fi]?.itens.length || 0)}
         <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥<span class="rot-acao"> Importar</span><input type="file" class="hidden" accept=".xlsx,.xls" data-import="${fi}"></label>
+        <button type="button" class="btn sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎<span class="rot-acao"> Digitar</span></button>
         <details class="menu-acoes"><summary class="btn sm" title="Mais ações: digitar preços, baixar a planilha, remover">⋯</summary>
           <div class="menu-acoes-lista">
             <button class="sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎ Digitar preços</button>
@@ -7024,7 +7376,7 @@ function renderCotacao(id) {
           const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => !['regra', 'campanha', 'comprado'].includes(a)) ? 'conferir' : 'ok';
           return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''}${l.comprado ? ' linha-comprada' : ''}${k % 2 ? ' par' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && linhaNaMarca(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
           <td class="c" title="${SIT_COMP[situacao] || ''}">${l.i + 1}</td>
-          <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
+          <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span> <button type="button" class="sm link btn-tirar-duvida" data-act="tirarDuvidaItem" data-i="${l.i}" title="Tirar este item das Dúvidas (se foi posto por engano ou a loja já respondeu): ele volta para o pedido" aria-label="Tirar das Dúvidas">✕ tirar da dúvida</button><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
             <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
             <span class="prod-tags">${l.it.papelzinho ? '<span class="tag-papel" title="Veio dos papelzinhos de São Sebastião">PAPELZINHOS</span>' : ''}${l.it.marca ? `<span class="marca-pedida" title="Marca pedida: ${esc(l.it.marca)}">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
@@ -7501,81 +7853,203 @@ async function fazerBackup() {
 
 /* ---------------- relatórios ---------------- */
 
-const PERIODOS = [['', 'Todo o período'], ['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['365', 'Últimos 12 meses']];
+const PERIODOS = [['', 'Todo o período'], ['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['365', 'Últimos 12 meses'],
+  ['mes', 'Este mês'], ['mesant', 'Mês passado'], ['datas', 'Escolher datas…']];
 
+/** Período escolhido em Relatórios: { de, ate } em AAAA-MM-DD ('' = sem limite). */
+function periodoRel() {
+  const v = ui.periodoRel || '';
+  const hoje = new Date();
+  if (!v) return { de: '', ate: '' };
+  if (v === 'mes') return { de: dataISOLocal(new Date(hoje.getFullYear(), hoje.getMonth(), 1)), ate: '' };
+  if (v === 'mesant') return { de: dataISOLocal(new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)), ate: dataISOLocal(new Date(hoje.getFullYear(), hoje.getMonth(), 0)) };
+  if (v === 'datas') return { de: ui.relDe || '', ate: ui.relAte || '' };
+  hoje.setDate(hoje.getDate() - Number(v));
+  return { de: dataISOLocal(hoje), ate: '' };
+}
 /** Data inicial do período escolhido em Relatórios ('' = todo o período). */
 function inicioPeriodo() {
-  if (!ui.periodoRel) return '';
-  const d = new Date();
-  d.setDate(d.getDate() - Number(ui.periodoRel));
-  return d.toISOString().slice(0, 10);
+  return periodoRel().de;
+}
+/** A cotação está no período do relatório (data inicial e, quando houver, a final). */
+function noPeriodo(c, desde = inicioPeriodo()) {
+  const { ate } = periodoRel();
+  return (!desde || c.data >= desde) && (!ate || c.data <= ate);
+}
+/** O período em palavras, para títulos e para o feedback ("últimos 30 dias", "de 01/10/2026 a 15/10/2026"). */
+function textoPeriodo() {
+  const v = ui.periodoRel || '';
+  if (v === 'datas') {
+    const { de, ate } = periodoRel();
+    return de && ate ? `de ${fmtData(de)} a ${fmtData(ate)}` : de ? `desde ${fmtData(de)}` : ate ? `até ${fmtData(ate)}` : 'todo o período';
+  }
+  return (PERIODOS.find(([k]) => k === v)?.[1] || 'Todo o período').toLowerCase();
 }
 
+/** Preço mais de 3× acima dos outros preços do item: quase sempre erro de digitação (ex.: 34028 no lugar de 34,03). */
+const FORA_DA_CURVA = 3;
+/** Preços aceitos de um item ([preço, posição do fornecedor]): sem marca errada (não permitida) e sem marca recusada. */
+const precosAceitos = l => l.precos.map((p, j) => [p, j]).filter(([p, j]) => p != null && !l.recusas[j] && !(l.marcas[j] === 'errada' && !l.permitidas[j]));
+/**
+ * Preços fora da realidade de um item: muito acima (mais de 3× a mediana dos outros preços) ou, com 3 ou mais
+ * preços, muito abaixo (menos de 1/3). Devolve [{ p, j, alto, tipico }].
+ */
+function precosForaDaCurva(l) {
+  const v = precosAceitos(l);
+  if (v.length < 2) return [];
+  // 1º os muito acima (comparados com a mediana dos outros); depois, sem eles, os muito abaixo
+  const altos = v.map(([p, j], k) => ({ p, j, alto: true, tipico: mediana(v.filter((x, y) => y !== k).map(([q]) => q)) }))
+    .filter(x => x.p > x.tipico * FORA_DA_CURVA);
+  const resto = v.filter(([, j]) => !altos.some(x => x.j === j));
+  const baixos = resto.length < 3 ? [] : resto.map(([p, j], k) => ({ p, j, alto: false, tipico: mediana(resto.filter((x, y) => y !== k).map(([q]) => q)) }))
+    .filter(x => x.p * FORA_DA_CURVA < x.tipico);
+  return [...altos, ...baixos];
+}
+/**
+ * Preços de um item que servem de comparação nos relatórios: os aceitos, sem os muito acima dos outros.
+ * Assim a economia não é inflada por um preço digitado errado.
+ */
+function precosComparaveis(l) {
+  const altos = new Set(precosForaDaCurva(l).filter(x => x.alto).map(x => x.j));
+  return precosAceitos(l).filter(([, j]) => !altos.has(j)).map(([p]) => p);
+}
+/** Economia do item escolhido contra os outros preços comparáveis (null = não dá para comparar). */
+function economiaLinha(l) {
+  const v = precosComparaveis(l);
+  const k = v.findIndex(p => Math.abs(p - l.preco) < 0.005);
+  if (v.length < 2 || k < 0) return null;
+  const outros = v.filter((p, x) => x !== k);
+  const seg = Math.min(...outros);
+  return { media: v.reduce((a, b) => a + b, 0) / v.length - l.preco, maior: Math.max(...v) - l.preco, dif: seg >= l.preco ? seg / l.preco - 1 : null };
+}
+
+/**
+ * Quantidade comprada de verdade: a das lojas ou, sem quantidade por loja, a do arquivo.
+ * Item sem quantidade nenhuma = 0 (o comparativo usa 1 só para mostrar o preço por unidade).
+ */
+function qtdReal(c, l, porLoja) {
+  if (!porLoja && !(Number(l.it.quantidade) > 0)) return 0;
+  return l.preco == null ? 0 : qtdComprada(c, l, porLoja);
+}
+const temQtdReal = (c, porLoja) => porLoja || c.itens.some(it => Number(it.quantidade) > 0);
+
+/**
+ * O que foi comprado de um item: a parte do vencedor e as compras divididas, cada uma com o preço, a quantidade
+ * e a quantidade de cada loja (lojas = null quando a cotação não tem quantidade por loja).
+ * Respeita os filtros de loja e de fornecedor do relatório.
+ */
+function comprasDoItem(c, l, porLoja) {
+  const partes = [];
+  if (l.vencedor >= 0 && l.preco != null) {
+    const q = qtdReal(c, l, porLoja);
+    if (q > 0) partes.push({ fi: l.vencedor, preco: l.preco, q, principal: true, lojas: porLoja ? Object.fromEntries(lojas().map(lj => [lj.id, l.duvida?.has(lj.id) ? 0 : qtdLoja(c, l.i, lj.id)])) : null });
+  }
+  for (const x of extrasComprados(l)) partes.push({ fi: x.fi, preco: x.preco, q: x.q, principal: false, lojas: x.qtds });
+  return partes.map(p => (ui.relLoja ? { ...p, q: p.lojas ? (p.lojas[ui.relLoja] || 0) : 0 } : p))
+    .filter(p => p.q > 0 && (!ui.relForn || c.fornecedores[p.fi]?.fornecedorId === ui.relForn));
+}
+
+/**
+ * Relatório de compras. Só entram nos valores as cotações FINALIZADAS e com quantidade
+ * (as abertas ainda podem mudar; sem quantidade não há como saber quanto foi comprado).
+ */
 function dadosRelatorio() {
-  const desde = inicioPeriodo();
-  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde))
+  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && noPeriodo(c))
     .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
+  const LJ = lojas();
   const forn = {};
   const porCot = [];
-  const res = { cotacoes: 0, itens: 0, total: 0, media: 0, maior: 0, difs: [] };
+  const andamento = [];
+  const semQtd = [];
+  const meses = {};
+  const res = { cotacoes: 0, itens: 0, total: 0, media: 0, maior: 0, baseComp: 0, difs: [], foraCurva: 0 };
   for (const c of cots) {
     const comp = comparar(c);
     if (!comp.itensCotados) continue;
-    const r = { c, itens: 0, total: 0, media: 0, maior: 0, comparaveis: 0 };
+    if (c.status !== 'finalizada') { andamento.push(c); continue; }
+    if (!temQtdReal(c, comp.porLoja)) { semQtd.push(c); continue; }
+    const r = { c, itens: 0, total: 0, media: 0, maior: 0, baseComp: 0, comparaveis: 0 };
+    const pegaForn = fi => { const f = c.fornecedores[fi]; const k = f.fornecedorId || f.nome; return forn[k] ||= { id: k, nome: f.nome, participou: 0, respondeu: 0, cotados: 0, ganhos: 0, valor: 0, difs: [] }; };
+    const mes = meses[c.data.slice(0, 7)] ||= { mes: c.data.slice(0, 7), total: 0, itens: 0, cotacoes: new Set(), lojas: Object.fromEntries(LJ.map(lj => [lj.id, 0])), semLoja: 0 };
     for (const l of comp.linhas) {
-      const q = l.preco == null ? 0 : qtdComprada(c, l, comp.porLoja);
-      if (!q) continue; // sem quantidade ou todo em Dúvidas: não foi comprado
-      const validos = l.precos.filter(p => p != null);
+      const partes = comprasDoItem(c, l, comp.porLoja);
+      if (!partes.length) continue; // sem quantidade ou todo em Dúvidas: não foi comprado
       r.itens++;
-      r.total += l.preco * q + extrasComprados(l).reduce((t, x) => t + x.preco * x.q, 0);
-      if (validos.length > 1) {
-        // economia só faz sentido onde houve concorrência (2 ou mais preços)
-        r.comparaveis++;
-        r.media += (validos.reduce((a, b) => a + b, 0) / validos.length - l.preco) * q;
-        r.maior += (Math.max(...validos) - l.preco) * q;
-        res.difs.push(l.difSegundo);
+      mes.itens++;
+      for (const p of partes) {
+        const v = p.preco * p.q;
+        r.total += v;
+        mes.total += v;
+        pegaForn(p.fi).valor += v;
+        if (ui.relLoja) mes.lojas[ui.relLoja] += v;
+        else if (p.lojas) for (const lj of LJ) mes.lojas[lj.id] += p.preco * (p.lojas[lj.id] || 0);
+        else mes.semLoja += v;
       }
+      const pr = partes.find(p => p.principal);
+      if (!pr) continue; // só a parte dividida é deste filtro: a economia é a do vencedor
+      const x = pegaForn(pr.fi);
+      x.ganhos++;
+      if (precosForaDaCurva(l).some(y => y.alto)) res.foraCurva++;
+      const e = economiaLinha(l);
+      if (!e) continue; // economia só onde houve concorrência (2 ou mais preços comparáveis)
+      r.comparaveis++;
+      r.media += e.media * pr.q;
+      r.maior += e.maior * pr.q;
+      r.baseComp += l.preco * pr.q;
+      if (e.dif != null) res.difs.push(e.dif);
+      if (e.dif != null && !l.manual && !l.preferencia) x.difs.push(e.dif);
     }
     c.fornecedores.forEach((f, fi) => {
-      const k = f.fornecedorId || f.nome;
-      const x = forn[k] ||= { id: k, nome: f.nome, participou: 0, respondeu: 0, cotados: 0, ganhos: 0, valor: 0, difs: [] };
+      const x = pegaForn(fi);
       x.participou++;
-      if (f.respondidoEm || comp.totais[fi].cotados) x.respondeu++;
+      if (respondeu(f) || comp.totais[fi].cotados) x.respondeu++;
       x.cotados += comp.totais[fi].cotados;
-      x.ganhos += comp.totais[fi].vencidos;
-      x.valor += comp.linhas.reduce((t, l) => t + (l.vencedor === fi && l.preco != null ? l.preco * qtdComprada(c, l, comp.porLoja) : 0)
-        + extrasComprados(l).filter(e => e.fi === fi).reduce((a, e) => a + e.preco * e.q, 0), 0);
-      for (const l of comp.linhas) if (l.vencedor === fi && !l.manual && !l.preferencia && l.difSegundo != null) x.difs.push(l.difSegundo);
     });
+    if (!r.itens) continue; // nada comprado (com os filtros escolhidos)
+    mes.cotacoes.add(c.id);
     porCot.push(r);
     res.cotacoes++;
     res.itens += r.itens;
     res.total += r.total;
     res.media += r.media;
     res.maior += r.maior;
+    res.baseComp += r.baseComp;
   }
-  const fornecedores = Object.values(forn).sort((a, b) => b.ganhos - a.ganhos || b.valor - a.valor || COLLATOR.compare(a.nome, b.nome));
-  return { res, porCot, fornecedores };
+  const fornecedores = Object.values(forn).filter(f => !ui.relForn || f.id === ui.relForn)
+    .sort((a, b) => b.ganhos - a.ganhos || b.valor - a.valor || COLLATOR.compare(a.nome, b.nome));
+  const listaMeses = Object.values(meses).filter(m => m.cotacoes.size).sort((a, b) => b.mes.localeCompare(a.mes));
+  return { res, porCot, fornecedores, andamento, semQtd, meses: listaMeses };
 }
-
-const media = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
 
 const COLS_REL_FORN = [
   ['nome', 'Fornecedor', ''], ['respondeu', 'Respondeu', 'c'], ['cotados', 'Itens cotados', 'r'],
-  ['ganhos', 'Itens ganhos', 'r'], ['pctGanhos', '% ganhos', 'r'], ['valor', 'Valor ganho', 'r'], ['vantagem', 'Vantagem média', 'r'],
+  ['ganhos', 'Itens ganhos', 'r'], ['pctGanhos', '% ganhos', 'r'], ['valor', 'Valor ganho', 'r'], ['vantagem', 'Vantagem típica', 'r'],
 ];
 function ordenarRelForn(lista) {
   const o = ui.ordemRelForn;
   if (!o) return lista;
-  const val = f => (o.campo === 'pctGanhos' ? (f.cotados ? f.ganhos / f.cotados : -1) : o.campo === 'vantagem' ? (media(f.difs) ?? -1) : f[o.campo]);
+  const val = f => (o.campo === 'pctGanhos' ? (f.cotados ? f.ganhos / f.cotados : -1) : o.campo === 'vantagem' ? (mediana(f.difs) ?? -1) : f[o.campo]);
   return [...lista].sort((a, b) => (o.campo === 'nome' ? COLLATOR.compare(a.nome, b.nome) : (val(a) - val(b))) * o.dir || COLLATOR.compare(a.nome, b.nome));
 }
 
-/** Relatório em Excel: resumo, fornecedores, por cotação e a nota dos fornecedores. */
+const NOMES_MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+/** "2026-10" → "out/2026". */
+const rotuloMes = m => `${NOMES_MES[Number(m.slice(5, 7)) - 1]}/${m.slice(0, 4)}`;
+
+/** Filtros escolhidos em palavras (para o Excel e o aviso da tela). */
+function textoFiltrosRel() {
+  const partes = [];
+  if (ui.relLoja) partes.push(`loja ${lojas().find(l => l.id === ui.relLoja)?.nome || ui.relLoja}`);
+  if (ui.relForn) partes.push(`fornecedor ${db.fornecedores.find(f => f.id === ui.relForn)?.nome || ''}`);
+  return partes.join(' · ');
+}
+
+/** Relatório em Excel: resumo, compras por mês, fornecedores, por cotação, nota dos fornecedores e preços suspeitos. */
 async function exportarRelatorio() {
-  const { res, porCot, fornecedores } = dadosRelatorio();
+  const { res, porCot, fornecedores, meses } = dadosRelatorio();
+  const LJ = lojas();
   const wb = await novoLivroExcel();
-  const per = PERIODOS.find(([v]) => v === (ui.periodoRel || ''))?.[1] || 'Todo o período';
+  const per = textoPeriodo();
   const aba = (nome, cab, linhas, larg) => {
     const ws = wb.addWorksheet(nome);
     ws.addRow(cab).font = { bold: true };
@@ -7585,18 +8059,22 @@ async function exportarRelatorio() {
     return ws;
   };
   aba('Resumo', ['Indicador', 'Valor'], [
-    ['Período', per], ['Cotações com resposta', res.cotacoes], ['Itens comprados', res.itens], ['Total das compras (R$)', res.total],
-    ['Economia vs média dos preços (R$)', res.media], ['Economia vs preço mais caro (R$)', res.maior], ['Dif. média 1º × 2º', media(res.difs)],
+    ['Período', per], ['Filtros', textoFiltrosRel() || 'nenhum'], ['Cotações finalizadas (com quantidade)', res.cotacoes], ['Itens comprados', res.itens], ['Total das compras (R$)', res.total],
+    ['Economia vs média dos preços (R$)', res.media], ['Economia vs preço mais caro (R$)', res.maior], ['Dif. típica 1º × 2º (mediana)', mediana(res.difs)],
   ], [36, 20]);
-  aba('Fornecedores', ['Fornecedor', 'Cotações', 'Respondeu', 'Itens cotados', 'Itens ganhos', '% ganhos', 'Valor ganho (R$)', 'Vantagem média'],
-    fornecedores.map(f => [f.nome, f.participou, f.respondeu, f.cotados, f.ganhos, f.cotados ? f.ganhos / f.cotados : null, f.valor, media(f.difs)]), [26, 10, 11, 13, 13, 11, 16, 15]);
+  aba('Por mês', ['Mês', ...LJ.map(lj => `${lj.nome} (R$)`), 'Sem loja (R$)', 'Total (R$)', 'Itens', 'Cotações'],
+    meses.map(m => [rotuloMes(m.mes), ...LJ.map(lj => m.lojas[lj.id]), m.semLoja, m.total, m.itens, m.cotacoes.size]), [12, ...LJ.map(() => 18), 14, 16, 8, 10]);
+  aba('Fornecedores', ['Fornecedor', 'Cotações', 'Respondeu', 'Itens cotados', 'Itens ganhos', '% ganhos', 'Valor ganho (R$)', 'Vantagem típica'],
+    fornecedores.map(f => [f.nome, f.participou, f.respondeu, f.cotados, f.ganhos, f.cotados ? f.ganhos / f.cotados : null, f.valor, mediana(f.difs)]), [26, 10, 11, 13, 13, 11, 16, 15]);
   aba('Por cotação', ['Nº', 'Título', 'Data', 'Status', 'Itens', 'Total comprado (R$)', 'Economia vs média (R$)', 'Economia vs mais caro (R$)'],
     porCot.map(r => [r.c.numero, r.c.titulo || '', r.c.data, STATUS[r.c.status]?.[0] || r.c.status, r.itens, r.total, r.media, r.maior]), [8, 34, 12, 11, 8, 18, 20, 22]);
   const notas = desempenhoFornecedores(inicioPeriodo());
   aba('Nota dos fornecedores', ['Fornecedor', 'Nota', 'Respondeu', 'No prazo', 'Itens cotados', 'Marca errada', 'Notas com divergência', 'Cobrado a mais (R$)'],
     notas.map(x => [x.nome, x.nota, `${x.respondidas}/${x.recebidas}`, x.comPrazo ? `${x.noPrazo}/${x.comPrazo}` : '', `${x.itensCotados}/${x.itensPedidos}`, x.marcaErrada, x.notas ? `${x.notasDiv}/${x.notas}` : '', x.cobrado]), [26, 8, 11, 10, 13, 13, 20, 18]);
+  aba('Preços suspeitos', ['Cotação', 'Data', 'Código', 'Descrição', 'Fornecedor', 'Preço (R$)', 'Preço típico dos outros (R$)', 'Situação'],
+    precosSuspeitos().map(x => [x.c.numero, x.c.data, x.l.it.codigo || '', x.l.it.descricao || '', x.c.fornecedores[x.j]?.nome || '', x.p, x.tipico, x.alto ? 'muito acima' : 'muito abaixo']), [9, 12, 18, 36, 20, 12, 22, 14]);
   // formatos: colunas "(R$)" em dinheiro, "%"/"Vantagem" em porcentagem; no Resumo, pela linha
-  const formato = txt => (/\(R\$\)/.test(txt) ? '#,##0.00' : /%|Vantagem|Dif\. média/.test(txt) ? '0.0%' : null);
+  const formato = txt => (/\(R\$\)/.test(txt) ? '#,##0.00' : /%|Vantagem|Dif\. típica/.test(txt) ? '0.0%' : null);
   for (const ws of wb.worksheets) {
     ws.eachRow((row, i) => {
       if (i === 1) return;
@@ -7607,66 +8085,165 @@ async function exportarRelatorio() {
       });
     });
   }
-  await baixarWorkbook(wb, `Relatorio_${(per || '').replace(/\s+/g, '_')}_${hojeISO()}.xlsx`);
+  await baixarWorkbook(wb, `Relatorio_${per.replace(/[^\p{L}\d]+/gu, '_')}_${hojeISO()}.xlsx`);
 }
 
-/** Itens que mais vão para as cotações do período: quantas vezes foram cotados, comprados e o último preço. */
+/**
+ * Itens que mais vão para as cotações do período: quantas vezes foram cotados, em quantas nenhum fornecedor
+ * mandou preço, em quantas das finalizadas com quantidade foram comprados e o último preço PAGO.
+ */
 function itensMaisCotados() {
-  const desde = inicioPeriodo();
-  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde)).sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
+  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && noPeriodo(c)).sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
   const mapa = new Map();
   for (const c of cots) {
     const comp = comparar(c);
+    const fin = c.status === 'finalizada';
+    const comQtd = fin && temQtdReal(c, comp.porLoja);
     for (const l of comp.linhas) {
       const k = idProdutoItem(l.it) || 'cod:' + chaveCodigo(l.it.descricao || '');
       if (!k) continue;
-      const x = mapa.get(k) || { it: l.it, vezes: 0, compras: 0, qtd: 0, ultimo: null };
+      const x = mapa.get(k) || { it: l.it, vezes: 0, semPreco: 0, finais: 0, compras: 0, semInfo: 0, qtd: 0, ultimo: null };
       x.vezes++;
       x.it = l.it;
-      const q = l.preco == null ? 0 : qtdComprada(c, l, comp.porLoja) + extrasComprados(l).reduce((t, e) => t + e.q, 0);
-      if (q > 0 && comp.porLoja) { x.compras++; x.qtd += q; }
-      if (l.preco != null) x.ultimo = { preco: l.preco, forn: c.fornecedores[l.vencedor]?.nome || '', data: c.data };
+      if (comp.itensCotados && !l.precos.some(p => p != null)) x.semPreco++;
+      if (fin && !comQtd) x.semInfo++;
+      if (comQtd) {
+        x.finais++;
+        const partes = comprasDoItem(c, l, comp.porLoja);
+        const q = partes.reduce((t, p) => t + p.q, 0);
+        if (q > 0) {
+          x.compras++;
+          x.qtd += q;
+          const pr = partes.find(p => p.principal) || partes[0];
+          x.ultimo = { preco: pr.preco, forn: c.fornecedores[pr.fi]?.nome || '', data: c.data };
+        }
+      }
       mapa.set(k, x);
     }
   }
   return [...mapa.values()].sort((a, b) => b.vezes - a.vezes || b.compras - a.compras).slice(0, 30);
 }
 
+/** Preços fora da realidade nas cotações do período (prováveis erros de digitação), os mais recentes primeiro. */
+function precosSuspeitos() {
+  const cots = db.cotacoes.filter(c => c.status !== 'cancelada' && noPeriodo(c)).sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero));
+  const out = [];
+  for (const c of cots) {
+    for (const l of comparar(c).linhas) {
+      for (const x of precosForaDaCurva(l)) {
+        if (ui.relForn && c.fornecedores[x.j]?.fornecedorId !== ui.relForn) continue;
+        out.push({ c, l, ...x });
+      }
+    }
+  }
+  return out;
+}
+
+/** Compras por mês, separadas por loja, com a variação contra o mês anterior. */
+function htmlComprasPorMes(meses) {
+  if (!meses.length) return '';
+  const LJ = ui.relLoja ? lojas().filter(l => l.id === ui.relLoja) : lojas();
+  const semLoja = meses.some(m => m.semLoja > 0.005);
+  const mesAtual = hojeISO().slice(0, 7);
+  const soma = k => meses.reduce((t, m) => t + (k ? m.lojas[k] : m.total), 0);
+  return `<section class="card" id="relMeses">
+    <h3>📅 Compras por mês${LJ.length > 1 ? ' e por loja' : ''}</h3>
+    <p class="small muted" style="margin-top:0">Pela data da cotação. A variação compara com o mês anterior da lista.${meses.some(m => m.mes === mesAtual) ? ' O mês atual ainda está em andamento.' : ''}${semLoja ? ' "Sem loja": cotações sem quantidade por loja (só com a quantidade do arquivo).' : ''}</p>
+    <div class="table-wrap"><table class="tab-rel tab-meses">
+      <thead><tr><th>Mês</th>${LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('')}${semLoja ? '<th class="r">Sem loja</th>' : ''}<th class="r">Total</th><th class="r">vs mês anterior</th><th class="r">Itens</th><th class="r">Cotações</th></tr></thead>
+      <tbody>${meses.map((m, k) => {
+        const ant = meses[k + 1];
+        const vari = ant && ant.total > 0 ? m.total / ant.total - 1 : null;
+        return `<tr>
+        <td><b>${rotuloMes(m.mes)}</b>${m.mes === mesAtual ? ' <span class="small muted">(em andamento)</span>' : ''}</td>
+        ${LJ.map(lj => `<td class="r">${fmtMoeda(m.lojas[lj.id])}${!ui.relLoja && m.total > 0 ? `<br><span class="small muted">${fmtPct(m.lojas[lj.id] / m.total, 0)}</span>` : ''}</td>`).join('')}
+        ${semLoja ? `<td class="r">${m.semLoja > 0.005 ? fmtMoeda(m.semLoja) : '—'}</td>` : ''}
+        <td class="r"><b>${fmtMoeda(m.total)}</b></td>
+        <td class="r">${vari == null ? '—' : `<span class="var-mes">${vari > 0 ? '▲' : '▼'} ${fmtPct(Math.abs(vari))}</span>`}</td>
+        <td class="r">${m.itens}</td>
+        <td class="r">${m.cotacoes.size}</td>
+      </tr>`;
+      }).join('')}</tbody>
+      ${meses.length > 1 ? `<tfoot><tr><th>Total</th>${LJ.map(lj => `<th class="r">${fmtMoeda(soma(lj.id))}</th>`).join('')}${semLoja ? `<th class="r">${fmtMoeda(meses.reduce((t, m) => t + m.semLoja, 0))}</th>` : ''}<th class="r">${fmtMoeda(soma(''))}</th><th></th><th class="r">${meses.reduce((t, m) => t + m.itens, 0)}</th><th class="r">${meses.reduce((t, m) => t + m.cotacoes.size, 0)}</th></tr></tfoot>` : ''}
+    </table></div>
+  </section>`;
+}
+
+/** Lista dos preços suspeitos, cada um com o atalho para o item na cotação (para corrigir o dado de verdade). */
+function htmlPrecosSuspeitos() {
+  const lista = precosSuspeitos();
+  if (!lista.length) return '';
+  const MAX = 100;
+  return `<section class="card" id="relSuspeitos">
+    <h3>⚠️ Preços suspeitos <span class="badge warn">${lista.length}</span></h3>
+    <p class="small muted" style="margin-top:0">Preços mais de 3× acima dos outros preços do mesmo item (ou, com 3 ou mais preços, 3× abaixo): quase sempre erro de digitação do fornecedor. Os muito acima já ficam fora da economia; os muito abaixo podem ter ganhado o item. Clique em <b>Abrir</b> para conferir e corrigir na cotação.</p>
+    <div class="table-wrap"><table class="tab-rel tab-suspeitos">
+      <thead><tr><th>Cotação</th><th>Item</th><th>Fornecedor</th><th class="r">Preço</th><th class="r">Outros preços</th><th></th></tr></thead>
+      <tbody>${lista.slice(0, MAX).map(x => `<tr>
+        <td><b>nº ${esc(x.c.numero)}</b><br><span class="small muted">${fmtData(x.c.data)}</span></td>
+        <td><b class="cod-comp">${esc(x.l.it.codigo || '—')}</b><br><span class="small">${esc(x.l.it.descricao || '')}</span></td>
+        <td>${esc(x.c.fornecedores[x.j]?.nome || '')}</td>
+        <td class="r"><b class="${x.alto ? 'var-sobe' : 'var-desce'}">${fmtMoeda(x.p)}</b><br><span class="small muted">${x.alto ? `${fmtNum(Math.round(x.p / x.tipico))}× acima` : 'muito abaixo'}</span></td>
+        <td class="r">${fmtMoeda(x.tipico)}<br><span class="small muted">típico</span></td>
+        <td class="r"><button type="button" class="sm" data-act="abrirItemCot" data-id="${esc(x.c.id)}" data-i="${x.l.i}" title="Abrir este item no comparativo da cotação nº ${esc(x.c.numero)}">Abrir</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    ${lista.length > MAX ? `<p class="small muted">Mostrando ${MAX} de ${lista.length}. Todos estão no Excel.</p>` : ''}
+  </section>`;
+}
+
 function renderRelatorios() {
-  const { res, porCot, fornecedores: fornBase } = dadosRelatorio();
+  const { res, porCot, fornecedores: fornBase, andamento, semQtd, meses } = dadosRelatorio();
   const maisCot = itensMaisCotados();
   const fornecedores = ordenarRelForn(fornBase);
   const pct = (v, base) => base > 0 ? fmtPct(v / base) : '—';
   const top = fornBase[0];
   const melhorCot = [...porCot].filter(r => r.comparaveis).sort((a, b) => b.media - a.media)[0];
   const o = ui.ordemRelForn;
+  const LJ = lojas();
+  const filtros = textoFiltrosRel();
+  const { de, ate } = periodoRel();
+  const nums = l => l.map(c => `<a href="#" data-route="cotacao" data-id="${esc(c.id)}">nº ${esc(c.numero)}</a>`).join(', ');
+  const foraDoTotal = [
+    andamento.length ? `${andamento.length} em andamento (${nums(andamento)}): entram quando forem finalizadas` : '',
+    semQtd.length ? `${semQtd.length} finalizada(s) sem quantidade (${nums(semQtd)}): sem quantidade não dá para saber o valor comprado` : '',
+  ].filter(Boolean);
+  const avisoFora = foraDoTotal.length ? `<p class="small muted aviso-fora-rel">ℹ️ Não entram nos valores: ${foraDoTotal.join(' · ')}.</p>` : '';
+  const fornOpc = [...db.fornecedores].sort((a, b) => COLLATOR.compare(a.nome, b.nome));
   return `
   <section class="card">
     <div class="row-between cab-pagina">
       <div class="cab-tit"><h2>Relatórios</h2><p class="cab-sub">Compras, economia e desempenho dos fornecedores</p></div>
-      <div class="row">
-        <select id="periodoRel" aria-label="Período do relatório" style="width:auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${ui.periodoRel === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
-        ${res.cotacoes ? '<button type="button" class="sm" data-act="exportarRelatorio" title="Resumo, fornecedores, por cotação e a nota dos fornecedores numa planilha">⬇ Excel</button>' : ''}
+      <div class="row filtros-rel">
+        <select id="periodoRel" aria-label="Período do relatório" style="width:auto">${PERIODOS.map(([v, t]) => `<option value="${v}" ${(ui.periodoRel || '') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        ${ui.periodoRel === 'datas' ? `<label class="data-rel">de <input type="date" id="relDe" value="${esc(de)}" aria-label="Data inicial"></label><label class="data-rel">até <input type="date" id="relAte" value="${esc(ate)}" aria-label="Data final"></label>` : ''}
+        ${LJ.length > 1 ? `<select id="relLoja" aria-label="Loja" style="width:auto"><option value="">Todas as lojas</option>${LJ.map(lj => `<option value="${esc(lj.id)}" ${ui.relLoja === lj.id ? 'selected' : ''}>${esc(lj.nome)}</option>`).join('')}</select>` : ''}
+        <select id="relForn" aria-label="Fornecedor" style="width:auto;max-width:220px"><option value="">Todos os fornecedores</option>${fornOpc.map(f => `<option value="${esc(f.id)}" ${ui.relForn === f.id ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}</select>
+        ${res.cotacoes ? '<button type="button" class="sm" data-act="exportarRelatorio" title="Resumo, compras por mês, fornecedores, por cotação, nota dos fornecedores e preços suspeitos numa planilha">⬇ Excel</button>' : ''}
       </div>
     </div>
+    ${filtros ? `<p class="filtro-ativo-rel small">🔎 Mostrando só: <b>${esc(filtros)}</b> <button type="button" class="link small" data-act="limparFiltrosRel">✕ limpar filtros</button></p>` : ''}
     ${res.cotacoes ? `<div class="stats stats-rel">
-      <div class="stat"><span class="muted small">Cotações com resposta</span><b>${res.cotacoes}</b></div>
+      <div class="stat" title="Só as cotações finalizadas e com quantidade"><span class="muted small">Cotações finalizadas</span><b>${res.cotacoes}</b></div>
       <div class="stat"><span class="muted small">Itens comprados</span><b>${res.itens}</b></div>
       <div class="stat"><span class="muted small">Total das compras</span><b>${fmtMoeda(res.total)}</b></div>
-      <div class="stat" title="Diferença entre a média dos preços recebidos e o preço escolhido, nos itens com 2 ou mais preços"><span class="muted small">Economia vs média dos preços</span><b class="ok">${fmtMoeda(res.media)}</b><span class="small muted">${pct(res.media, res.total + res.media)} a menos</span></div>
-      <div class="stat" title="Diferença entre o preço mais caro recebido e o preço escolhido"><span class="muted small">Economia vs preço mais caro</span><b class="ok">${fmtMoeda(res.maior)}</b><span class="small muted">${pct(res.maior, res.total + res.maior)} a menos</span></div>
-      <div class="stat" title="Em média, quanto o 2º melhor preço é mais caro que o melhor"><span class="muted small">Dif. média 1º × 2º</span><b>${fmtPct(media(res.difs))}</b></div>
+      <div class="stat" title="Diferença entre a média dos preços recebidos e o preço escolhido, nos itens com 2 ou mais preços. Não entram preços com marca errada nem preços fora da realidade (mais de 3× acima dos outros, quase sempre erro de digitação)"><span class="muted small">Economia vs média dos preços</span><b class="ok">${fmtMoeda(res.media)}</b><span class="small muted">${pct(res.media, res.baseComp + res.media)} a menos</span></div>
+      <div class="stat" title="Diferença entre o preço mais caro recebido e o preço escolhido (sem marca errada e sem preços fora da realidade)"><span class="muted small">Economia vs preço mais caro</span><b class="ok">${fmtMoeda(res.maior)}</b><span class="small muted">${pct(res.maior, res.baseComp + res.maior)} a menos</span></div>
+      <div class="stat" title="Quanto o 2º melhor preço costuma ser mais caro que o melhor (mediana: um preço fora do comum não distorce)"><span class="muted small">Dif. típica 1º × 2º</span><b>${fmtPct(mediana(res.difs))}</b></div>
     </div>
+    ${avisoFora}
+    ${res.foraCurva ? `<p class="small muted">⚠️ ${res.foraCurva} item(ns) comprado(s) tinham algum preço mais de 3× acima dos outros (provável erro de digitação do fornecedor): esse preço ficou fora da conta da economia. <a href="#" data-act="irSecaoRel" data-alvo="relSuspeitos">Ver os preços suspeitos</a></p>` : ''}
     <ul class="destaques-rel">
       ${top ? `<li>🏆 Quem mais ganhou: <button type="button" class="link" data-act="analiseForn" data-id="${esc(top.id)}"><b>${esc(top.nome)}</b></button> — ${top.ganhos} itens · ${fmtMoeda(top.valor)}</li>` : ''}
       ${melhorCot ? `<li>💰 Maior economia: <a href="#" data-route="cotacao" data-id="${esc(melhorCot.c.id)}"><b>cotação nº ${esc(melhorCot.c.numero)}</b></a>${melhorCot.c.titulo ? ` (${esc(melhorCot.c.titulo)})` : ''} — ${fmtMoeda(melhorCot.media)} abaixo da média</li>` : ''}
-      <li>🧾 Média por cotação: ${fmtMoeda(res.total / res.cotacoes)} · ${Math.round(res.itens / res.cotacoes)} itens</li>
+      <li>🧾 Média por cotação finalizada: ${fmtMoeda(res.total / res.cotacoes)} · ${Math.round(res.itens / res.cotacoes)} itens comprados</li>
     </ul>
-    <nav class="atalhos-rel small" aria-label="Partes do relatório"><span class="muted">Ir para:</span><a href="#" data-act="irSecaoRel" data-alvo="relForn">Fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relCot">Por cotação</a><a href="#" data-act="irSecaoRel" data-alvo="notaFornecedores">Nota dos fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relMaisCotados">Itens mais cotados</a></nav>` : '<p class="empty">Ainda não há cotações com preços neste período. Os relatórios aparecem assim que os fornecedores responderem (as cotações canceladas não entram).</p>'}
+    <nav class="atalhos-rel small" aria-label="Partes do relatório"><span class="muted">Ir para:</span><a href="#" data-act="irSecaoRel" data-alvo="relMeses">Por mês</a><a href="#" data-act="irSecaoRel" data-alvo="relForn">Fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relCot">Por cotação</a><a href="#" data-act="irSecaoRel" data-alvo="relSuspeitos">Preços suspeitos</a><a href="#" data-act="irSecaoRel" data-alvo="notaFornecedores">Nota dos fornecedores</a><a href="#" data-act="irSecaoRel" data-alvo="relMaisCotados">Itens mais cotados</a></nav>` : `<p class="empty">Nenhuma compra ${filtros ? 'com esses filtros ' : ''}neste período. Os valores contam só as cotações finalizadas e com quantidade (as abertas e as canceladas não entram).</p>${avisoFora}`}
   </section>
+  ${res.cotacoes ? htmlComprasPorMes(meses) : ''}
   ${fornecedores.length && res.cotacoes ? `<section class="card" id="relForn">
     <h3>Fornecedores</h3>
-    <p class="muted small" style="margin-top:0">Quem ganha mais itens. "Vantagem média" é quanto, em média, o 2º colocado estava mais caro nos itens que o fornecedor ganhou pelo menor preço. Clique no título de uma coluna para ordenar e no fornecedor para a análise detalhada.</p>
+    <p class="muted small" style="margin-top:0">Quem mais vendeu nas cotações finalizadas: "Itens ganhos" e "Valor ganho" são os itens comprados dele (com quantidade). "Vantagem típica" é quanto o 2º colocado costuma estar mais caro (mediana) nos itens que ele ganhou pelo menor preço. Clique no título de uma coluna para ordenar e no fornecedor para a análise detalhada.</p>
     <div class="table-wrap"><table class="tab-rel">
       <thead><tr>${COLS_REL_FORN.map(([k, rot, cls]) => `<th${cls ? ` class="${cls}"` : ''}><button type="button" class="th-ordem${o?.campo === k ? ' ativa' : ''}" data-act="ordemRelForn" data-campo="${k}" title="Ordenar por ${rot.toLowerCase()}">${rot}${o?.campo === k ? (o.dir > 0 ? ' ↑' : ' ↓') : ''}</button></th>`).join('')}</tr></thead>
       <tbody>${fornecedores.map(f => `<tr>
@@ -7676,30 +8253,38 @@ function renderRelatorios() {
         <td class="r">${f.ganhos}</td>
         <td class="r"><span class="pct-barra"><span class="barra"><span style="width:${f.cotados ? Math.round(100 * f.ganhos / f.cotados) : 0}%"></span></span>${pct(f.ganhos, f.cotados)}</span></td>
         <td class="r">${fmtMoeda(f.valor)}</td>
-        <td class="r">${fmtPct(media(f.difs))}</td>
+        <td class="r">${fmtPct(mediana(f.difs))}</td>
       </tr>`).join('')}</tbody>
     </table></div>
   </section>
   <section class="card" id="relCot">
     <h3>Por cotação</h3>
-    <div class="table-wrap"><table>
+    <div class="table-wrap"><table class="tab-rel">
       <thead><tr><th>Nº</th><th>Data</th><th class="r">Itens</th><th class="r">Total comprado</th><th class="r">Economia vs média</th><th class="r">Economia vs mais caro</th></tr></thead>
       <tbody>${porCot.map(r => `<tr>
         <td><a href="#" data-route="cotacao" data-id="${r.c.id}"><b>${esc(r.c.numero)}</b></a> ${statusBadge(r.c.status)}${r.c.titulo ? `<br><span class="small muted">${esc(r.c.titulo)}</span>` : ''}</td>
         <td>${fmtData(r.c.data)}</td>
         <td class="r">${r.itens}</td>
         <td class="r">${fmtMoeda(r.total)}</td>
-        <td class="r">${r.comparaveis ? `${fmtMoeda(r.media)} <span class="small muted">(${pct(r.media, r.total + r.media)})</span>` : '—'}</td>
-        <td class="r">${r.comparaveis ? `${fmtMoeda(r.maior)} <span class="small muted">(${pct(r.maior, r.total + r.maior)})</span>` : '—'}</td>
+        <td class="r">${r.comparaveis ? `${fmtMoeda(r.media)} <span class="small muted">(${pct(r.media, r.baseComp + r.media)})</span>` : '—'}</td>
+        <td class="r">${r.comparaveis ? `${fmtMoeda(r.maior)} <span class="small muted">(${pct(r.maior, r.baseComp + r.maior)})</span>` : '—'}</td>
       </tr>`).join('')}</tbody>
     </table></div>
   </section>` : ''}
+  ${htmlPrecosSuspeitos()}
   ${maisCot.length ? `<section class="card" id="relMaisCotados">
     <h3>🔁 Itens mais cotados</h3>
-    <p class="small muted" style="margin-top:0">Os itens que mais vão para as cotações no período: quantas vezes foram cotados, em quantas foram comprados e o último preço escolhido.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Código</th><th>Descrição</th><th>Marca</th><th class="r">Cotado</th><th class="r">Comprado</th><th class="r">Qtd. comprada</th><th class="r">Último preço</th></tr></thead>
-      <tbody>${maisCot.map(x => `<tr><td><b class="cod-comp">${esc(x.it.codigo || '—')}</b></td><td>${esc(x.it.descricao || '')}</td><td class="small">${esc(x.it.marca || '')}</td><td class="r"><b>${x.vezes}×</b></td><td class="r">${x.compras}×</td><td class="r">${x.qtd ? fmtNum(x.qtd) : '—'}</td><td class="r">${x.ultimo ? `${fmtMoeda(x.ultimo.preco)}<br><span class="small muted">${esc(x.ultimo.forn)} · ${fmtData(x.ultimo.data)}</span>` : '—'}</td></tr>`).join('')}</tbody>
+    <p class="small muted" style="margin-top:0">Os itens que mais vão para as cotações no período. <b>Sem preço</b>: cotações em que nenhum fornecedor mandou preço (falta fornecedor para o item). <b>Comprado</b>: em quantas das cotações finalizadas com quantidade ele foi comprado${ui.relForn ? ' deste fornecedor' : ''}. <b>Último preço pago</b>: o da última compra.</p>
+    <div class="table-wrap"><table class="tab-rel tab-mais-cot">
+      <thead><tr><th>Item</th><th class="r">Cotado</th><th class="r">Sem preço</th><th class="r">Comprado</th><th class="r">Qtd.</th><th class="r">Último preço pago</th></tr></thead>
+      <tbody>${maisCot.map(x => `<tr>
+        <td class="item-rel"><b class="cod-comp">${esc(x.it.codigo || '—')}</b><span class="desc-rel">${esc(x.it.descricao || '')}</span>${x.it.marca ? `<span class="small muted">${esc(x.it.marca)}</span>` : ''}</td>
+        <td class="r"><b>${x.vezes}×</b></td>
+        <td class="r">${x.semPreco ? `<span class="var-sobe" title="Em ${x.semPreco} cotação(ões) nenhum fornecedor mandou preço">${x.semPreco}×</span>` : '—'}</td>
+        <td class="r">${x.finais ? `${x.compras} de ${x.finais}` : '—'}${x.semInfo ? `<br><span class="small muted" title="Cotações finalizadas sem quantidade: não dá para saber se foi comprado">+${x.semInfo} sem qtd.</span>` : ''}</td>
+        <td class="r">${x.qtd ? fmtNum(x.qtd) : '—'}</td>
+        <td class="r">${x.ultimo ? `${fmtMoeda(x.ultimo.preco)}<br><span class="small muted">${esc(x.ultimo.forn)} · ${fmtData(x.ultimo.data)}</span>` : '—'}</td>
+      </tr>`).join('')}</tbody>
     </table></div>
   </section>` : ''}
   ${secaoNotaFornecedores()}`;
@@ -7736,7 +8321,7 @@ function desempenhoFornecedores(desde = inicioPeriodo(), cotId = null) {
     comExigencia: 0, marcaErrada: 0, semMarca: 0, notas: 0, notasDiv: 0, cobrado: 0, faltas: 0, difs: [], ganhos: 0,
   });
   // uma cotação só (análise individual) ou todas do período (análise geral)
-  const cots = cotId ? db.cotacoes.filter(c => c.id === cotId) : db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde));
+  const cots = cotId ? db.cotacoes.filter(c => c.id === cotId) : db.cotacoes.filter(c => c.status !== 'cancelada' && noPeriodo(c, desde));
   for (const c of cots) {
     const comp = comparar(c);
     c.fornecedores.forEach((f, j) => {
@@ -7859,7 +8444,7 @@ function secaoNotaFornecedores() {
  * competitividade (itens ganhos, quanto fica acima do melhor preço), marcas, notas fiscais e histórico.
  */
 function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
-  const cots = cotId ? db.cotacoes.filter(c => c.id === cotId) : db.cotacoes.filter(c => c.status !== 'cancelada' && (!desde || c.data >= desde));
+  const cots = cotId ? db.cotacoes.filter(c => c.id === cotId) : db.cotacoes.filter(c => c.status !== 'cancelada' && noPeriodo(c, desde));
   const r = { hist: [], cotados: 0, ganhos: 0, ganhosPreco: 0, segundo: 0, valorGanho: 0, acima: [], perdas: [], marcas: {}, marcasGanhas: {}, erradas: [], recebidas: 0, confirmadas: 0, comPedido: 0, exportados: 0, naoCotados: new Map() };
   for (const c of [...cots].sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero))) {
     const j = c.fornecedores.findIndex(f => (f.fornecedorId || f.nome) === id);
@@ -7883,7 +8468,7 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
         if (l.marcas[j] === 'errada') r.erradas.push({ c, it: l.it, pedida: l.it.marca, mandou: m });
         if (l.vencedor === j) {
           h.ganhos++;
-          h.valor += p * qtdComprada(c, l, comp.porLoja);
+          h.valor += p * qtdReal(c, l, comp.porLoja); // sem quantidade: não há valor comprado
         }
         for (const e of extrasComprados(l)) if (e.fi === j) h.valor += e.preco * e.q;
         if (l.vencedor === j) {
@@ -7905,7 +8490,7 @@ function analiseFornecedor(id, desde = inicioPeriodo(), cotId = null) {
     // pedido só existe com quantidade (o mesmo critério do quadro Fornecedores e da exportação)
     h.temPedido = resp && pedidosPorFornecedor(c).some(pp => pp.fi === j);
     if (h.temPedido || f.concluidoEm) { r.comPedido++; if (f.concluidoEm) r.exportados++; }
-    r.valorGanho += h.valor;
+    if (c.status === 'finalizada') r.valorGanho += h.valor; // as abertas ainda podem mudar
     r.acima.push(...h.acima);
     h.mediaAcima = h.acima.length ? h.acima.reduce((a, b) => a + b, 0) / h.acima.length : null;
     r.hist.push(h);
@@ -7975,8 +8560,8 @@ async function abrirAnaliseFornecedor(id) {
   const a = analiseFornecedor(id, inicioPeriodo(), cot?.id || null);
   const cad = db.fornecedores.find(f => f.id === id);
   const pct = (v, d = 0) => fmtPct(v, d);
-  const escopo = cot ? `cotação nº ${esc(cot.numero)}` : ui.periodoRel ? `últimos ${esc(ui.periodoRel)} dias` : 'todas as cotações';
-  const escopoTxt = cot ? `cotação nº ${cot.numero} (${fmtData(cot.data)})` : ui.periodoRel ? `últimos ${ui.periodoRel} dias` : 'todas as cotações';
+  const escopo = cot ? `cotação nº ${esc(cot.numero)}` : ui.periodoRel ? esc(textoPeriodo()) : 'todas as cotações';
+  const escopoTxt = cot ? `cotação nº ${cot.numero} (${fmtData(cot.data)})` : ui.periodoRel ? textoPeriodo() : 'todas as cotações';
   // comparação com os outros fornecedores do mesmo período
   const outros = desemp.map(y => ({ id: y.id, nota: y.nota, a: y.id === id ? a : analiseFornecedor(y.id, inicioPeriodo(), cot?.id || null) }));
   const posNota = [...outros].filter(o => o.nota != null).sort((p, q) => q.nota - p.nota).findIndex(o => o.id === id) + 1;
@@ -8601,7 +9186,7 @@ function renderDuvidas() {
       ${ed ? '' : `<label>Empresa<select name="empresa">${emps.map(e => `<option ${v.empresa === e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></label>`}
       <label>Código do produto<input name="codigo" required value="${esc(v.codigo)}" autocomplete="off"></label>
       ${ed ? emps.map(e => `<label>Qtd ${esc(e)}<input name="qtd_${esc(e)}" inputmode="numeric" value="${esc(qtdEd(e))}" placeholder="—" title="Vazio ou 0: tira ${esc(e)} desta dúvida"></label>`).join('') : `<label>Quantidade<input name="qtd" inputmode="numeric" value="${esc(v.qtd)}"></label>`}
-      <label>Valor (R$)<input name="valor" inputmode="decimal" value="${v.valor ? esc(fmtNum(v.valor, 2)) : ''}"></label>
+      <label>Valor (R$)<input name="valor" inputmode="decimal" value="${v.valor ? esc(fmtValorCampo(v.valor)) : ''}"></label>
       <label>Marca<input name="marca" value="${esc(v.marca)}"></label>
       <label style="grid-column:span 2">Observação<input name="obs" value="${esc(v.obs)}" placeholder="Ex.: MARCA DIFERENTE, SÓ TEM ESSA"></label>
       <div class="actions" style="grid-column:1/-1">
@@ -8655,9 +9240,9 @@ function renderFornecedores() {
       <label>E-mail<input name="email" type="email" value="${esc(v.email)}"></label>
       <label>Telefone / WhatsApp<input name="telefone" value="${esc(v.telefone)}"></label>
       <label>CNPJ <span class="muted small">(para reconhecer a NF-e)</span><input name="cnpj" value="${esc(v.cnpj)}"></label>
-      <label>Pedido mínimo (R$)<input name="pedidoMinimo" inputmode="decimal" value="${v.pedidoMinimo ? esc(fmtNum(v.pedidoMinimo, 2)) : ''}" placeholder="sem mínimo"></label>
-      <label>Frete (R$)<input name="frete" inputmode="decimal" value="${v.frete ? esc(fmtNum(v.frete, 2)) : ''}" placeholder="sem frete"></label>
-      <label>Frete grátis acima de (R$)<input name="freteGratisAcima" inputmode="decimal" value="${v.freteGratisAcima ? esc(fmtNum(v.freteGratisAcima, 2)) : ''}" placeholder="—"></label>
+      <label>Pedido mínimo (R$)<input name="pedidoMinimo" inputmode="decimal" value="${v.pedidoMinimo ? esc(fmtValorCampo(v.pedidoMinimo)) : ''}" placeholder="sem mínimo"></label>
+      <label>Frete (R$)<input name="frete" inputmode="decimal" value="${v.frete ? esc(fmtValorCampo(v.frete)) : ''}" placeholder="sem frete"></label>
+      <label>Frete grátis acima de (R$)<input name="freteGratisAcima" inputmode="decimal" value="${v.freteGratisAcima ? esc(fmtValorCampo(v.freteGratisAcima)) : ''}" placeholder="—"></label>
       <label style="grid-column:1/-1">Observação (o que fornece, condições…)<input name="obs" value="${esc(v.obs)}"></label>
       <div class="actions" style="grid-column:1/-1">
         ${f ? '<button type="button" data-act="cancelarForn">Cancelar</button>' : ''}
@@ -8926,7 +9511,7 @@ function renderConfig() {
       <p class="muted small">A compra é dividida entre estas lojas: no comparativo aparece uma coluna de quantidade para cada uma, e os pedidos saem separados. O endereço vai no pedido como local de entrega.</p>
       <div class="table-wrap"><table class="tab-lojas">
         <thead><tr><th>Loja</th><th>Sigla</th><th>CNPJ</th><th>Endereço de entrega</th><th><span class="sr-only">Ações</span></th></tr></thead>
-        <tbody id="lojasCfg">${lojas().map(linhaLojaCfg).join('')}</tbody>
+        <tbody id="lojasCfg" data-ids="${esc(JSON.stringify(lojas().map(l => l.id)))}">${lojas().map(linhaLojaCfg).join('')}</tbody>
       </table></div>
       <button type="button" class="sm" data-act="addLojaCfg" style="margin-top:6px">+ Adicionar loja</button>
   </section>
@@ -8965,8 +9550,8 @@ function renderConfig() {
       <button data-act="backup">⬇ Baixar backup</button>
       <label class="check-inline">Lembrar a cada
         <select id="backupDias" style="width:auto">${[[3, '3 dias'], [7, '7 dias'], [15, '15 dias'], [30, '30 dias'], [0, 'nunca']].map(([v, t]) => `<option value="${v}" ${Number(db.config.backupDias ?? 7) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-      <label class="btn" style="margin:0">📥 Restaurar backup<input type="file" class="hidden" accept=".json" data-restaurar></label>
-      <button class="danger" data-act="apagarTudo">Apagar todos os dados</button>
+      ${ehAdmin() ? `<label class="btn" style="margin:0">📥 Restaurar backup<input type="file" class="hidden" accept=".json" data-restaurar></label>
+      <button class="danger" data-act="apagarTudo">Apagar todos os dados</button>` : ''}
     </div>
     <p class="small muted" style="margin-top:10px">${db.produtos.length} produtos · ${db.fornecedores.length} fornecedores · ${db.cotacoes.length} cotações${db.ultimoBackup ? ` · último backup em ${fmtData(db.ultimoBackup)}` : ''}</p>
     ${renderBackupsNuvem()}
@@ -9002,7 +9587,7 @@ function renderBackupsNuvem() {
 
 async function carregarBackupsNuvem() {
   const { data, error } = await nuvem.supabase.rpc('cotacao_listar_backups');
-  ui.backupsNuvem = error ? { erro: error.message } : { lista: data || [] };
+  ui.backupsNuvem = error ? { erro: erroAmigavel(error) } : { lista: data || [] };
 }
 
 async function lerBackupNuvem(id) {
@@ -9298,7 +9883,7 @@ function render() {
   } catch (e) {
     console.error(e);
     app.innerHTML = `<section class="card"><h2>Não foi possível abrir esta tela</h2>
-      <p class="muted">Ocorreu um erro: ${esc(e.message)}</p>
+      <p class="muted">Ocorreu um erro: ${esc(erroAmigavel(e))}</p>
       <p class="muted small">Tente recarregar a página. Se continuar, avise com a mensagem acima.</p></section>`;
   }
   if (abertos) voltarAbertos(abertos);
@@ -9427,7 +10012,7 @@ async function alterarPrecoResposta(c, i, fi, doc = document) {
   const o = f?.respostas?.[i];
   if (!o) return;
   const it = c.itens[i];
-  const v = await pedirValor(`Valor correto de ${f.nome} para ${it.codigo || it.descricao}:${o.precoOriginal != null ? ` (valor original ${fmtMoeda(o.precoOriginal)})` : ''}`, { valor: fmtNum(o.preco, 2), ok: 'Salvar', doc });
+  const v = await pedirValor(`Valor correto de ${f.nome} para ${it.codigo || it.descricao}:${o.precoOriginal != null ? ` (valor original ${fmtMoeda(o.precoOriginal)})` : ''}`, { valor: fmtValorCampo(o.preco, 4), ok: 'Salvar', doc });
   if (v == null) return;
   const novo = parseNum(v);
   if (!(novo > 0)) return avisar('Valor inválido. Para tirar o preço, use "Remover o preço".');
@@ -9600,7 +10185,7 @@ const acoes = {
       toast(`Exportado: ${Object.keys(documentos).length} documentos e ${conteudo.usuarios.length} usuário(s).`, 6000);
     } catch (e) {
       console.error(e);
-      avisar('Não consegui exportar: ' + e.message);
+      avisar('Não consegui exportar: ' + erroAmigavel(e));
     }
   },
   irSecaoCot: el => {
@@ -9834,7 +10419,7 @@ const acoes = {
       salvo = await salvarComo(nomePlanilha(c, null), async () => new Blob([await (await gerarPlanilha(c, null)).xlsx.writeBuffer()], { type: TIPO_XLSX }));
     } catch (e) {
       console.error(e);
-      return avisar('Não foi possível salvar a planilha: ' + e.message);
+      return avisar('Não foi possível salvar a planilha: ' + erroAmigavel(e));
     }
     if (salvo === false) {
       toast('Cotação não criada: o salvamento foi cancelado.');
@@ -10044,7 +10629,7 @@ const acoes = {
       const n = await duvidasDoItem(c, i, fi, 'MARCA DIFERENTE');
       if (n <= 0) return;
       render();
-      toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila).`);
+      toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila). Se foi engano, clique em ✕ tirar da dúvida no item.`, 5000);
       return;
     }
     if (escolha === 'corrigir') {
@@ -10159,6 +10744,7 @@ const acoes = {
 
   excluirCot: async () => {
     const c = cotAtual();
+    if (c.status === 'finalizada' && !ehAdmin()) return avisar('Só um administrador pode excluir uma cotação finalizada. Use "Arquivar" para tirá-la da lista sem perder o histórico.');
     if (!(await confirmar(`Excluir a cotação nº ${c.numero}? Isso não pode ser desfeito.`, 'Excluir cotação'))) return;
     db.cotacoes = db.cotacoes.filter(x => x.id !== c.id);
     salvar();
@@ -10253,13 +10839,14 @@ const acoes = {
     render();
   },
   copiarDuvidas: el => copiar(textoDuvidas(), el).then(() => toast('Texto copiado para colar no WhatsApp.')),
+  tirarDuvidaItem: el => tirarDuvidaDoItem(cotAtual(), +el.dataset.i),
   duvidaItem: async el => {
     const c = cotAtual();
     const n = await duvidasDoItem(c, +el.dataset.i, el.dataset.f != null ? +el.dataset.f : null);
     if (!n) return avisar('Este item ainda não tem preço.');
     if (n < 0) return; // cancelou
     render();
-    toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila).`);
+    toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila). Se foi engano, clique em ✕ tirar da dúvida no item.`, 5000);
   },
 
   editarProd: el => { ui.editProd = el.dataset.id; render(); window.scrollTo(0, 0); },
@@ -10305,7 +10892,7 @@ const acoes = {
     el.disabled = true;
     const { error } = await nuvem.supabase.rpc('cotacao_backup_agora', { p_motivo: 'manual' });
     el.disabled = false;
-    if (error) return avisar('Não consegui fazer a cópia: ' + error.message);
+    if (error) return avisar('Não consegui fazer a cópia: ' + erroAmigavel(error));
     await carregarBackupsNuvem();
     render();
     toast('Cópia feita no Supabase.');
@@ -10319,7 +10906,7 @@ const acoes = {
       await salvarComo(nome, async () => new Blob([JSON.stringify(estado, null, 2)], { type: 'application/json' }),
         { description: 'Backup do sistema', accept: { 'application/json': ['.json'] } });
     } catch (e) {
-      avisar('Não consegui baixar a cópia: ' + e.message);
+      avisar('Não consegui baixar a cópia: ' + erroAmigavel(e));
     }
   },
   restaurarBackupNuvem: async el => {
@@ -10329,13 +10916,13 @@ const acoes = {
     try {
       estado = estadoDeBackup(await lerBackupNuvem(el.dataset.id));
     } catch (e) {
-      return avisar('Não consegui ler a cópia: ' + e.message);
+      return avisar('Não consegui ler a cópia: ' + erroAmigavel(e));
     }
     if (!(await confirmar(`Voltar os dados para a cópia de ${quando}?\n\n${estado.produtos.length.toLocaleString('pt-BR')} produtos, ${estado.fornecedores.length} fornecedores, ${estado.cotacoes.length} cotações.\n\nTudo o que foi feito depois disso será substituído, em todos os computadores. Antes, o sistema guarda uma cópia do estado atual (dá para desfazer).`, 'Restaurar esta cópia'))) return;
     // cópia de segurança do estado atual antes de voltar
     if (nuvem.timer || nuvem.gravando) await sincronizar();
     const { error } = await nuvem.supabase.rpc('cotacao_backup_agora', { p_motivo: 'antes de restaurar' });
-    if (error) return avisar('Não consegui guardar o estado atual antes de restaurar, então não restaurei nada: ' + error.message);
+    if (error) return avisar('Não consegui guardar o estado atual antes de restaurar, então não restaurei nada: ' + erroAmigavel(error));
     db = estado;
     cacheBusca = null;
     versaoDados++;
@@ -10484,6 +11071,8 @@ const acoes = {
   },
   exportarRelatorio: () => exportarRelatorio(),
   irSecaoRel: el => document.getElementById(el.dataset.alvo)?.scrollIntoView({ block: 'start', behavior: 'smooth' }),
+  abrirItemCot: el => { const c = db.cotacoes.find(x => x.id === el.dataset.id); if (c) irParaItemCot(c, Number(el.dataset.i)); },
+  limparFiltrosRel: () => { ui.relLoja = ''; ui.relForn = ''; render(); },
   ordemRelForn: el => {
     const campo = el.dataset.campo;
     const o = ui.ordemRelForn;
@@ -10645,7 +11234,7 @@ const acoes = {
   adiarBackup: () => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
-    db.backupAdiadoAte = d.toISOString().slice(0, 10);
+    db.backupAdiadoAte = dataISOLocal(d);
     salvar();
     render();
   },
@@ -10668,8 +11257,10 @@ const acoes = {
   },
 
   apagarTudo: async () => {
+    if (!ehAdmin()) return avisar('Só um administrador pode apagar todos os dados.');
     if (!(await confirmar('Apagar TODOS os produtos, fornecedores e cotações?', 'Apagar'))) return;
     if (!(await confirmar('Tem certeza mesmo? Todos os dados serão apagados para sempre.', 'Apagar tudo'))) return;
+    if (!(await backupAntesDe('antes de apagar tudo'))) return;
     db = structuredClone(DEFAULT_DB);
     salvar();
     render();
@@ -10861,24 +11452,43 @@ const formularios = {
   },
 
   config: form => {
+    // grava só o que a pessoa mudou no formulário: o resto pode ter sido alterado em outro computador
+    // depois que a tela foi aberta (ex.: o próximo nº de cotação) e não pode voltar ao valor antigo
+    const mudou = el => (el.type === 'checkbox' ? el.checked !== el.defaultChecked : el.value !== el.defaultValue);
+    const d = {};
+    for (const el of form.elements) {
+      if (!el.name || el.name.startsWith('lj_') || !mudou(el)) continue;
+      if (el.type === 'checkbox') d[el.name] = el.checked;
+      else if (el.name === 'proxNumero') d.proxNumero = Math.max(1, parseInt(el.value, 10) || 1);
+      else if (el.name === 'diasAviso') d.diasAviso = Math.max(0, Math.min(30, parseInt(el.value, 10) || 0));
+      else d[el.name] = el.value.trim();
+    }
+    // lojas: parte da lista atual e aplica só as lojas incluídas, removidas e os campos alterados
+    const tbLojas = form.querySelector('#lojasCfg');
+    let idsAntes = [];
+    try { idsAntes = JSON.parse(tbLojas?.dataset.ids || '[]'); } catch (e) { /* sem a lista: trata todas como novas */ }
+    const linhas = [...form.querySelectorAll('.loja-cfg')];
+    const campoLoja = (tr, k) => tr.querySelector(`[data-c=${k}]`);
+    const lerLoja = (tr, k) => { const v = campoLoja(tr, k).value.trim(); return k === 'sigla' ? v.toUpperCase() : v; };
+    const lojasMudaram = linhas.length !== idsAntes.length
+      || linhas.some((tr, n) => tr.dataset.id !== idsAntes[n] || [...tr.querySelectorAll('[data-c]')].some(mudou));
+    if (lojasMudaram) {
+      const naTela = new Set(linhas.map(tr => tr.dataset.id));
+      const novasLojas = structuredClone(lojas()).filter(l => !idsAntes.includes(l.id) || naTela.has(l.id));
+      for (const tr of linhas) {
+        const id = tr.dataset.id;
+        const campos = ['nome', 'sigla', 'cnpj', 'endereco'];
+        const alterados = idsAntes.includes(id) ? campos.filter(k => mudou(campoLoja(tr, k))) : campos;
+        const l = novasLojas.find(x => x.id === id);
+        if (l) { for (const k of alterados) l[k] = lerLoja(tr, k); continue; }
+        // loja nova (ou apagada em outro computador e alterada aqui): entra inteira
+        if (alterados.length) novasLojas.push({ id, ...Object.fromEntries(campos.map(k => [k, lerLoja(tr, k)])) });
+      }
+      d.lojas = novasLojas.filter(l => l.nome);
+      if (!d.lojas.length) return avisar('Cadastre pelo menos uma loja.');
+    }
     ui.cfgSujo = false;
-    const d = formDados(form);
-    for (const k of Object.keys(d)) if (k.startsWith('lj_')) delete d[k];
-    const novasLojas = [...form.querySelectorAll('.loja-cfg')].map(tr => ({
-      id: tr.dataset.id,
-      nome: tr.querySelector('[data-c=nome]').value.trim(),
-      sigla: tr.querySelector('[data-c=sigla]').value.trim().toUpperCase(),
-      cnpj: tr.querySelector('[data-c=cnpj]').value.trim(),
-      endereco: tr.querySelector('[data-c=endereco]').value.trim(),
-    })).filter(l => l.nome);
-    if (!novasLojas.length) return avisar('Cadastre pelo menos uma loja.');
-    d.lojas = novasLojas;
-    d.marcaErradaNaoGanha = form.marcaErradaNaoGanha.checked;
-    Object.assign(db.config, d, {
-      proxNumero: Math.max(1, parseInt(d.proxNumero, 10) || 1),
-      diasAviso: Math.max(0, Math.min(30, parseInt(d.diasAviso, 10) || 0)),
-      protegerPlanilha: form.protegerPlanilha.checked,
-    });
+    Object.assign(db.config, d);
     salvar();
     render();
     toast('Configurações salvas.');
@@ -11199,7 +11809,7 @@ document.addEventListener('click', e => {
   if (ACOES_TRAVADAS.has(el.dataset.act) && el.closest('#app') && cotTravada(cotAtual())) { avisarTravada(); return; }
   Promise.resolve(acoes[el.dataset.act](el, e)).catch(err => {
     console.error(err);
-    avisar(`Não deu certo: ${err.message}\n\nTente de novo. Se continuar, recarregue a página (F5) e avise com esta mensagem.`);
+    avisar(`Não deu certo: ${erroAmigavel(err)}\n\nTente de novo. Se continuar, recarregue a página (F5) e avise com esta mensagem.`);
   });
 });
 
@@ -11639,7 +12249,7 @@ async function abrirPip() {
     }
   } catch (e) {
     console.error(e);
-    return avisar('Não consegui abrir a janela flutuante: ' + (e.message || e));
+    return avisar('Não consegui abrir a janela flutuante: ' + erroAmigavel(e));
   }
   pip.win = w;
   pip.cotId = c.id;
@@ -11689,6 +12299,7 @@ async function abrirPip() {
     else if (acao === 'prox') irPip(1);
     else if (acao === 'copiar') copiarCodigoPip(b);
     else if (acao === 'duvida') duvidaPip();
+    else if (acao === 'tirarDuvida') tirarDuvidaPip();
     else if (acao === 'editar') editarPip();
     else if (acao === 'escolher') escolherPip(+b.dataset.f);
     else if (acao === 'comprado') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) alternarComprado(cot, pip.i); }
@@ -12006,7 +12617,15 @@ async function duvidaPip() {
   if (n <= 0) { desenharPip(true); return; }
   render();
   desenharPip(true);
-  toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila).`);
+  toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila). Se foi engano, clique em ✕ tirar da dúvida no item.`, 5000);
+}
+
+async function tirarDuvidaPip() {
+  const c = db.cotacoes.find(x => x.id === pip.cotId);
+  if (cotTravada(c)) { avisarTravada(); return; }
+  if (!c || !pip.win) return;
+  await tirarDuvidaDoItem(c, pip.i, pip.win.document);
+  desenharPip(true);
 }
 
 function copiarCodigoPip(b) {
@@ -12076,7 +12695,7 @@ function desenharPip(focar) {
         <div class="pip-cab">
           <button type="button" class="pip-cod" data-pip="copiar" title="Clique (ou C) para copiar o código e colar no DataCar"><span class="pip-cod-txt">${esc(l.it.codigo || '—')}</span><span class="pip-copiar">⧉</span></button>
         </div>
-        <div class="pip-linha-desc"><span class="pip-desc" title="${esc(l.it.descricao || '')}">${esc(l.it.descricao || '')}</span><span class="pip-estado" id="pipEstado">${rotEstado}</span></div>
+        <div class="pip-linha-desc"><span class="pip-desc" title="${esc(l.it.descricao || '')}">${esc(l.it.descricao || '')}</span><span class="pip-estado" id="pipEstado">${rotEstado}</span>${l.duvida && !cotTravada(c) ? '<button type="button" class="btn-tirar-duvida" data-pip="tirarDuvida" title="Tirar este item das Dúvidas (se foi posto por engano ou a loja já respondeu): ele volta para o pedido" aria-label="Tirar das Dúvidas">✕ tirar da dúvida</button>' : ''}</div>
         ${f ? (() => {
           const tags = [
             l.recusadaGanhou ? '<span class="pip-tag recusada">⚠ marca recusada</span>' : '',
@@ -12546,6 +13165,9 @@ async function aoMudarCampo(e) {
   } else if (t.id === 'periodoRel') {
     ui.periodoRel = t.value;
     render();
+  } else if (t.id === 'relDe' || t.id === 'relAte' || t.id === 'relLoja' || t.id === 'relForn') {
+    ui[t.id] = t.value;
+    render();
   } else if (t.id === 'notaCot') {
     ui.notaCot = t.value;
     render();
@@ -12622,16 +13244,18 @@ async function aoMudarCampo(e) {
     else if (t.hasAttribute('data-import-datacar')) await abrirArquivoDataCar(file);
     else if (t.hasAttribute('data-import-papel')) await abrirArquivoPapel(file);
     else if (t.hasAttribute('data-restaurar')) {
+      if (!ehAdmin()) return avisar('Só um administrador pode restaurar um backup.');
       try {
         const dados = JSON.parse(await file.text());
         if (!dados || !Array.isArray(dados.produtos) || !dados.config) throw new Error('Arquivo não é um backup deste sistema.');
         if (!(await confirmar(`Restaurar backup com ${dados.produtos.length} produtos, ${(dados.fornecedores || []).length} fornecedores e ${(dados.cotacoes || []).length} cotações? Os dados atuais serão substituídos.`, 'Restaurar backup'))) return;
+        if (!(await backupAntesDe('antes de restaurar arquivo'))) return;
         db = normalizar(dados);
         salvar();
         render();
         toast('Backup restaurado.');
       } catch (err) {
-        avisar('Não foi possível restaurar: ' + err.message);
+        avisar('Não foi possível restaurar: ' + erroAmigavel(err));
       }
     }
   }
