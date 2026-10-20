@@ -2733,3 +2733,7 @@ body.sem-nuvem .topbar { top: calc(env(safe-area-inset-top, 0px) + var(--faixa-h
 .sub-pedidos td .badge { white-space: nowrap; }
 .sub-pedidos td.actions-cell { white-space: normal; }
 .sub-pedidos td.actions-cell > * { margin: 2px 0; }
+/* envio da cotação / cobrança / pedidos dentro do quadro Fornecedores e pedidos */
+.sub-envio { margin-top: 16px; padding: 14px 16px; border: 2px solid var(--primary-2); border-radius: var(--r-md); background: var(--card-2); }
+.sub-envio > .row-between > h3 { margin: 0; }
+.sub-envio .lote-opcao:first-of-type { margin-top: 10px; }

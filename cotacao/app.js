@@ -5962,7 +5962,7 @@ function painelEnvioPedidos(c) {
   const feitos = peds.filter(p => p.f.pedidoEnviadoEm).length;
   const semEmail = peds.filter(p => !p.f.email);
   return `
-  <section class="card envio" id="painelLote">
+  <div class="sub-envio envio" id="painelLote">
     <div class="row-between">
       <h3>Enviar pedidos de compra · ${peds.length} fornecedor(es)</h3>
       <button class="sm" data-act="fecharLote">Fechar</button>
@@ -6006,7 +6006,7 @@ function painelEnvioPedidos(c) {
       <p class="small muted" style="margin:6px 0 0">Ao abrir o e-mail de um fornecedor, o pedido fica marcado como enviado e o próximo da lista é destacado. O texto do e-mail pode ser mudado em Configurações.</p>
     </div>
     ${semEmail.length ? `<p class="small aviso-alertas" style="margin-top:10px">Sem e-mail cadastrado: ${semEmail.map(p => esc(p.f.nome)).join(', ')}. Baixe o pedido e mande pelo WhatsApp; depois marque com ✓.</p>` : ''}
-  </section>`;
+  </div>`;
 }
 
 /** Painel de envio (ou cobrança) para vários fornecedores. */
@@ -6023,7 +6023,7 @@ function painelLote(c) {
   const grupo = dadosEmailGrupo(c, lista.map(fi => c.fornecedores[fi]), L.tipo);
   const pasta = !nuvem.downloads && typeof window.showDirectoryPicker === 'function';
   return `
-  <section class="card envio" id="painelLote">
+  <div class="sub-envio envio" id="painelLote">
     <div class="row-between">
       <h3>${cob ? 'Cobrar resposta' : 'Enviar a cotação'} · ${lista.length} fornecedor(es)</h3>
       <button class="sm" data-act="fecharLote">Fechar</button>
@@ -6073,7 +6073,7 @@ function painelLote(c) {
       </div>` : '<p class="small muted">Nenhum destes fornecedores tem e-mail cadastrado.</p>'}
     </div>
     ${semEmail.length ? `<p class="small aviso-alertas" style="margin-top:10px">Sem e-mail cadastrado: ${semEmail.map(fi => esc(c.fornecedores[fi].nome)).join(', ')}. Mande pelo WhatsApp ou cadastre o e-mail em Fornecedores.</p>` : ''}
-  </section>`;
+  </div>`;
 }
 
 /** O que a faixa colorida à esquerda de cada item quer dizer. */
@@ -7262,12 +7262,13 @@ function renderCotacao(id) {
   }).join('');
 
   let painel = '';
+  let envioUm = ''; // envio para um fornecedor só: também abre dentro do quadro Fornecedores e pedidos
   if (ui.enviando && ui.enviando.cotId === c.id && c.fornecedores[ui.enviando.fi]) {
     const fi = ui.enviando.fi;
     const f = c.fornecedores[fi];
     const m = dadosEmail(c, f);
-    painel += `
-    <section class="card envio" id="painelEnvio">
+    envioUm = `
+    <div class="sub-envio envio" id="painelEnvio">
       <div class="row-between">
         <h3>Enviar cotação para ${esc(f.nome)}</h3>
         <button class="sm" data-act="fecharEnvio">Fechar</button>
@@ -7290,7 +7291,7 @@ function renderCotacao(id) {
         <div class="copiavel"><span class="muted small">Assunto</span><code class="copia-alvo">${esc(m.assunto)}</code><button class="sm" data-act="copiar" data-campo="assunto">Copiar</button></div>
         <div class="copiavel"><span class="muted small">Texto</span><pre class="copia-alvo">${esc(m.corpo)}</pre><button class="sm" data-act="copiar" data-campo="corpo">Copiar</button></div>
       </div>
-    </section>`;
+    </div>`;
   }
   if (ui.digitando && ui.digitando.cotId === c.id && c.fornecedores[ui.digitando.fi]) {
     const fi = ui.digitando.fi;
@@ -7331,7 +7332,8 @@ function renderCotacao(id) {
     </section>`;
   }
 
-  if (ui.lote && ui.lote.cotId === c.id) painel = painelLote(c);
+  // o envio (cotação, cobrança ou pedidos) abre dentro do quadro Fornecedores e pedidos
+  const painelEnvio = (ui.lote && ui.lote.cotId === c.id ? painelLote(c) : '') || envioUm;
   const recAberto = ui.conferindo && ui.conferindo.cotId === c.id && (c.recebimentos || []).find(r => r.id === ui.conferindo.recId);
   if (recAberto) painel = painelNFe(c, recAberto);
 
@@ -7505,6 +7507,7 @@ function renderCotacao(id) {
     <b>Para um só:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
     Quando o fornecedor devolver a planilha preenchida, use <b>📥 Importar</b> para lançar os preços automaticamente.</details>
     </div>
+    ${painelEnvio}
     ${temResposta ? secaoPedidos(c, comp) : ''}
   </section>
 
