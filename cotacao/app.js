@@ -829,20 +829,27 @@ document.addEventListener('drop', async e => {
 });
 
 let ponteiroApertado = false;
+/**
+ * Mouse apertado agora. Uma janela do Windows (ex.: "Salvar como") pode engolir o soltar do mouse:
+ * depois de 3 s sem soltar, considera solto (senão a tela ficaria parada esperando).
+ */
+const apertadoAgora = () => ponteiroApertado && Date.now() - ultimoClique < 3000;
 /** Roda fn depois que o mouse for solto (redesenhar no meio de um clique faz o clique se perder). */
 function quandoSoltar(fn) {
-  if (!ponteiroApertado && Date.now() - ultimoClique > 250) { setTimeout(fn, 0); return; }
+  if (!apertadoAgora() && Date.now() - ultimoClique > 250) { setTimeout(fn, 0); return; }
   setTimeout(() => quandoSoltar(fn), 120);
 }
 let ultimoClique = 0;
 document.addEventListener('pointerdown', () => { ponteiroApertado = true; ultimoClique = Date.now(); }, true);
 document.addEventListener('pointerup', () => { ponteiroApertado = false; ultimoClique = Date.now(); }, true);
 document.addEventListener('pointercancel', () => { ponteiroApertado = false; }, true);
+// a janela perdeu o foco (outra janela, "Salvar como"…): o soltar do mouse não vai chegar aqui
+window.addEventListener('blur', () => { ponteiroApertado = false; if (typeof renderAdiado !== 'undefined' && renderAdiado) setTimeout(() => { if (renderAdiado) render(); }, 0); });
 
 /** Algo aberto ou em uso na tela que um redesenho fecharia. */
 function ocupadoNaTela() {
   const ativo = document.activeElement;
-  return ponteiroApertado || Date.now() - ultimoClique < 700
+  return apertadoAgora() || Date.now() - ultimoClique < 700
     || (ativo?.tagName === 'SELECT' && !!$('#app')?.contains(ativo)) // lista suspensa (pode estar aberta)
     || !!document.querySelector('.dlg-fundo, #dlgDataCar'); // janela de confirmação, conferência do DataCar…
 }
@@ -9851,7 +9858,7 @@ document.addEventListener('pointerup', () => { if (renderAdiado) setTimeout(() =
 document.addEventListener('pointercancel', () => { if (renderAdiado) setTimeout(() => { if (renderAdiado) render(); }, 0); }, true);
 
 function render() {
-  if (ponteiroApertado) { renderAdiado = true; return; }
+  if (apertadoAgora()) { renderAdiado = true; setTimeout(() => { if (renderAdiado && !apertadoAgora()) render(); }, 3100); return; }
   renderAdiado = false;
   const { nome, id } = rota();
   const app = $('#app');
@@ -12239,6 +12246,7 @@ function itensPip(c) {
 }
 
 async function abrirPip() {
+  ultimoSalvo = null; // janela nova: não usa a pasta lembrada pela janela anterior
   const c = cotAtual();
   if (!c) return;
   if (pip.win && !pip.win.closed) { pip.cotId = c.id; desenharPip(true); pip.win.focus(); return; }
@@ -12295,9 +12303,11 @@ async function abrirPip() {
   // redesenhar a janela com o mouse apertado faria o clique se perder: espera soltar (como na tela principal)
   const soltar = () => {
     pip.apertado = false;
+    pip.apertadoEm = 0;
     if (pip.desenharAdiado) setTimeout(() => { const f = pip.desenharAdiado; if (!f) return; pip.desenharAdiado = null; desenharPip(f === 'focar'); }, 0);
   };
-  d.addEventListener('pointerdown', () => { pip.apertado = true; }, true);
+  d.addEventListener('pointerdown', () => { pip.apertado = true; pip.apertadoEm = Date.now(); }, true);
+  w.addEventListener('blur', soltar); // foi para outra janela ("Salvar como"…): o soltar do mouse não chega aqui
   d.addEventListener('pointerup', soltar, true);
   d.addEventListener('pointercancel', soltar, true);
   d.addEventListener('click', e => {
@@ -12314,6 +12324,7 @@ async function abrirPip() {
     else if (acao === 'comprado') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) alternarComprado(cot, pip.i); }
     else if (acao === 'dividir') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) dividirCompraItem(cot, pip.i, b.dataset.f != null ? +b.dataset.f : null, pip.win.document); }
     else if (acao === 'exportar') exportarPip(+b.dataset.f);
+    else if (acao === 'redesenhar') desenharPip(true, true);
     else if (acao === 'ir') { const cot = db.cotacoes.find(x => x.id === pip.cotId); if (cot) irParaItemPip(cot, +b.dataset.i); }
   });
   d.addEventListener('keydown', marcarTecla, true);
@@ -12339,9 +12350,11 @@ async function abrirPip() {
     definirFiltroVencedor(cot, e.target.value);
     pip.i = itensPip(cot)[0] ?? pip.i;
     pip.loja = 0;
-    desenharPip(true);
+    desenharPip(true, true); // já escolheu: redesenha mesmo que a lista ainda pareça em uso
   });
-  w.addEventListener('pagehide', () => { if (pip.win === w) pip.win = null; anunciarPresenca(); });
+  // a pasta do último "Salvar como" foi escolhida por esta janela: quando ela fecha, essa lembrança não vale mais
+  // (usar a de uma janela fechada fazia a próxima exportação dar erro)
+  w.addEventListener('pagehide', () => { if (pip.win === w) pip.win = null; ultimoSalvo = null; anunciarPresenca(); });
   desenharPip(true);
   w.focus();
 }
@@ -12576,10 +12589,17 @@ async function exportarPip(fi) {
   janelaSalvar = pip.win;
   try {
     await exportarPedidoForn(c, fi, pip.win.document);
+  } catch (e) {
+    // um erro não pode travar a janela: avisa e segue
+    console.error(e);
+    if (pip.win && !pip.win.closed) await avisar(`Não deu certo exportar o pedido: ${e?.message || e}
+
+Tente de novo. Se continuar, exporte pela tela principal (quadro Fornecedores e pedidos).`, pip.win.document);
   } finally {
     janelaSalvar = null;
+    pip.apertado = false;
   }
-  desenharPip(true);
+  desenharPip(true, true);
 }
 
 /** "/" na janela flutuante: vai direto para um item pelo código (ou pela descrição). */
@@ -12665,15 +12685,32 @@ function ultimoPrecoPip(c, it) {
 }
 
 /** Desenha a janela flutuante. `focar`: põe o cursor na quantidade (senão só mantém onde estava). */
-function desenharPip(focar) {
+/** Redesenha a janela flutuante. forcar: redesenha mesmo com a lista de fornecedores em foco (já escolheu). */
+function desenharPip(focar, forcar = false) {
   if (!pip.win || pip.win.closed) { pip.win = null; return; }
-  if (pip.apertado) { pip.desenharAdiado = focar || pip.desenharAdiado === 'focar' ? 'focar' : 'nao'; return; }
+  // mouse apertado (até 3 s: uma janela do Windows pode engolir o soltar)
+  if (pip.apertado && Date.now() - (pip.apertadoEm || 0) < 3000) {
+    pip.desenharAdiado = focar || pip.desenharAdiado === 'focar' ? 'focar' : 'nao';
+    clearTimeout(pip.timerAdiado);
+    pip.timerAdiado = setTimeout(() => { if (pip.desenharAdiado) { pip.apertado = false; desenharPip(pip.desenharAdiado === 'focar'); } }, 3100);
+    return;
+  }
+  pip.apertado = false;
   pip.desenharAdiado = null;
   const d = pip.win.document;
   const raiz = d.getElementById('pip');
   if (!raiz) return;
   // escolhendo o fornecedor na lista: redesenhar agora fecharia a lista; espera a escolha (ou sair dela)
-  if (d.activeElement?.id === 'pipForn') { pip.redesenharDepois = true; return; }
+  if (!forcar && d.activeElement?.id === 'pipForn') { pip.redesenharDepois = true; return; }
+  try {
+    desenharPipAgora(focar, d, raiz);
+  } catch (e) {
+    // um erro não pode deixar a janela parada no item anterior: mostra e deixa tentar de novo
+    console.error(e);
+    raiz.innerHTML = `<div class="pip-erro"><p><b>Não deu certo mostrar este item.</b></p><p class="small muted">${esc(e?.message || String(e))}</p><button type="button" class="sm primary" data-pip="redesenhar">Tentar de novo</button></div>`;
+  }
+}
+function desenharPipAgora(focar, d, raiz) {
   pip.redesenharDepois = false;
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   if (!c) { raiz.innerHTML = '<p class="muted">Esta cotação não existe mais. Feche a janela.</p>'; return; }
