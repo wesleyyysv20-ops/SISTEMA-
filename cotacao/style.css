@@ -2737,3 +2737,5 @@ body.sem-nuvem .topbar { top: calc(env(safe-area-inset-top, 0px) + var(--faixa-h
 .sub-envio { margin-top: 16px; padding: 14px 16px; border: 2px solid var(--primary-2); border-radius: var(--r-md); background: var(--card-2); }
 .sub-envio > .row-between > h3 { margin: 0; }
 .sub-envio .lote-opcao:first-of-type { margin-top: 10px; }
+/* depois de exportar: "✉ Enviar pedido" + "⬇" (exportar de novo) lado a lado */
+.exp-forn { display: inline-flex; align-items: center; gap: 4px; }

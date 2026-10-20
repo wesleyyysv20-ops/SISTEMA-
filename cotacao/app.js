@@ -6727,6 +6727,12 @@ function secaoPedidos(c, comp) {
 /** Atualiza totais e pedidos sem redesenhar a tabela (para não perder o campo em edição). */
 /** Botão "⬇ Exportar (N)" do quadro Fornecedores (atualizado também enquanto se digitam as quantidades). */
 function botaoExportarForn(f, fi, n) {
+  // pedido já exportado: o próximo passo é mandar para o vendedor
+  if (n && f.concluidoEm) {
+    return `<span class="exp-forn" data-exp-f="${fi}">${f.pedidoEnviadoEm
+      ? `<button class="sm" data-act="enviarPedidoForn" data-f="${fi}" title="Pedido enviado para ${esc(f.nome)} em ${fmtData(f.pedidoEnviadoEm)}. Clique para enviar de novo.">✓ Enviado ${fmtData(f.pedidoEnviadoEm).slice(0, 5)}</button>`
+      : `<button class="sm primary" data-act="enviarPedidoForn" data-f="${fi}" title="Mandar o pedido para ${esc(f.nome)}: abre o e-mail já preenchido (Gmail, Outlook ou programa); anexe a planilha exportada">✉ Enviar pedido</button>`}<button class="sm" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido de novo (${n} item(ns))" aria-label="Exportar o pedido de novo">⬇</button></span>`;
+  }
   return `<span class="exp-forn" data-exp-f="${fi}">${n
     ? `<button class="sm primary" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido: só os itens que ${esc(f.nome)} ganhou (planilhas por loja ou somada) e marcar a cotação dele como concluída">⬇ Exportar (${n})</button>`
     : `<span class="btn-desligado" title="${f.respondidoEm ? `${esc(f.nome)} não ganhou nenhum item (com quantidade) no comparativo` : `${esc(f.nome)} ainda não respondeu: quando responder e ganhar itens, dá para exportar o pedido`}"><button class="sm" disabled>⬇ Exportar (0)</button></span>`}</span>`;
@@ -10493,6 +10499,16 @@ const acoes = {
     abrirLote(c, pend, 'cobranca');
   },
   fecharLote: () => { ui.lote = null; render(); },
+  // envio do pedido de um fornecedor só (botão "✉ Enviar pedido" da linha, depois de exportar)
+  enviarPedidoForn: el => {
+    const c = cotAtual();
+    const f = c?.fornecedores[+el.dataset.f];
+    if (!f || !pedidosPorFornecedor(c).some(p => p.f === f)) return avisar('Este fornecedor não tem pedido com quantidade.');
+    ui.lote = { cotId: c.id, tipo: 'pedido', ids: [f.fornecedorId], inicio: new Date().toISOString(), formato: f.formatoPedido?.tipo === 'somada' ? 'juntas' : ui.formatoPedido || 'lojas' };
+    ui.enviando = null; ui.digitando = null; ui.conferindo = null;
+    render();
+    $('#painelLote')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  },
   enviarPedidos: () => {
     const c = cotAtual();
     const peds = pedidosPorFornecedor(c);

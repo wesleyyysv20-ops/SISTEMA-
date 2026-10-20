@@ -173,3 +173,24 @@ test('exportar por loja: cancelar a 2ª planilha avisa e não marca a cotação 
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
+
+test('depois de exportar: "✉ Enviar pedido" na linha do fornecedor abre o envio só dele; enviado vira "✓ Enviado"', async () => {
+  const s = await abrirCot();
+  const { page } = s;
+  const linha = () => page.locator('.corpo-recolhe tbody tr:has-text("KAIZEN")');
+  assert.equal(await linha().locator('[data-act=enviarPedidoForn]').count(), 0, 'antes de exportar: só o Exportar');
+  await page.evaluate(() => { const f = db.cotacoes[0].fornecedores[0]; f.concluidoEm = '2026-10-20T10:00:00Z'; f.email = 'kaizen@teste.com'; salvar(); render(); });
+  const btn = linha().locator('[data-act=enviarPedidoForn]');
+  assert.equal(await btn.innerText(), '✉ Enviar pedido');
+  assert.equal(await linha().locator('[data-act=exportarPedidoForn]').innerText(), '⬇', 'exportar de novo continua ao lado');
+  await btn.click();
+  const painel = page.locator('#secForn #painelLote');
+  assert.match(await painel.innerText(), /Enviar pedidos de compra · 1 fornecedor/);
+  assert.match(await painel.innerText(), /KAIZEN/);
+  assert.doesNotMatch(await painel.innerText(), /VIA PEÇAS/);
+  await painel.locator('[data-act=marcarLote]').click();
+  await page.click('[data-act=fecharLote]');
+  assert.match(await linha().locator('[data-act=enviarPedidoForn]').innerText(), /✓ Enviado \d\d\/\d\d/);
+  assert.deepEqual(s.erros, []);
+  await s.fechar();
+});
