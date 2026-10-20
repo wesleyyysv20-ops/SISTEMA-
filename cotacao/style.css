@@ -2725,3 +2725,11 @@ body.sem-nuvem .topbar { top: calc(env(safe-area-inset-top, 0px) + var(--faixa-h
 .avisos-comp .pill-aviso.pill-leve { background: transparent; border-color: var(--line); color: var(--muted); font-weight: 500; }
 .avisos-comp .pill-grupo > .pill-aviso.pill-leve + .pill-filtro { background: transparent; color: var(--muted); border: 1px solid var(--line); border-left: 0; }
 .avisos-comp .pill-grupo:has(.pill-leve):not(:has(~ .pill-grupo .pill-leve)) { margin-right: 0; }
+/* Fornecedores e pedidos num quadro só: os pedidos vêm logo abaixo da lista de fornecedores */
+.sub-pedidos { margin-top: 18px; padding-top: 14px; border-top: 2px solid var(--line); }
+.sub-pedidos > .row-between > h3 { margin: 0; }
+.sub-pedidos .resumo-pedidos { margin-left: 6px; font-weight: 500; }
+.resumo-pedidos .txt-ok { color: var(--ok); font-weight: 600; }
+.sub-pedidos td .badge { white-space: nowrap; }
+.sub-pedidos td.actions-cell { white-space: normal; }
+.sub-pedidos td.actions-cell > * { margin: 2px 0; }

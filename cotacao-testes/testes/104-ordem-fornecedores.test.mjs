@@ -11,10 +11,10 @@ test('fornecedores da cotação e "Falta exportar" em ordem alfabética', async 
   ])] }));
   const { page } = s;
   await page.evaluate(() => { const c = db.cotacoes[0]; c.itens[0].qtd = 2; c.escolhas = { 0: 0 }; ir('cotacao', 'c1'); });
-  const nomes = await page.locator('#secForn tbody tr .forn-cot-nome').evaluateAll(l => l.map(e => e.innerText.split('\n')[0].trim()));
+  const nomes = await page.locator('#secForn .corpo-recolhe tbody tr .forn-cot-nome').evaluateAll(l => l.map(e => e.innerText.split('\n')[0].trim()));
   assert.deepEqual(nomes, ['COMANDO', 'KAIZEN', 'ROLES']);
   // a linha certa continua ligada ao fornecedor certo
-  assert.match(await page.locator('#secForn tbody tr:has-text("ROLES")').innerText(), /9,00/);
+  assert.match(await page.locator('#secForn .corpo-recolhe tbody tr:has-text("ROLES")').innerText(), /9,00/);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });

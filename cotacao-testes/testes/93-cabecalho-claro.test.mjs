@@ -21,7 +21,7 @@ test('cabeçalho: sem quantidade não mostra estimativa como pedido; prazo com q
   assert.match(resumo, /Total do pedido\s*aguardando quantidades\s*estimativa R\$ 30,00/);
   assert.match(resumo, /Economia vs média\s*—/);
   assert.doesNotMatch(n(await page.locator('#fornPendCot').innerText()), /R\$/, 'sem quantidade, as etiquetas não mostram valor');
-  assert.match(n(await page.locator('#secForn thead').innerText()), /PROPOSTA|Proposta/);
+  assert.match(n(await page.locator('#secForn .corpo-recolhe thead').innerText()), /PROPOSTA|Proposta/);
   // 4 de 5 responderam: prazo vencido em amarelo (falta pouca gente)
   const prazo = page.locator('.aviso-prazo');
   assert.match(n(await prazo.innerText()), /4 de 5 responderam · falta 1 fornecedor responder: SAMA/);

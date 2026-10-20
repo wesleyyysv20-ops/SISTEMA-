@@ -6644,11 +6644,14 @@ function celulaRecebimento(c, p, porLoja) {
   };
   const juntas = situacaoRecebimento(c, p.f.fornecedorId, null);
   if (porLoja) {
+    const sits = [];
     for (const lj of LJ) {
       if (!p.itens.some(x => x.qtds[lj.id] > 0)) continue;
       const sit = situacaoRecebimento(c, p.f.fornecedorId, lj.id);
-      if (sit.recs.length || !juntas.recs.length) partes.push(badge(sit, lj.nome));
+      if (sit.recs.length || !juntas.recs.length) { sits.push(sit); partes.push(badge(sit, lj.nome)); }
     }
+    // todas as lojas na mesma situação (ex.: aguardando nota): uma etiqueta só
+    if (sits.length > 1 && !juntas.recs.length && sits.every(x => x.estado === sits[0].estado && !x.cobrar && !x.recs.length)) partes.splice(0, partes.length, badge(sits[0]));
     if (juntas.recs.length) partes.push(badge(juntas, 'Lojas juntas'));
   } else partes.push(badge(juntas));
   const recs = (c.recebimentos || []).filter(r => r.fornecedorId === p.f.fornecedorId);
@@ -6672,16 +6675,18 @@ function secaoPedidos(c, comp) {
   const semQtd = comp.porLoja ? comp.linhas.filter(l => l.vencedor >= 0 && !l.q).length : 0;
   const emDuvida = comp.linhas.filter(l => l.duvida && l.vencedor >= 0).length;
   if (!peds.length) {
-    return `<section class="card" id="secPedidos"><h3>Pedidos de compra</h3><p class="muted small">Nenhum item com quantidade ainda. Digite as quantidades das lojas no comparativo.</p></section>`;
+    return `<div class="sub-pedidos" id="secPedidos"><h3>🧾 Pedidos de compra</h3><p class="muted small">Nenhum item com quantidade ainda. Digite as quantidades das lojas no comparativo.</p></div>`;
   }
   const an = analisarMinimos(c, comp);
   const infoMin = fid => an.lista.find(x => x.p.f.fornecedorId === fid);
   const temFrete = an.lista.some(x => x.r.frete || x.r.minimo);
   const totLoja = (p, lj) => p.itens.reduce((s, x) => s + x.preco * (x.qtds[lj.id] || 0), 0);
   const itensLoja = (p, lj) => p.itens.filter(x => x.qtds[lj.id] > 0).length;
-  return `<section class="card" id="secPedidos">
+  const exportados = peds.filter(p => p.f.concluidoEm).length;
+  const temPag = peds.some(p => p.f.cond?.pagamento || p.f.cond?.prazo); // sem condições informadas: a coluna não aparece
+  return `<div class="sub-pedidos" id="secPedidos">
     <div class="row-between">
-      <h3>Pedidos de compra</h3>
+      <h3>🧾 Pedidos de compra <span class="small muted resumo-pedidos">${peds.length} fornecedor(es) · ${fmtMoeda(comp.melhor)} · ${exportados === peds.length ? '<span class="txt-ok">✓ todos exportados</span>' : `${exportados} de ${peds.length} exportados`}</span></h3>
       <div class="row">
         ${comp.porLoja ? LJ.map(lj => `<button class="sm" data-act="baixarPedidos" data-loja="${esc(lj.id)}" title="Um arquivo com os pedidos de ${esc(lj.nome)}, uma aba por fornecedor">⬇ Todos de ${esc(lj.nome)}</button>`).join('') : ''}
         <button class="sm primary" data-act="enviarPedidos" title="Mandar o pedido de cada fornecedor por e-mail">✉ Enviar pedidos por e-mail</button>
@@ -6692,13 +6697,13 @@ function secaoPedidos(c, comp) {
     <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${emDuvida ? ` <b class="txt-duvida">❓ ${emDuvida} item(ns) em Dúvidas ficam fora dos pedidos até saírem da fila.</b>` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
     ${avisosMinimo(c, an)}
     <div class="table-wrap"><table>
-      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th>${temFrete ? '<th class="r">Frete / mínimo</th>' : ''}<th>Pagamento / entrega</th><th>Recebimento</th><th><span class="sr-only">Ações</span></th></tr></thead>
+      <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th>${temFrete ? '<th class="r">Frete / mínimo</th>' : ''}${temPag ? '<th>Pagamento / entrega</th>' : ''}<th>Recebimento</th><th><span class="sr-only">Ações</span></th></tr></thead>
       <tbody>${peds.map(p => `<tr>
-        <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span>${p.f.pedidoEnviadoEm ? `<br><span class="badge ok">✉ pedido enviado ${fmtData(p.f.pedidoEnviadoEm)}</span>` : ''}</td>
+        <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span>${p.f.concluidoEm ? `<br><span class="badge ok" title="Pedido exportado (cotação do fornecedor concluída)">✓ exportado ${fmtData(p.f.concluidoEm)}</span>` : ''}${p.f.pedidoEnviadoEm ? `<br><span class="badge ok">✉ pedido enviado ${fmtData(p.f.pedidoEnviadoEm)}</span>` : ''}</td>
         ${comp.porLoja ? LJ.map(lj => `<td class="r">${itensLoja(p, lj) ? `${fmtMoeda(totLoja(p, lj))}<br><span class="small muted">${itensLoja(p, lj)} item(ns)</span>` : '<span class="muted">—</span>'}</td>`).join('') : ''}
         <td class="r"><b>${fmtMoeda(p.total)}</b></td>
         ${temFrete ? `<td class="r small">${celulaFrete(infoMin(p.f.fornecedorId))}</td>` : ''}
-        <td class="small">${esc([p.f.cond?.pagamento, p.f.cond?.prazo].filter(Boolean).join(' · ') || '—')}</td>
+        ${temPag ? `<td class="small">${esc([p.f.cond?.pagamento, p.f.cond?.prazo].filter(Boolean).join(' · ') || '—')}</td>` : ''}
         <td class="small">${celulaRecebimento(c, p, comp.porLoja)}</td>
         <td class="actions-cell">
           <label class="btn sm" style="margin:0" title="Conferir a nota fiscal deste fornecedor">📥 NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe="${p.fi}"></label>
@@ -6706,10 +6711,10 @@ function secaoPedidos(c, comp) {
           <button class="sm" data-act="baixarPedido" data-f="${p.fi}" title="${comp.porLoja ? 'Um pedido com as duas lojas (uma coluna de quantidade para cada)' : 'Pedido deste fornecedor'}">⬇ ${comp.porLoja ? 'Lojas juntas' : 'Pedido'}</button>
         </td>
       </tr>`).join('')}
-      <tr class="total"><td>Total</td>${comp.porLoja ? LJ.map(lj => `<td class="r">${fmtMoeda(comp.porLojaTotal[lj.id])}</td>`).join('') : ''}<td class="r">${fmtMoeda(comp.melhor)}${an.freteTotal ? `<br><span class="small">+ frete ${fmtMoeda(an.freteTotal)} = <b>${fmtMoeda(comp.melhor + an.freteTotal)}</b></span>` : ''}</td>${temFrete ? '<td></td>' : ''}<td colspan="3"></td></tr>
+      <tr class="total"><td>Total</td>${comp.porLoja ? LJ.map(lj => `<td class="r">${fmtMoeda(comp.porLojaTotal[lj.id])}</td>`).join('') : ''}<td class="r">${fmtMoeda(comp.melhor)}${an.freteTotal ? `<br><span class="small">+ frete ${fmtMoeda(an.freteTotal)} = <b>${fmtMoeda(comp.melhor + an.freteTotal)}</b></span>` : ''}</td>${temFrete ? '<td></td>' : ''}<td colspan="${temPag ? 3 : 2}"></td></tr>
       </tbody>
     </table></div>
-  </section>`;
+  </div>`;
 }
 
 /** Atualiza totais e pedidos sem redesenhar a tabela (para não perder o campo em edição). */
@@ -7461,9 +7466,8 @@ function renderCotacao(id) {
   </section>
 
   <nav class="secoes-cot" aria-label="Partes da cotação">
-    <button type="button" data-act="irSecaoCot" data-alvo="secForn">🏭 Fornecedores <b>${c.fornecedores.filter(respondeu).length}/${nf}</b></button>
-    ${temResposta ? `<button type="button" data-act="irSecaoCot" data-alvo="secComp">⚖️ Comparativo</button>
-    <button type="button" data-act="irSecaoCot" data-alvo="secPedidos">🧾 Pedidos</button>` : `<button type="button" data-act="irSecaoCot" data-alvo="secComp">📋 Itens</button>`}
+    <button type="button" data-act="irSecaoCot" data-alvo="secForn" title="Fornecedores (envio e resposta) e os pedidos de compra">🏭 Fornecedores e pedidos <b>${c.fornecedores.filter(respondeu).length}/${nf}</b></button>
+    ${temResposta ? '<button type="button" data-act="irSecaoCot" data-alvo="secComp">⚖️ Comparativo</button>' : '<button type="button" data-act="irSecaoCot" data-alvo="secComp">📋 Itens</button>'}
     <button type="button" class="btn-desfazer" id="btnDesfazer" data-act="desfazerCot" hidden>↶ Desfazer</button>
     <button type="button" data-act="irSecaoCot" data-alvo="topo">↑ Topo</button>
   </nav>
@@ -7494,6 +7498,7 @@ function renderCotacao(id) {
     <b>Para um só:</b> clique em <b>✉ Enviar</b> na linha do fornecedor. Você baixa a planilha dele e abre o e-mail já com destinatário, assunto e texto. Só falta <b>anexar o arquivo baixado</b> e enviar.
     Quando o fornecedor devolver a planilha preenchida, use <b>📥 Importar</b> para lançar os preços automaticamente.</details>
     </div>
+    ${temResposta ? secaoPedidos(c, comp) : ''}
   </section>
 
   ${painel}
@@ -7546,9 +7551,7 @@ function renderCotacao(id) {
     })()}
     </div>
     ${tabelaComp}
-  </section>
-
-  ${temResposta ? secaoPedidos(c, comp) : ''}`;
+  </section>`;
   // as linhas do comparativo ficam guardadas à parte: o render() troca só as que mudaram
   const linhas = linhasCompGuardadas;
   linhasCompGuardadas = null;
