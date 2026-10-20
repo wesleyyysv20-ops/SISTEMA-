@@ -27,7 +27,7 @@ const DEFAULT_DB = {
     tituloPlanilha: 'COTAÇÃO GERAL DISPPAR',
     duvidasCabecalho: 'Segue a relação dos itens em dúvida para avaliação:',
     backupDias: 7, // lembrar do backup a cada N dias (0 = não lembrar)
-    arquivarDias: 60, // sugerir arquivar finalizadas com mais de N dias
+    arquivarDias: 60, // (não usado: desde 20/10/2026 a sugestão de arquivar é pelas finalizadas dos meses anteriores)
     assuntoPedido: 'Pedido de compra - cotação nº {numero} - {loja} - {itensPedido} itens / {unidades} un. - {totalPedido}',
     corpoPedido:
       'Olá, {fornecedor}!\n\n' +
@@ -75,7 +75,7 @@ var desfazer = { pilha: [], refazer: [], base: new Map(), aplicando: false };
 let db = carregar();
 let versaoDados = 0; // muda a cada gravação (invalida caches)
 let cacheHist = null;
-const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, enterPadrao: null, filtroItens: '', editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, periodoRel: '', relDe: '', relAte: '', relLoja: '', relForn: '', sel: null, lote: null, verArquivadas: false, conferindo: null };
+const ui = { digitando: null, enviando: null, datacar: null, cursorItem: 0, enterPadrao: null, filtroItens: '', editProd: null, editForn: null, filtroProd: '', filtroForn: '', filtroCot: '', statusCot: '', histProd: null, soComPreco: false, mesCot: '', periodoRel: '', relDe: '', relAte: '', relLoja: '', relForn: '', sel: null, lote: null, verArquivadas: false, conferindo: null };
 
 /* ---------------- persistência ---------------- */
 
@@ -5781,8 +5781,9 @@ function linhasCotacoes() {
     .sort((a, b) => (b.data + b.numero).localeCompare(a.data + a.numero))
     .filter(c => (ui.verArquivadas ? !!c.arquivada : !c.arquivada))
     .filter(c => !ui.statusCot || c.status === ui.statusCot)
+    .filter(c => !ui.mesCot || String(c.data || '').startsWith(ui.mesCot))
     .filter(c => !q || semAcento(`${c.numero} ${c.titulo} ${c.fornecedores.map(f => f.nome).join(' ')} ${c.itens.map(i => i.descricao + ' ' + i.codigo).join(' ')}`).includes(q));
-  if (!lista.length) return `<tr><td colspan="8" class="empty">${ui.verArquivadas ? 'Nenhuma cotação arquivada.' : 'Nenhuma cotação encontrada.'}</td></tr>`;
+  if (!lista.length) return `<tr><td colspan="8" class="empty">${ui.verArquivadas ? 'Nenhuma cotação arquivada' : 'Nenhuma cotação encontrada'}${ui.mesCot ? ` em ${nomeMesCot(ui.mesCot)}` : ''}.</td></tr>`;
   return lista.map(c => {
     const resp = c.fornecedores.filter(f => f.respondidoEm).length;
     const { itensCotados } = comparar(c);
@@ -5820,12 +5821,17 @@ function avisosPrazo() {
   </section>`;
 }
 
-/** Cotações que podem ser arquivadas: canceladas e finalizadas há mais de N dias. */
+const MESES_COT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+/** "2026-10" → "outubro/2026". */
+const nomeMesCot = m => `${MESES_COT[Number(m.slice(5, 7)) - 1] || m}/${m.slice(0, 4)}`;
+
+/**
+ * Cotações que podem ser arquivadas: as canceladas e as finalizadas dos meses anteriores
+ * (a lista fica só com o mês atual e com as que ainda estão abertas).
+ */
 function paraArquivar() {
-  const d = new Date();
-  d.setDate(d.getDate() - (Number(db.config.arquivarDias) || 60));
-  const limite = dataISOLocal(d);
-  return db.cotacoes.filter(c => !c.arquivada && !c.manterNaLista && (c.status === 'cancelada' || (c.status === 'finalizada' && c.data < limite)))
+  const inicioMes = hojeISO().slice(0, 7) + '-01';
+  return db.cotacoes.filter(c => !c.arquivada && !c.manterNaLista && (c.status === 'cancelada' || (c.status === 'finalizada' && String(c.data || '') < inicioMes)))
     .sort((a, b) => (a.data + a.numero).localeCompare(b.data + b.numero));
 }
 
@@ -5837,10 +5843,10 @@ function sugestaoArquivar() {
   return `<section class="card sugestao-arquivar">
     <div class="row-between">
       <span>🗂️ <b>${lista.length} cotação(ões) podem ser arquivadas</b>
-        <span class="small muted">(${[canc && `${canc} cancelada(s)`, fin && `${fin} finalizada(s) há mais de ${Number(db.config.arquivarDias) || 60} dias`].filter(Boolean).join(', ')}: ${lista.map(c => 'nº ' + esc(c.numero)).join(', ')})</span></span>
+        <span class="small muted">(${[fin && `${fin} finalizada(s) de meses anteriores`, canc && `${canc} cancelada(s)`].filter(Boolean).join(', ')}: ${lista.map(c => 'nº ' + esc(c.numero)).join(', ')})</span></span>
       <button class="sm primary" data-act="arquivarSugeridas">Arquivar</button>
     </div>
-    <p class="small muted" style="margin:4px 0 0">Arquivadas saem da lista para ela ficar mais leve, mas continuam no histórico de preços e nos relatórios.</p>
+    <p class="small muted" style="margin:4px 0 0">Assim a lista mostra só o mês atual (e as que ainda estão abertas). As arquivadas continuam no histórico de preços e nos relatórios; para ver, marque "Ver só as arquivadas" e escolha o mês.</p>
   </section>`;
 }
 
@@ -5870,6 +5876,14 @@ function renderCotacoes() {
         const n = k ? visiveis.filter(c => c.status === k).length : visiveis.length;
         return `<button type="button" class="chip-status${(ui.statusCot || '') === k ? ' ativo' : ''}" data-act="filtroStatusCot" data-status="${k}">${t} <b>${n}</b></button>`;
       }).join('')}</div>
+      ${(() => {
+        // filtro por mês: os meses que existem na lista (arquivadas ou não), com quantas cotações
+        const base = db.cotacoes.filter(c => (ui.verArquivadas ? !!c.arquivada : !c.arquivada));
+        const meses = [...new Set(base.map(c => String(c.data || '').slice(0, 7)).filter(m => /^\d{4}-\d{2}$/.test(m)))].sort().reverse();
+        if (ui.mesCot && !meses.includes(ui.mesCot)) meses.unshift(ui.mesCot);
+        return `<select id="mesCot" aria-label="Mês" title="Mostrar só as cotações de um mês" style="width:auto">
+          <option value="">Todos os meses</option>${meses.map(m => `<option value="${m}" ${ui.mesCot === m ? 'selected' : ''}>${nomeMesCot(m)} (${base.filter(c => String(c.data || '').startsWith(m)).length})</option>`).join('')}</select>`;
+      })()}
       ${nArq || ui.verArquivadas ? `<label class="check-inline"><input type="checkbox" id="verArquivadas" ${ui.verArquivadas ? 'checked' : ''}> Ver só as arquivadas (${nArq})</label>` : ''}
     </div>
   </section>
@@ -13219,6 +13233,10 @@ async function aoMudarCampo(e) {
     primeiro?.focus();
   } else if (t.id === 'verArquivadas') {
     ui.verArquivadas = t.checked;
+    ui.mesCot = '';
+    render();
+  } else if (t.id === 'mesCot') {
+    ui.mesCot = t.value;
     render();
   } else if (t.id === 'backupDias') {
     db.config.backupDias = Number(t.value);
