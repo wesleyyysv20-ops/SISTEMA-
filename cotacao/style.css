@@ -2719,3 +2719,9 @@ body.sem-nuvem .topbar { top: calc(env(safe-area-inset-top, 0px) + var(--faixa-h
 .var-mes { font-weight: 600; white-space: nowrap; }
 .var-sobe { color: var(--danger); font-weight: 700; white-space: nowrap; }
 .var-desce { color: var(--warn); font-weight: 700; white-space: nowrap; }
+/* códigos do "Antes de exportar, confira": cada um leva ao item */
+.check-pedido .cod-check { display: inline; min-height: 0; height: auto; padding: 0; font-size: inherit; vertical-align: baseline; text-decoration: underline; text-underline-offset: 2px; }
+/* comparativo: etiquetas que são só informação ficam leves (não competem com os avisos) */
+.avisos-comp .pill-aviso.pill-leve { background: transparent; border-color: var(--line); color: var(--muted); font-weight: 500; }
+.avisos-comp .pill-grupo > .pill-aviso.pill-leve + .pill-filtro { background: transparent; color: var(--muted); border: 1px solid var(--line); border-left: 0; }
+.avisos-comp .pill-grupo:has(.pill-leve):not(:has(~ .pill-grupo .pill-leve)) { margin-right: 0; }

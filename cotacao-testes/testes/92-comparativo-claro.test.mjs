@@ -47,6 +47,7 @@ test('dicionário de marcas: sugere FRA = FRAS LE, junta e o filtro conta tudo j
   await irPara(page, 'cotacao', 'c1');
   const opcoes = () => page.locator('#filtroMarca option').allInnerTexts();
   assert.ok((await opcoes()).includes('FRA (2)'));
+  await page.click('.ajuda-comp summary'); // o atalho fica em "mais opções"
   await page.click('[data-act=irDicionarioMarcas]');
   const sug = page.locator('.dic-sug-item', { hasText: 'FRA' }).first();
   assert.match(n(await sug.innerText()), /FRA \(2×\) → FRAS LE \(3×\)/);

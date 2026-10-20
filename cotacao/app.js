@@ -6296,13 +6296,15 @@ function checklistPedido(c, fi) {
   const comp = comparar(c);
   const f = c.fornecedores[fi];
   const LJ = lojas();
-  const ganhos = comp.linhas.filter(l => l.vencedor === fi);
+  const ganhos = comp.linhas.filter(l => l.vencedor === fi && !l.comprado);
+  // os outros avisos só valem para o que vai ser comprado: quantidade 0 nas lojas = não comprar, não alerta
+  const compra = ganhos.filter(l => l.q > 0);
   const ultimos = ultimosPrecos(c.id);
-  const itens = fn => ganhos.filter(fn).map(l => l.i);
+  const itens = fn => compra.filter(fn).map(l => l.i);
   const lista = [];
   const add = (nivel, icone, texto, is) => { if (is.length) lista.push({ nivel, icone, texto, itens: is }); };
   if (comp.porLoja) {
-    add('erro', '📦', 'sem quantidade (nenhuma loja digitada)', itens(l => !l.duvida && !LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null)));
+    add('erro', '📦', 'sem quantidade (nenhuma loja digitada)', ganhos.filter(l => !l.duvida && !LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null)).map(l => l.i));
   }
   add('erro', '📦', 'acima do estoque informado', itens(l => l.estoque != null && l.q > l.estoque));
   add('erro', '✗', 'com a marca recusada (comprando por não haver outro preço)', itens(l => l.recusadaGanhou));
@@ -6321,7 +6323,8 @@ function checklistPedido(c, fi) {
 
 function htmlChecklistPedido(c, lista, total) {
   if (!lista.length) return `<div class="check-pedido ok">✓ <b>Tudo conferido</b>: ${total} item(ns), nenhuma pendência.</div>`;
-  const cod = i => esc(c.itens[i]?.codigo || `#${i + 1}`);
+  // cada código leva ao item no comparativo
+  const cod = i => `<button type="button" class="link cod-check" data-r="revisar" data-i="${i}" title="Ir para este item no comparativo">${esc(c.itens[i]?.codigo || `#${i + 1}`)}</button>`;
   const pend = lista.filter(x => x.nivel !== 'info').reduce((s, x) => s + x.itens.length, 0);
   return `<div class="check-pedido${pend ? ' pendente' : ' so-info'}">
     <b>${pend ? '⚠ Antes de exportar, confira:' : 'Para saber:'}</b>
@@ -6375,7 +6378,7 @@ function dialogoFormatoPedido({ f, padrao, lojasComItens, porLoja, nomesArquivos
     fundo.addEventListener('click', e => {
       e.stopPropagation();
       const b = e.target.closest('button[data-r]');
-      if (b) { if (b.dataset.r === '1') confirmar(); else if (b.dataset.r === 'revisar') fechar({ revisar: true }); else fechar(null); }
+      if (b) { if (b.dataset.r === '1') confirmar(); else if (b.dataset.r === 'revisar') fechar({ revisar: true, item: b.dataset.i != null ? Number(b.dataset.i) : null }); else fechar(null); }
     });
     doc.addEventListener('keydown', tecla, true);
     doc.body.appendChild(fundo);
@@ -6402,17 +6405,16 @@ async function exportarPedidoForn(c, fi, doc = document) {
     return porLoja.map(({ lj }) => ({ id: lj.id, rotulo: `Planilha de ${lj.nome}`, nome: nomePedido(c, f, lj) }));
   };
   const lista = checklistPedido(c, fi);
-  const ganhos = comp.linhas.filter(l => l.vencedor === fi).length;
+  const ganhos = comp.linhas.filter(l => l.vencedor === fi && l.q > 0).length;
   const pendente = lista.some(x => x.nivel !== 'info');
   const resp = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja, nomesArquivos, checklist: htmlChecklistPedido(c, lista, ganhos), pendente, doc });
   if (!resp) return;
   if (resp.revisar) {
-    // mostra só os itens deste fornecedor e leva até o primeiro com pendência
-    const primeiro = lista.find(x => x.nivel !== 'info')?.itens[0];
+    // mostra só os itens deste fornecedor e leva até o item clicado (ou o primeiro com pendência)
+    const primeiro = resp.item ?? lista.find(x => x.nivel !== 'info')?.itens[0];
     definirFiltroVencedor(c, f.fornecedorId);
     render();
-    const tr = primeiro != null ? document.querySelector(`.tab-comp tr[data-comp-linha="${primeiro}"]`) : null;
-    if (tr) { marcarLinhaComp(tr); tr.scrollIntoView({ block: 'center' }); }
+    if (primeiro != null) irParaItemCot(c, primeiro);
     toast(`Mostrando os itens de ${f.nome}. Resolva as pendências e clique em Exportar de novo.`, 5000);
     return;
   }
@@ -7358,7 +7360,9 @@ function renderCotacao(id) {
             const st = l.marcas[j];
             if (p != null && (st === 'errada' || st === 'duvida') && !l.recusas[j] && !l.permitidas[j]) { qtdMarcas[st]++; avisosLinha.add('marca'); }
             const extra = p == null ? '' : [o?.prazo, o?.obs].filter(Boolean).join(' · '); // sem preço: desconsidera a resposta
-            const avsTodos = alertasPreco(p, ult, l.precos);
+            // preço fora do normal: só no preço que ganhou e em item que vai ser comprado (quantidade 0 nas lojas = não comprar)
+            const relevante = j === l.vencedor && !l.naoComprar && !l.comprado;
+            const avsTodos = relevante ? alertasPreco(p, ult, l.precos) : [];
             const conferido = avsTodos.length && o?.precoConferido != null && o.precoConferido === p; // confirmado por você
             const avs = conferido ? [] : avsTodos;
             if (avs.length) avisosLinha.add('alertas');
@@ -7366,10 +7370,10 @@ function renderCotacao(id) {
             const venc = j === l.vencedor && (nf > 1 || l.manual);
             const demora = p != null && entregaDemorada(c.fornecedores[j], o);
             const pelaRegra = j === l.vencedor && l.preferencia;
-            if (demora) { qtdDemora++; avisosLinha.add('demora'); }
+            if (demora && j === l.vencedor) { qtdDemora++; avisosLinha.add('demora'); }
             const cls = ['r', demora ? 'demora' : '', venc ? 'best' : '', venc && l.manual ? 'escolhido' : '', p != null && nf > 1 ? 'escolhivel' : '', p != null && p === l.min && !venc && nf > 1 ? 'menor' : '', st === 'errada' && p != null ? (l.permitidas[j] ? 'marca-permitida' : 'marca-errada') : '', p != null && filtroMarcaComp(c) && normMarca(o?.marca) === filtroMarcaComp(c) ? 'marca-filtrada' : '', l.recusas[j] && p != null ? (j === l.vencedor ? 'recusada-venc' : 'recusada') : ''].filter(Boolean).join(' ');
             const attrs = p != null && nf > 1 ? ` data-act="escolherVencedor" data-i="${l.i}" data-f="${j}"` : '';
-            return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ` <span class="tag-escolha" title="${esc(tituloEscolha(c, l.i))}">escolhido${quemEscolheu(c, l.i) && quemEscolheu(c, l.i) !== 'você' ? ` · ${esc(quemEscolheu(c, l.i))}` : ''}</span>` : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${p != null && l.campanhas[j] ? '<br>' + chipCampanha(l.campanhas[j]) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
+            return `<td class="${cls}"${attrs}${p != null ? ` data-dica="${l.i}:${j}"` : ''}>${p != null ? fmtMoeda(p) : '<span class="muted">—</span>'}${venc && l.manual ? ` <span class="tag-escolha" title="${esc(tituloEscolha(c, l.i))}">escolhido${quemEscolheu(c, l.i) && quemEscolheu(c, l.i) !== 'você' ? ` · ${esc(quemEscolheu(c, l.i))}` : ''}</span>` : ''}${p != null && (o?.marca || st === 'sem') ? '<br>' + chipMarca(l, j, o) : ''}${p != null && l.campanhas[j] ? '<br>' + chipCampanha(l.campanhas[j]) : ''}${o?.estoque != null && p != null ? `<br><span class="estoque" title="Estoque informado pelo fornecedor">estoque ${fmtNum(o.estoque)}</span>` : ''}${demora && j === l.vencedor ? '<br>' + chipDemora : ''}${pelaRegra ? `<br><span class="chip-regra" title="Regra da Comando: ganha quando está até 5% acima do 1º lugar. Clique no preço do mais barato para escolher ele.">⭐ regra Comando · +${fmtPct(l.preco / l.min - 1)} do 1º</span>` : ''}${extra ? '<br><span class="small muted">' + esc(extra) + '</span>' : ''}${avs.length ? '<br>' + chips(avs, l.i, j) : ''}${conferido ? '<br><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span>' : ''}</td>`;
           }).join('');
           const tiposLinha = [...avisosLinha].join(' ');
           const fa = filtroAviso(c);
@@ -7502,9 +7506,9 @@ function renderCotacao(id) {
     ${!temResposta ? '<div class="tip">⏳ <b>Aguardando as respostas dos fornecedores.</b> Assim que o primeiro responder (Importar ou Digitar, no quadro Fornecedores), aparecem aqui o <b>comparativo de preços</b>, as <b>quantidades das lojas</b>, o filtro <b>Mostrar itens de</b> e o botão <b>🗗 Janela flutuante</b>.</div>' : ''}
     <div class="faixa-comp">
     ${temResposta ? `<div class="barra-comp small">
-      ${escondidos ? `<span class="muted">${escondidos} fornecedor(es) ainda sem resposta não aparecem na tabela.</span> <button type="button" class="link" data-act="mostrarSemResposta">mostrar</button>` : ui.mostrarSemResposta && c.fornecedores.some(f => !Object.values(f.respostas || {}).some(o => o?.preco > 0)) ? '<button type="button" class="link" data-act="mostrarSemResposta">esconder quem não respondeu</button>' : ''}
-      ${sugestoesDicionario().length ? `<button type="button" class="link small btn-dic" data-act="irDicionarioMarcas" title="Há marcas que parecem a mesma escrita de jeitos diferentes (ex.: FRA e FRASLE). Clique para juntar no dicionário de marcas.">📖 ${sugestoesDicionario().length} marca(s) repetida(s)?</button>` : ''}
-      <details class="ajuda-comp"><summary title="Como usar o comparativo${comp.escolhasManuais ? ' e mais opções' : ''}">ⓘ${comp.escolhasManuais ? ' mais opções' : ' Como usar'}</summary>
+      ${escondidos ? `<span class="muted" title="${escondidos} fornecedor(es) ainda sem resposta não aparecem na tabela">${escondidos} sem resposta</span> <button type="button" class="link" data-act="mostrarSemResposta">mostrar</button>` : ui.mostrarSemResposta && c.fornecedores.some(f => !Object.values(f.respostas || {}).some(o => o?.preco > 0)) ? '<button type="button" class="link" data-act="mostrarSemResposta">esconder quem não respondeu</button>' : ''}
+      <details class="ajuda-comp"><summary title="Como usar o comparativo e mais opções">ⓘ ${comp.escolhasManuais || sugestoesDicionario().length ? 'mais opções' : 'Como usar'}</summary>
+        ${sugestoesDicionario().length ? `<p><button type="button" class="link btn-dic" data-act="irDicionarioMarcas" title="Há marcas que parecem a mesma escrita de jeitos diferentes (ex.: FRA e FRASLE). Clique para juntar no dicionário de marcas.">📖 ${sugestoesDicionario().length} marca(s) que parecem repetidas</button> <span class="small muted">juntar no dicionário de marcas (ex.: FRA e FRASLE)</span></p>` : ''}
         ${comp.escolhasManuais ? `<p><button type="button" class="sm danger" data-act="limparEscolhas">↺ Desfazer as ${comp.escolhasManuais} escolha(s) feitas na mão</button> <span class="small muted">volta todos esses itens para o menor preço (pede confirmação)</span></p>` : ''}
         ${nf > 1 ? '<p>O vencedor de cada item fica em <b>verde</b>. Para comprar de outro fornecedor, <b>clique no preço dele</b>; clique de novo para voltar ao menor preço. Preços iguais: ganha quem respondeu primeiro.</p>' : ''}
         <p>📦 <b>Quantidades:</b> digite quantas unidades cada loja vai comprar nas colunas ${LJ.map(l => '<b>' + esc(l.nome) + '</b>').join(' e ')} (Enter ou ↓ vai para o item de baixo). Use <b>Mostrar itens de</b> para ver só os itens de um fornecedor. ${comp.porLoja ? '' : 'Enquanto nenhuma quantidade for digitada, os totais usam 1 unidade de cada item.'}</p>
@@ -7524,12 +7528,14 @@ function renderCotacao(id) {
       if (nDif) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-dif" data-tipo="dif" title="Clique para ver só esses itens. Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} dif. &gt;100%</button>`);
       if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} marca diferente` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abrev. a conferir` : ''].filter(Boolean).join(' · ')}</button>`);
       const nRegra = comp.linhas.filter(l => l.preferencia).length;
-      if (nRegra) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso regra" data-tipo="regra" title="Clique para ver só esses itens. A Comando ganha quando está até 5% acima do 1º lugar. Em cada item, clique no preço do mais barato para escolher ele.">⭐ ${nRegra} regra Comando</button>`);
-      if (qtdComprados) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso comprado" data-tipo="comprado" title="Clique para ver só esses itens. Itens marcados como já comprados (por fora): não vão em nenhum pedido.">🛒 ${qtdComprados} já comprado(s)</button>`);
-      if (qtdCamp) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso campanha" data-tipo="campanha" title="Clique para ver só esses itens. Itens com preço de uma campanha de marca: você decide se compra por ela.">🏷️ ${qtdCamp} com campanha${qtdForaCamp ? ` · ${qtdForaCamp} fora` : ''}</button>`);
-      if (qtdDemora) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso demora" data-tipo="demora" title="Clique para ver só esses itens. Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} GO (demora)</button>`);
+      if (nRegra) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso regra pill-leve" data-tipo="regra" title="Clique para ver só esses itens. A Comando ganha quando está até 5% acima do 1º lugar. Em cada item, clique no preço do mais barato para escolher ele.">⭐ ${nRegra} regra Comando</button>`);
+      if (qtdComprados) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso comprado pill-leve" data-tipo="comprado" title="Clique para ver só esses itens. Itens marcados como já comprados (por fora): não vão em nenhum pedido.">🛒 ${qtdComprados} já comprado(s)</button>`);
+      if (qtdCamp) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso campanha pill-leve" data-tipo="campanha" title="Clique para ver só esses itens. Itens com preço de uma campanha de marca: você decide se compra por ela.">🏷️ ${qtdCamp} com campanha${qtdForaCamp ? ` · ${qtdForaCamp} fora` : ''}</button>`);
+      if (qtdDemora) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso demora pill-leve" data-tipo="demora" title="Clique para ver só esses itens. Rio Juntas: os itens com marca GO demoram mais para chegar.">🐢 ${qtdDemora} GO (demora)</button>`);
       if (qtdAlertas) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso atencao aviso-alertas" data-tipo="alertas" title="Clique para ver só esses itens. Mais de ${Math.round(LIMITE_ALERTA * 100)}% de diferença do último preço pago, ou muito diferente dos outros fornecedores. Passe o mouse no aviso do preço para ver os detalhes.">⚠ ${qtdAlertas} fora do normal</button>`);
       const fa = filtroAviso(c);
+      // primeiro o que precisa de atenção; depois, em etiquetas leves, o que é só informação
+      et.sort((a, b) => Number(a.includes('pill-leve')) - Number(b.includes('pill-leve')));
       const ets = et.map(x => {
         const tipo = /data-tipo="([^"]+)"/.exec(x)?.[1] || '';
         const ativo = fa === tipo;
