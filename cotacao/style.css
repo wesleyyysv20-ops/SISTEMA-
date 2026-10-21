@@ -2739,3 +2739,10 @@ body.sem-nuvem .topbar { top: calc(env(safe-area-inset-top, 0px) + var(--faixa-h
 .sub-envio .lote-opcao:first-of-type { margin-top: 10px; }
 /* depois de exportar: "✉ Enviar pedido" + "⬇" (exportar de novo) lado a lado */
 .exp-forn { display: inline-flex; align-items: center; gap: 4px; }
+.tab-comp .esc-avisos { margin-top: 2px; text-align: right; }
+.tab-comp .esc-avisos .alerta-preco { white-space: normal; max-width: 100%; text-align: left; }
+@media (max-width: 1100px) { .tab-comp td.col-escolhido .esc-avisos { text-align: center; } }
+.barra-fixa-comp { position: fixed; right: 68px; bottom: 84px; z-index: 45; height: 42px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: var(--r-pill, 21px); background: var(--card); border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(10, 18, 40, .18); }
+.barra-fixa-comp[hidden] { display: none; }
+.barra-fixa-comp button { margin: 0; white-space: nowrap; }
+@media (max-width: 760px) { .barra-fixa-comp { right: 60px; bottom: calc(var(--altura-menu) + 14px + env(safe-area-inset-bottom, 0px)); } }

@@ -764,8 +764,30 @@ document.addEventListener('click', e => {
       quadroTopo = 0;
       const b = document.getElementById('voltarTopo');
       if (b) b.hidden = window.scrollY < 900;
+      atualizarBarraFixaComp();
     });
   }, { passive: true });
+  // botões Janela flutuante / Compacto fixos no canto, quando os da barra do comparativo saíram da tela (a barra fixa é única e fica no index.html: não é recriada a cada render)
+  window.atualizarBarraFixaComp = () => {
+    const fx = document.getElementById('barraFixaComp');
+    if (!fx) return;
+    const orig = document.querySelector('#secComp .btn-pip');
+    const sec = document.getElementById('secComp');
+    let mostrar = false;
+    if (orig && sec && sec.offsetParent !== null) mostrar = orig.getBoundingClientRect().bottom < 0 && sec.getBoundingClientRect().bottom > 80;
+    fx.hidden = !mostrar;
+    // o data-act só existe enquanto a barra aparece (senão seletores por data-act achariam dois botões)
+    fx.querySelectorAll('[data-fixo-act]').forEach(b => { if (mostrar) b.dataset.act = b.dataset.fixoAct; else delete b.dataset.act; });
+    if (mostrar) {
+      const comp = modoCompacto();
+      const bc = document.getElementById('fixoCompacto');
+      bc.classList.toggle('ativo', comp);
+      bc.setAttribute('aria-pressed', String(comp));
+      bc.textContent = comp ? '▦ Compacto' : '▤ Compacto';
+    }
+  };
+  window.addEventListener('resize', () => window.atualizarBarraFixaComp());
+  document.addEventListener('click', () => setTimeout(() => window.atualizarBarraFixaComp(), 350));
   document.addEventListener('click', e => {
     if (e.target.closest?.('#voltarTopo')) window.scrollTo({ top: 0, behavior: 'smooth' });
   });
@@ -7500,6 +7522,7 @@ function renderCotacao(id) {
           const jCamp = campanhaMelhor(l);
           const campVenc = l.vencedor >= 0 && !!l.campanhas[l.vencedor];
           if (jCamp >= 0) { avisosLinha.add('campanha'); qtdCamp++; if (!campVenc && !l.duvida) qtdForaCamp++; }
+          let avsVenc = [], conferidoVenc = false; // avisos do preço vencedor, repetidos na coluna "Preço escolhido"
           const celulas = ordemForn.map(j => {
             const p = l.precos[j];
             const o = c.fornecedores[j].respostas?.[l.i];
@@ -7511,6 +7534,7 @@ function renderCotacao(id) {
             const avsTodos = relevante ? alertasPreco(p, ult, l.precos) : [];
             const conferido = avsTodos.length && o?.precoConferido != null && o.precoConferido === p; // confirmado por você
             const avs = conferido ? [] : avsTodos;
+            if (j === l.vencedor) { avsVenc = avs; conferidoVenc = !!conferido; }
             if (avs.length) avisosLinha.add('alertas');
             if (avs.length) qtdAlertas++;
             const venc = j === l.vencedor && (nf > 1 || l.manual);
@@ -7551,7 +7575,7 @@ function renderCotacao(id) {
             const difS = (l.manual || l.preferencia) && l.minIdx >= 0 && l.min > 0 ? difDaLinha(l) : l.difSegundo;
             const segMini = alvoS >= 0 && alvoS !== l.vencedor && l.precos[alvoS] != null
               ? `<button type="button" class="seg-mini${difSuspeita(l) ? ' suspeita' : ''}" data-act="escolherVencedor" data-i="${l.i}" data-f="${alvoS}" title="Clique para comprar de ${esc(c.fornecedores[alvoS].nome)} (${fmtMoeda(l.precos[alvoS])})">${fmtMoeda(l.precos[alvoS])} · ${esc(c.fornecedores[alvoS].nome)}${difS != null ? ` · +${fmtPct(difS)}` : ''}</button>` : '';
-            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b></div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}<div class="esc-info">${ult ? `<span class="small muted ult-preco" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}${varUltimo(l.preco, ult.preco)}</span>` : ''}${segMini}</div>${campMini}${htmlDivisoes(c, l, { semBotao: true })}<div class="esc-acoes">${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)" aria-label="Pôr em Dúvidas">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)" aria-label="Editar o preço ou a marca de ${esc(fv.nome)}">✎</button>` : ''}${fv && l.precos.some((p, j) => p != null && j !== l.vencedor) ? `<button type="button" class="sm link div-add" data-act="dividirCompra" data-i="${l.i}" title="Dividir a compra: comprar uma parte deste item em outra empresa (pelo preço dela)" aria-label="Dividir a compra">➗</button>` : ''}${l.preco != null || l.comprado ? `<button type="button" class="sm link btn-comprado${l.comprado ? ' ativo' : ''}" data-act="marcarComprado" data-i="${l.i}" aria-label="${l.comprado ? 'Desfazer: voltar a comprar pela cotação' : 'Marcar como já comprado por fora'}" title="${l.comprado ? 'Desfazer: voltar a comprar este item pela cotação' : 'Já comprado por fora (ex.: o chefe comprou): o item sai de todos os pedidos'}">${l.comprado ? '↺' : '🛒'}</button>` : ''}</div></td>`;
+            return `<td class="r col-escolhido fd"><div class="esc-linha"><b class="preco-escolhido">${l.preco != null ? fmtMoeda(l.preco) : l.aguardando ? '<span class="aguardando" title="A marca oferecida foi recusada. Quando chegar o preço de outro fornecedor, confira a marca.">⏳ aguardando</span>' : '<span class="muted">sem preço</span>'}</b></div>${l.comprado ? '<span class="chip-comprado">✓ JÁ COMPRADO</span>' : ''}${fv ? `<span class="nome-venc">${esc(fv.nome)}</span>` : ''}${marcaV ? ` <span class="marca-venc" title="Marca de ${esc(fv.nome)}">${esc(marcaV)}</span>` : ''}${l.recusadaGanhou ? '<br><span class="chip-recusada-venc" title="A marca foi recusada, mas não há outro preço: este está sendo comprado. Quando chegar o preço de outro fornecedor, ele passa a valer.">⚠ marca recusada · não é a pedida</span>' : ''}${extras ? '<br>' + extras : ''}${avsVenc.length ? '<div class="esc-avisos">' + chips(avsVenc, l.i, l.vencedor) + '</div>' : ''}${conferidoVenc ? '<div class="esc-avisos"><span class="ok-conferido" title="Você conferiu e marcou este preço como certo">✓ conferido</span></div>' : ''}<div class="esc-info">${ult ? `<span class="small muted ult-preco" title="Último preço pago: ${esc(ult.fornecedor)}, cotação nº ${esc(ult.numero)} (${fmtData(ult.data)})">último ${fmtMoeda(ult.preco)}${varUltimo(l.preco, ult.preco)}</span>` : ''}${segMini}</div>${campMini}${htmlDivisoes(c, l, { semBotao: true })}<div class="esc-acoes">${fv ? `<button class="sm link btn-duvida" data-act="duvidaItem" data-i="${l.i}" title="Pôr em Dúvidas (perguntar à loja)" aria-label="Pôr em Dúvidas">❓</button><button type="button" class="sm link btn-editar-preco" data-act="removerPreco" data-i="${l.i}" data-f="${l.vencedor}" title="Editar o preço ou a marca de ${esc(fv.nome)} (quando o fornecedor informou errado)" aria-label="Editar o preço ou a marca de ${esc(fv.nome)}">✎</button>` : ''}${fv && l.precos.some((p, j) => p != null && j !== l.vencedor) ? `<button type="button" class="sm link div-add" data-act="dividirCompra" data-i="${l.i}" title="Dividir a compra: comprar uma parte deste item em outra empresa (pelo preço dela)" aria-label="Dividir a compra">➗</button>` : ''}${l.preco != null || l.comprado ? `<button type="button" class="sm link btn-comprado${l.comprado ? ' ativo' : ''}" data-act="marcarComprado" data-i="${l.i}" aria-label="${l.comprado ? 'Desfazer: voltar a comprar pela cotação' : 'Marcar como já comprado por fora'}" title="${l.comprado ? 'Desfazer: voltar a comprar este item pela cotação' : 'Já comprado por fora (ex.: o chefe comprou): o item sai de todos os pedidos'}">${l.comprado ? '↺' : '🛒'}</button>` : ''}</div></td>`;
           })()}
             ${nf > 1 ? (() => {
               // clicar na diferença escolhe o 2º lugar (ou volta para o mais barato, se você já escolheu outro)

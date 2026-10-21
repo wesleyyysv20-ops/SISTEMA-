@@ -126,8 +126,9 @@ test('marcar como certo: diferença acima de 100% e preço fora do normal (o avi
 
   // o alerta só aparece no preço que ganhou: confere e marca como certo
   const alerta = linha(1).locator('button.alerta-preco');
-  assert.equal(await alerta.count(), 1, 'só no KAIZEN (ganhou); o 150 da VIA PEÇAS não alerta');
-  await alerta.click();
+  assert.equal(await alerta.count(), 2, 'só no KAIZEN (ganhou), na célula dele e no Preço escolhido; o 150 da VIA PEÇAS não alerta');
+  assert.equal(await linha(1).locator('td.col-escolhido button.alerta-preco').count(), 1, 'o aviso também aparece no Preço escolhido');
+  await alerta.first().click();
   assert.match(await page.locator('.dlg').innerText(), /KAIZEN: R\$\s15,00[\s\S]*Muito abaixo dos outros[\s\S]*Este preço está certo\?/);
   await page.click('.dlg button.primary');
   assert.equal(await linha(1).locator('.alerta-preco').count(), 0);
@@ -136,7 +137,7 @@ test('marcar como certo: diferença acima de 100% e preço fora do normal (o avi
   // se o preço mudar, os avisos voltam
   await page.evaluate(() => { const c = db.cotacoes[0]; c.fornecedores[1].respostas[0].preco = 24; c.fornecedores[0].respostas[1].preco = 14; salvar(); render(); });
   assert.equal(await linha(0).locator('button.chip-alerta-dif').count(), 1);
-  assert.equal(await linha(1).locator('button.alerta-preco').count(), 1);
+  assert.equal(await linha(1).locator('button.alerta-preco').count(), 2);
   assert.deepEqual(s.erros, []);
   await s.fechar();
 });
@@ -148,7 +149,7 @@ test('alerta de preço: alterar o preço direto pela janela do alerta', async ()
   const { page } = s;
   await page.click('nav [data-route=cotacoes]');
   await page.click('[data-route=cotacao][data-id=c1]');
-  await page.locator('button.alerta-preco').click();
+  await page.locator('button.alerta-preco').first().click();
   assert.deepEqual(await page.locator('.dlg .actions button').allInnerTexts(), ['Cancelar', 'Remover o preço', 'Alterar o preço…', 'Sim, o preço está certo']);
   await page.click('.dlg button:text("Alterar o preço…")');
   await page.fill('#dlgCampo', '41,00');
