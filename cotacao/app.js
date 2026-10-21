@@ -6619,6 +6619,19 @@ function celulaDifSegundo(c, l) {
   </div>`;
 }
 
+/**
+ * A caixa da tabela do comparativo tem rolagem própria e altura de quase a tela toda. Quem clica em "Compacto" está com o
+ * cabeçalho do quadro à vista, então a caixa começa no meio da tela e fica cortada embaixo (parece só 2 linhas, com
+ * barra de rolagem). Se estiver cortada, sobe a página até a caixa aparecer inteira, logo abaixo das barras fixas.
+ */
+function mostrarPainelCompInteiro() {
+  const pc = document.querySelector('.painel-comp');
+  if (!pc) return;
+  const r = pc.getBoundingClientRect();
+  if (r.bottom <= window.innerHeight + 1) return; // já cabe
+  const margem = (document.querySelector('.secoes-cot')?.getBoundingClientRect().bottom || 110) + 8;
+  window.scrollTo(window.scrollX, Math.max(0, window.scrollY + r.top - margem));
+}
 /** Modo compacto do comparativo (meia tela): sem as colunas de cada fornecedor. Guardado neste computador. */
 const CHAVE_COMPACTO = 'cotacao.compacto';
 function modoCompacto() {
@@ -11099,6 +11112,7 @@ const acoes = {
     try { localStorage.setItem(CHAVE_COMPACTO, modoCompacto() ? '0' : '1'); } catch (e) { /* sem acesso */ }
     ui.colFixas = null; // outra quantidade de colunas: mede de novo (senão uma coluna presa cobre as outras)
     render();
+    mostrarPainelCompInteiro();
     setTimeout(() => { ui.colFixas = null; ajustarColunasFixas(); }, 250);
     toast(modoCompacto() ? 'Modo compacto: só o preço escolhido, o 2º lugar e as quantidades. Clique no 2º lugar para trocar.' : 'Modo completo: todas as colunas de fornecedores.');
   },
