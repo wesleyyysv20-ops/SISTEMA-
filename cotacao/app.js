@@ -767,17 +767,18 @@ document.addEventListener('click', e => {
       atualizarBarraFixaComp();
     });
   }, { passive: true });
-  // botões Janela flutuante / Compacto fixos no canto, quando os da barra do comparativo saíram da tela (a barra fixa é única e fica no index.html: não é recriada a cada render)
+  // botões Janela flutuante / Compacto sempre à vista no canto enquanto o quadro do comparativo está aberto (a barra fixa é única e fica no index.html: não é recriada a cada render)
   window.atualizarBarraFixaComp = () => {
     const fx = document.getElementById('barraFixaComp');
     if (!fx) return;
     const orig = document.querySelector('#secComp .btn-pip');
     const sec = document.getElementById('secComp');
-    let mostrar = false;
-    if (orig && sec && sec.offsetParent !== null) mostrar = orig.getBoundingClientRect().bottom < 0 && sec.getBoundingClientRect().bottom > 80;
+    // só no comparativo, e só onde os botões originais existem (no celular eles ficam escondidos)
+    const mostrar = !!(orig && sec && sec.offsetParent !== null && orig.offsetParent !== null);
     fx.hidden = !mostrar;
-    // o data-act só existe enquanto a barra aparece (senão seletores por data-act achariam dois botões)
-    fx.querySelectorAll('[data-fixo-act]').forEach(b => { if (mostrar) b.dataset.act = b.dataset.fixoAct; else delete b.dataset.act; });
+    document.body.classList.toggle('com-barra-fixa', mostrar); // dá folga no fim da página
+    // sem o "↑" ao lado, a barra ocupa o canto
+    fx.classList.toggle('sem-topo', !!document.getElementById('voltarTopo')?.hidden);
     if (mostrar) {
       const comp = modoCompacto();
       const bc = document.getElementById('fixoCompacto');
@@ -787,6 +788,12 @@ document.addEventListener('click', e => {
     }
   };
   window.addEventListener('resize', () => window.atualizarBarraFixaComp());
+  // os botões fixos não têm data-act (os seletores por data-act continuam achando só os da barra do comparativo): repassam o clique ao botão original
+  document.addEventListener('click', e => {
+    const b = e.target.closest?.('[data-fixo-act]');
+    if (!b) return;
+    document.querySelector(`#secComp [data-act="${b.dataset.fixoAct}"]`)?.click();
+  });
   document.addEventListener('click', () => setTimeout(() => window.atualizarBarraFixaComp(), 350));
   document.addEventListener('click', e => {
     if (e.target.closest?.('#voltarTopo')) window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2633,7 +2640,41 @@ function duvidasPorItem(c) {
     const lj = LJ.find(x => siglaLoja(x) === d.empresa);
     for (const x of lj ? [lj] : LJ) m.get(i).add(x.id);
   }
+  // marca permanente (c.foraDuvida[i] = { idDaLoja: true }): o item foi para as Dúvidas e continua fora do pedido mesmo depois de limpar a fila
+  for (const [k, lojasMarcadas] of Object.entries(c.foraDuvida || {})) {
+    const i = +k;
+    if (!c.itens[i]) continue;
+    if (!m.has(i)) m.set(i, new Set());
+    for (const id of Object.keys(lojasMarcadas || {})) m.get(i).add(id);
+  }
   return m;
+}
+
+/** A dúvida da fila `d` deixa de segurar o item fora do pedido: tira a marca permanente daquela loja na cotação. */
+function tirarMarcaDuvida(d) {
+  const c = db.cotacoes.find(x => x.id === d.origem?.cotId);
+  if (!c?.foraDuvida) return false;
+  const i = itemDaDuvida(c, d);
+  const marca = c.foraDuvida[i];
+  if (i < 0 || !marca) return false;
+  const lj = lojas().find(x => siglaLoja(x) === d.empresa);
+  const novo = { ...marca };
+  if (lj) delete novo[lj.id]; else { delete novo['*']; for (const x of lojas()) delete novo[x.id]; }
+  c.foraDuvida = { ...c.foraDuvida };
+  if (Object.keys(novo).length) c.foraDuvida[i] = novo; else delete c.foraDuvida[i];
+  if (!Object.keys(c.foraDuvida).length) delete c.foraDuvida;
+  return true;
+}
+
+/** Item que a janela flutuante não mostra: já comprado, ou em Dúvidas sem nenhuma loja fora da dúvida precisando digitar. */
+function itemForaDaJanela(c, i, duv = duvidasPorItem(c)) {
+  if (c.comprados?.[i]) return true;
+  const d = duv.get(i);
+  if (!d) return false;
+  const LJ = lojas();
+  if (d.has('*') || !LJ.length) return true;
+  // sai quando todas as lojas estão em dúvida, ou as que não estão já têm a quantidade digitada (0 também vale); senão ainda falta digitar
+  return LJ.filter(lj => !d.has(lj.id)).every(lj => c.qtds?.[i]?.[lj.id] != null);
 }
 
 function compararCalculo(c) {
@@ -2711,19 +2752,19 @@ function compararCalculo(c) {
     for (const l of linhas) {
       const p = l.precos[fi];
       if (p == null) continue;
-      total += p * l.q;
+      total += p * qtdComprada(c, l, porLoja); // item em Dúvidas sai do total (a mesma conta do pedido exportado)
       cotados++;
-      if (l.vencedor === fi) { vencidos++; valorVencido += p * l.q; }
+      if (l.vencedor === fi) { vencidos++; valorVencido += p * qtdComprada(c, l, porLoja); }
     }
     return { total, cotados, vencidos, valorVencido };
   });
   const valorExtras = l => l.extras.reduce((t, x) => t + x.preco * x.q, 0);
-  const melhor = linhas.reduce((s, l) => s + (l.preco != null ? l.preco * l.q : 0) + valorExtras(l), 0);
-  const menorPossivel = linhas.reduce((s, l) => s + (l.min != null ? l.min * l.q : 0), 0);
+  const melhor = linhas.reduce((s, l) => s + (l.preco != null ? l.preco * qtdComprada(c, l, porLoja) : 0) + valorExtras(l), 0);
+  const menorPossivel = linhas.reduce((s, l) => s + (l.min != null ? l.min * qtdComprada(c, l, porLoja) : 0), 0);
   const itensCotados = linhas.filter(l => l.min != null).length;
   const escolhasManuais = linhas.filter(l => l.manual).length;
   const porLojaTotal = Object.fromEntries(lojas().map(lj => [lj.id,
-    linhas.reduce((s, l) => s + (l.preco != null ? l.preco * qtdLoja(c, l.i, lj.id) : 0) + l.extras.reduce((t, x) => t + x.preco * (x.qtds[lj.id] || 0), 0), 0)]));
+    linhas.reduce((s, l) => s + (l.preco != null && !l.comprado && !l.duvida?.has(lj.id) ? l.preco * qtdLoja(c, l.i, lj.id) : 0) + l.extras.reduce((t, x) => t + x.preco * (x.qtds[lj.id] || 0), 0), 0)]));
   return { linhas, totais, melhor, menorPossivel, itensCotados, escolhasManuais, porLoja, porLojaTotal };
 }
 
@@ -3421,11 +3462,19 @@ function alternarComprado(c, i) {
   if (cotTravada(c)) { avisarTravada(); return; }
   c.comprados = { ...(c.comprados || {}) };
   const vira = !c.comprados[i];
+  // se o item aberto na janela flutuante vai sair dela, ela passa para o próximo (ou o anterior) que ainda não foi comprado
+  let proximoPip = null;
+  if (vira && pip.win && !pip.win.closed && pip.cotId === c.id && pip.i === i) {
+    proximoPip = proximoAposSairPip(c, i);
+  }
   if (vira) c.comprados[i] = { em: new Date().toISOString(), por: nuvem.usuario || '' }; else delete c.comprados[i];
   if (!Object.keys(c.comprados).length) delete c.comprados;
   salvar();
   render();
-  if (pip.win && !pip.win.closed) desenharPip(false);
+  if (pip.win && !pip.win.closed) {
+    if (proximoPip != null) irParaItemPip(c, proximoPip);
+    else desenharPip(false);
+  }
   toast(vira ? `${c.itens[i].codigo || 'Item'} marcado como já comprado: saiu dos pedidos.` : `${c.itens[i].codigo || 'Item'} volta a ser comprado pela cotação.`);
 }
 
@@ -3549,7 +3598,7 @@ function pedidosPorFornecedor(c, lojaId = null) {
   const LJ = lojas();
   return c.fornecedores.map((f, fi) => {
     const itens = linhas.filter(l => l.vencedor === fi || l.extras.some(x => x.fi === fi)).map(l => {
-      // item em Dúvidas: fica fora do pedido da loja da dúvida até sair da fila
+      // item em Dúvidas: fica fora do pedido da loja da dúvida até tirar da dúvida
       const ganhou = l.vencedor === fi;
       const qtds = Object.fromEntries(LJ.map(lj => [lj.id, !ganhou || l.duvida?.has(lj.id) ? 0 : qtdLoja(c, l.i, lj.id)]));
       let soma = !ganhou ? 0 : !l.duvida ? l.q : porLoja ? LJ.reduce((s, lj) => s + qtds[lj.id], 0) : 0;
@@ -6363,23 +6412,27 @@ function aplicarFiltrosComp(c) {
   }
 }
 
-function opcoesVencedor(c, comp, atual = filtroVencedor(c)) {
+function opcoesVencedor(c, comp, atual = filtroVencedor(c), semExcluidos = false) {
   const cont = {};
-  for (const l of comp.linhas) {
+  // janela flutuante: as contagens ignoram os itens que ela não mostra (já comprados e em Dúvidas)
+  const duv = semExcluidos ? duvidasPorItem(c) : null;
+  const linhasConta = semExcluidos ? comp.linhas.filter(l => !itemForaDaJanela(c, l.i, duv)) : comp.linhas;
+  if (semExcluidos && atual && atual !== '__sem') cont[atual] = 0; // o fornecedor escolhido continua na lista, mesmo com 0
+  for (const l of linhasConta) {
     const ids = new Set([...(l.vencedor >= 0 ? [c.fornecedores[l.vencedor].fornecedorId] : []), ...(l.extras || []).map(x => c.fornecedores[x.fi]?.fornecedorId)]);
     for (const id of ids) if (id) cont[id] = (cont[id] || 0) + 1;
   }
-  const sem = comp.linhas.filter(l => l.vencedor < 0).length;
+  const sem = linhasConta.filter(l => l.vencedor < 0).length;
   const LJ = lojas();
   const falta = {};
-  if (comp.porLoja) for (const l of comp.linhas) {
+  if (comp.porLoja) for (const l of linhasConta) {
     if (l.vencedor < 0 || l.duvida) continue;
     if (!LJ.some(lj => c.qtds?.[l.i]?.[lj.id] != null)) { const id = c.fornecedores[l.vencedor].fornecedorId; falta[id] = (falta[id] || 0) + 1; }
   }
   const andamento = f => (f.concluidoEm ? ' · ✓ exportado' : !comp.porLoja ? '' : falta[f.fornecedorId] ? ` · faltam ${falta[f.fornecedorId]}` : ' · ✓ completo');
-  const opcoes = ordemFornecedores(c).map(j => c.fornecedores[j]).filter(f => cont[f.fornecedorId])
+  const opcoes = ordemFornecedores(c).map(j => c.fornecedores[j]).filter(f => cont[f.fornecedorId] != null && (cont[f.fornecedorId] || f.fornecedorId === atual))
     .map(f => `<option value="${esc(f.fornecedorId)}" ${atual === f.fornecedorId ? 'selected' : ''}>${esc(f.nome)} (${cont[f.fornecedorId]})${andamento(f)}</option>`).join('');
-  return `<option value="">Todos os itens (${comp.linhas.length})</option>${opcoes}
+  return `<option value="">Todos os itens (${linhasConta.length})</option>${opcoes}
       ${sem ? `<option value="__sem" ${atual === '__sem' ? 'selected' : ''}>Sem preço / aguardando (${sem})</option>` : ''}`;
 }
 
@@ -6450,7 +6503,7 @@ function checklistPedido(c, fi) {
     return alertasPreco(p, ult, l.precos).length && !(o?.precoConferido != null && o.precoConferido === p);
   }));
   add('aviso', '⚠', 'mais de 100% de diferença para o 2º lugar (preço pode estar errado)', itensPed(l => difSuspeita(l)));
-  add('info', '❓', 'em Dúvidas: ficam fora deste pedido até sair da fila', itens(l => l.duvida));
+  add('info', '❓', 'em Dúvidas: ficam fora deste pedido até tirar da dúvida', itens(l => l.duvida));
   add('info', '🐢', 'com entrega demorada (GO)', itensPed(l => entregaDemorada(f, f.respostas?.[l.i])));
   return lista;
 }
@@ -6841,7 +6894,7 @@ function secaoPedidos(c, comp) {
         ${peds.length > 1 || comp.porLoja ? `<button class="sm" data-act="baixarPedidos" title="Um arquivo Excel com uma aba para cada fornecedor${comp.porLoja ? ', com a quantidade de cada loja' : ''}">⬇ Todos os pedidos${comp.porLoja ? ' (lojas juntas)' : ' (um arquivo)'}</button>` : ''}
       </div>
     </div>
-    <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${emDuvida ? ` <b class="txt-duvida">❓ ${emDuvida} item(ns) em Dúvidas ficam fora dos pedidos até saírem da fila.</b>` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
+    <p class="muted small" style="margin-top:0">Cada fornecedor recebe só os itens que ganhou no comparativo${comp.escolhasManuais ? `, incluindo as ${comp.escolhasManuais} escolha(s) feitas por você` : ''}.${semVencedor ? ` ${semVencedor} item(ns) ficaram sem preço.` : ''}${emDuvida ? ` <b class="txt-duvida">❓ ${emDuvida} item(ns) em Dúvidas ficam fora dos pedidos até você tirar da dúvida.</b>` : ''}${semQtd ? ` ${semQtd} item(ns) com preço estão sem quantidade e não entram nos pedidos.` : ''}</p>
     ${avisosMinimo(c, an)}
     <div class="table-wrap"><table>
       <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th>${temFrete ? '<th class="r">Frete / mínimo</th>' : ''}${temPag ? '<th>Pagamento / entrega</th>' : ''}<th>Recebimento</th><th><span class="sr-only">Ações</span></th></tr></thead>
@@ -6915,7 +6968,7 @@ Continuar mesmo assim?`, 'Continuar sem cópia');
 /** Tudo o que se decide numa cotação, por item: "campo|item" (respostas: "resp|item|fornecedor"). */
 function caminhosCot(c) {
   const m = new Map();
-  for (const campo of ['qtds', 'escolhas', 'recusadas', 'permitidas', 'comprados', 'divisoes', 'difConferida']) {
+  for (const campo of ['qtds', 'escolhas', 'recusadas', 'permitidas', 'comprados', 'divisoes', 'difConferida', 'foraDuvida']) {
     for (const [i, v] of Object.entries(c[campo] || {})) if (v !== undefined) m.set(`${campo}|${i}`, JSON.stringify(v));
   }
   for (const f of c.fornecedores || []) for (const [i, v] of Object.entries(f.respostas || {})) if (v !== undefined) m.set(`resp|${i}|${f.fornecedorId}`, JSON.stringify(v));
@@ -6989,6 +7042,7 @@ function descreverMudanca(c, [k, a, d]) {
     case 'recusadas': return D ? `${it}: marca recusada (${Object.keys(D).filter(f => !A?.[f]).map(nomeF).join(', ') || 'atualizada'})` : `${it}: recusa de marca desfeita`;
     case 'permitidas': return D ? `${it}: marca permitida nesta cotação` : `${it}: marca deixou de ser permitida`;
     case 'comprados': return D ? `${it}: marcado como já comprado` : `${it}: volta a ser comprado pela cotação`;
+    case 'foraDuvida': return D ? `${it}: enviado para as Dúvidas (fora do pedido)` : `${it}: tirado das Dúvidas (volta ao pedido)`;
     case 'divisoes': return D ? `${it}: compra dividida` : `${it}: divisão da compra tirada`;
     case 'difConferida': return D ? `${it}: diferença de preço conferida` : `${it}: diferença volta a ser conferida`;
     case 'resp': return D
@@ -7001,7 +7055,7 @@ function descreverMudanca(c, [k, a, d]) {
 /** Resumo de um passo: até 2 mudanças por extenso; mais que isso, contadas por tipo. */
 function resumoMudancas(c, mud) {
   if (mud.length <= 2) return mud.map(x => descreverMudanca(c, x)).filter(Boolean).join(' · ');
-  const nomes = { qtds: 'quantidade(s)', escolhas: 'escolha(s)', recusadas: 'recusa(s) de marca', permitidas: 'marca(s) permitida(s)', comprados: 'item(ns) já comprado(s)', divisoes: 'divisão(ões)', difConferida: 'diferença(s) conferida(s)', resp: 'preço(s)', status: 'status' };
+  const nomes = { qtds: 'quantidade(s)', escolhas: 'escolha(s)', recusadas: 'recusa(s) de marca', permitidas: 'marca(s) permitida(s)', comprados: 'item(ns) já comprado(s)', divisoes: 'divisão(ões)', foraDuvida: 'item(ns) em Dúvidas', difConferida: 'diferença(s) conferida(s)', resp: 'preço(s)', status: 'status' };
   const cont = new Map();
   for (const [k] of mud) { const campo = k.split('|')[0]; cont.set(campo, (cont.get(campo) || 0) + 1); }
   const fs = [...new Set(mud.filter(([k]) => k.startsWith('resp|')).map(([k]) => k.split('|')[2]))];
@@ -7150,9 +7204,10 @@ function numeroRepetidoCot(c) {
 async function tirarDuvidaDoItem(c, i, doc = document) {
   if (!c) return false;
   const alvo = (db.duvidas || []).filter(d => itemDaDuvida(c, d) === i);
-  if (!alvo.length) return false;
+  const marca = c.foraDuvida?.[i];
+  if (!alvo.length && !marca) return false;
   const it = c.itens[i] || {};
-  const lj = [...new Set(alvo.map(d => d.empresa))].join(' e ');
+  const lj = [...new Set(alvo.length ? alvo.map(d => d.empresa) : Object.keys(marca).map(id => { const x = lojas().find(y => y.id === id); return x ? siglaLoja(x) : ''; }).filter(Boolean))].join(' e ');
   if (!(await confirmar(`Tirar das Dúvidas?
 
 ${it.codigo || '—'} · ${it.descricao || ''}${lj ? ` (${lj})` : ''}
@@ -7160,6 +7215,11 @@ ${it.codigo || '—'} · ${it.descricao || ''}${lj ? ` (${lj})` : ''}
 O item volta a entrar no pedido.`, 'Tirar das Dúvidas', doc))) return false;
   const ids = new Set(alvo.map(d => d.id));
   db.duvidas = db.duvidas.filter(x => !ids.has(x.id));
+  if (marca) {
+    c.foraDuvida = { ...c.foraDuvida };
+    delete c.foraDuvida[i];
+    if (!Object.keys(c.foraDuvida).length) delete c.foraDuvida;
+  }
   if (ids.has(ui.editDuvida)) ui.editDuvida = null;
   salvar();
   render();
@@ -7550,7 +7610,7 @@ function renderCotacao(id) {
           const situacao = l.aguardando || l.recusadaGanhou ? 'aguardando' : l.duvida ? 'duvida' : l.vencedor < 0 ? 'sem' : avisosLinha.size && [...avisosLinha].some(a => !['regra', 'campanha', 'comprado'].includes(a)) ? 'conferir' : 'ok';
           return `<tr class="${l.aguardando || l.recusadaGanhou ? 'linha-aguardando' : ''}${l.comprado ? ' linha-comprada' : ''}${k % 2 ? ' par' : ''} sit-${situacao}${ui.linhaComp?.cotId === c.id && ui.linhaComp.i === l.i ? ' linha-atual' : ''}" data-comp-linha="${l.i}" data-avisos="${tiposLinha}" ${linhaNoFiltroVenc(c, l) && linhaNaMarca(c, l) && (!fa || avisosLinha.has(fa)) && itemNaBuscaComp(l.it, buscaComp(c)) ? '' : 'hidden'}>
           <td class="c" title="${SIT_COMP[situacao] || ''}">${l.i + 1}</td>
-          <td>${l.duvida ? `<span class="chip-duvida" title="Este item está na fila de Dúvidas: não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span> <button type="button" class="sm link btn-tirar-duvida" data-act="tirarDuvidaItem" data-i="${l.i}" title="Tirar este item das Dúvidas (se foi posto por engano ou a loja já respondeu): ele volta para o pedido" aria-label="Tirar das Dúvidas">✕ tirar da dúvida</button><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
+          <td>${l.duvida ? `<span class="chip-duvida" title="Este item foi para as Dúvidas (fora do pedido): não vai no pedido ${lojas().filter(x => l.duvida.has(x.id)).length === lojas().length ? '' : 'de ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(x => x.nome).join(', ')) + ' '}ao exportar. Quando a loja responder, tire o item de Dúvidas.">❓ em dúvida${lojas().length > 1 ? ' · ' + esc(lojas().filter(x => l.duvida.has(x.id)).map(siglaLoja).join(' + ')) : ''} · fora do pedido</span> <button type="button" class="sm link btn-tirar-duvida" data-act="tirarDuvidaItem" data-i="${l.i}" title="Tirar este item das Dúvidas (se foi posto por engano ou a loja já respondeu): ele volta para o pedido" aria-label="Tirar das Dúvidas">✕ tirar da dúvida</button><br>` : ''}<div class="prod-comp">${ehKit(l.it.codigo, l.it.descricao) ? '<span class="badge kit">KIT</span> ' : ''}<span class="cod-comp">${esc(l.it.codigo || '—')}</span>
             <span class="small muted desc-comp" title="${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}">${esc([l.it.descricao, l.it.similar && 'sim. ' + l.it.similar].filter(Boolean).join(' · '))}</span>
             <span class="prod-tags">${l.it.papelzinho ? '<span class="tag-papel" title="Veio dos papelzinhos de São Sebastião">PAPELZINHOS</span>' : ''}${l.it.marca ? `<span class="marca-pedida" title="Marca pedida: ${esc(l.it.marca)}">${esc(l.it.marca)}</span>` : ''}${repComp[l.i].length ? ` <span class="badge warn" title="Mesmo código que o item ${repComp[l.i].map(j => '#' + (j + 1)).join(', ')}">repetido</span>` : ''}</span></div></td>
           ${temResposta ? '' : `<td class="r">${fmtNum(l.it.quantidade)} ${esc(l.it.unidade)}</td>`}
@@ -7694,7 +7754,7 @@ function renderCotacao(id) {
       const nDif = comp.linhas.filter(difSuspeita).length;
       const nDuv = comp.linhas.filter(l => l.duvida).length;
       const et = [];
-      if (nDuv) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso aviso-duvida" data-tipo="duvida" title="Clique para ver só esses itens. Itens na fila de Dúvidas não vão no pedido exportado até saírem da fila.">❓ ${nDuv} em dúvida</button>`);
+      if (nDuv) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso aviso-duvida" data-tipo="duvida" title="Clique para ver só esses itens. Itens na fila de Dúvidas não vão no pedido exportado até você tirar da dúvida (✕ no item).">❓ ${nDuv} em dúvida</button>`);
       if (nAg) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-recusa" data-tipo="aguardando" title="Clique para ver só esses itens. Linhas em vermelho: a marca foi recusada e não há outro preço, então o mais barato está sendo comprado assim mesmo. Quando chegar a resposta de outro fornecedor, ela passa a valer.">✗ ${nAg} marca recusada</button>`);
       if (nDif) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-dif" data-tipo="dif" title="Clique para ver só esses itens. Pode ser preço errado na planilha (caixa em vez de unidade, vírgula no lugar errado…). Procure o aviso ⚠ confira o preço na coluna Dif. 1º × 2º.">⚠ ${nDif} dif. &gt;100%</button>`);
       if (qtdMarcas.errada || qtdMarcas.duvida) et.push(`<button type="button" data-act="filtroAviso" class="pill-aviso perigo aviso-marca" data-tipo="marca" title="Clique para ver só esses itens. Clique no aviso da marca de cada preço para dizer se é a mesma marca; o sistema aprende a abreviação para as próximas cotações.${db.config.marcaErradaNaoGanha !== false ? ' Preço com marca diferente não ganha automaticamente.' : ''}">🏷️ ${[qtdMarcas.errada ? `${qtdMarcas.errada} marca diferente` : '', qtdMarcas.duvida ? `${qtdMarcas.duvida} abrev. a conferir` : ''].filter(Boolean).join(' · ')}</button>`);
@@ -9336,6 +9396,11 @@ async function duvidasDoItem(c, i, fi, obsSugerida = '', doc = document) {
   const base = { codigo: l.it.codigo || '', valor: l.precos[j], marca: o.marca || '', obs: escolha.obs, origem: { cotId: c.id, numero: c.numero, i, fornecedor: f.nome, marcaExigida: l.it.marca || '' } };
   const novas = escolha.lojas.map(x => ({ ...base, id: uid(), empresa: x.sigla, qtd: x.qtd }));
   db.duvidas = [...db.duvidas, ...novas];
+  // marca permanente na cotação: limpar a fila de Dúvidas não devolve o item ao pedido
+  c.foraDuvida = { ...(c.foraDuvida || {}) };
+  const marcadas = { ...(c.foraDuvida[i] || {}) };
+  for (const x of escolha.lojas) marcadas[lj.find(y => siglaLoja(y) === x.sigla)?.id || '*'] = true;
+  c.foraDuvida[i] = marcadas;
   salvar();
   return novas.length;
 }
@@ -9461,7 +9526,7 @@ function cadastroProprio(cod, base, desc, extra = {}) {
 }
 
 /** Campos da cotação guardados por número do item (c.campo[i]). */
-const CAMPOS_POR_ITEM = ['qtds', 'escolhas', 'escolhidoPor', 'divisoes', 'comprados', 'recusadas', 'permitidas', 'difConferida'];
+const CAMPOS_POR_ITEM = ['qtds', 'escolhas', 'escolhidoPor', 'divisoes', 'comprados', 'recusadas', 'permitidas', 'difConferida', 'foraDuvida'];
 const descPlaceholder = it => !String(it.descricao || '').trim() || chaveCodigo(it.descricao) === chaveCodigo(it.codigo || '');
 
 /**
@@ -10075,6 +10140,7 @@ function render() {
   ui.telaCot = cotTela ? { cotId: cotTela.id, sig: assinaturaSemQtd(cotTela) } : null;
   const ativo = nome === 'cotacao' ? 'cotacoes' : nome;
   document.querySelectorAll('#nav a, #navMovel a').forEach(a => a.classList.toggle('active', a.dataset.route === ativo));
+  window.atualizarBarraFixaComp?.();
   const maisAtivo = ['produtos', 'fornecedores', 'relatorios', 'config'].includes(ativo);
   $('#navMovel [data-act=menuMais]')?.classList.toggle('active', maisAtivo);
   $('#brand').textContent = db.config.loja ? `Cotações · ${db.config.loja}` : 'Cotações';
@@ -11006,6 +11072,8 @@ const acoes = {
   alternarDuvFinal: () => { ui.verDuvFinal = !ui.verDuvFinal; render(); },
   removerDuvida: el => {
     const ids = new Set(el.dataset.id.split(','));
+    // o ✕ da linha devolve o item ao pedido (só "Limpar dúvidas" mantém fora)
+    for (const d of db.duvidas.filter(x => ids.has(x.id))) tirarMarcaDuvida(d);
     db.duvidas = db.duvidas.filter(x => !ids.has(x.id));
     if (ids.has(ui.editDuvida)) ui.editDuvida = null;
     salvar();
@@ -11017,7 +11085,7 @@ const acoes = {
     if (!alvo.length) return;
     const itens = gruposDuvidas(alvo).length;
     const de = ui.duvForn ? ` de ${ui.duvForn}` : '';
-    if (!(await confirmar(`Remover os ${itens} item(ns) em dúvida${de}?${ui.duvForn ? '\n\nAs dúvidas dos outros fornecedores continuam na fila.' : ''}`, 'Remover'))) return;
+    if (!(await confirmar(`Remover os ${itens} item(ns) em dúvida${de}?${ui.duvForn ? '\n\nAs dúvidas dos outros fornecedores continuam na fila.' : ''}\n\nEles continuam fora do pedido. Para voltar, use ✕ tirar da dúvida no item (ou o ✕ da linha aqui).`, 'Remover'))) return;
     const ids = new Set(alvo.map(x => x.id));
     db.duvidas = db.duvidas.filter(x => !ids.has(x.id));
     ui.editDuvida = null;
@@ -11556,7 +11624,19 @@ const formularios = {
       resto.splice(pos, 0, ...novas);
       db.duvidas = resto;
       ui.editDuvida = null;
-      toast(novas.length ? 'Item duvidoso atualizado.' : 'Item tirado das dúvidas (nenhuma loja com quantidade).');
+      // a marca permanente acompanha as lojas que ficaram na dúvida (trocar DPR por DSS move a marca; zerar todas devolve o item ao pedido)
+      const cotE = db.cotacoes.find(x => x.id === grupo[0].origem?.cotId);
+      const iE = cotE ? itemDaDuvida(cotE, grupo[0]) : -1;
+      let acertou = false;
+      if (cotE && iE >= 0 && cotE.foraDuvida?.[iE]) {
+        acertou = true;
+        const marcas = {};
+        for (const x of novas) marcas[lojas().find(y => siglaLoja(y) === x.empresa)?.id || '*'] = true;
+        cotE.foraDuvida = { ...cotE.foraDuvida };
+        if (Object.keys(marcas).length) cotE.foraDuvida[iE] = marcas; else delete cotE.foraDuvida[iE];
+        if (!Object.keys(cotE.foraDuvida).length) delete cotE.foraDuvida;
+      }
+      toast(novas.length ? 'Item duvidoso atualizado.' : acertou ? 'Item tirado das dúvidas (nenhuma loja com quantidade): volta ao pedido.' : 'Item tirado das dúvidas (nenhuma loja com quantidade).');
     } else {
       const item = { empresa: d.empresa || 'N/A', qtd: Math.max(1, parseInt(d.qtd, 10) || 1), ...comum };
       ui.ultimaEmpresa = item.empresa;
@@ -12415,12 +12495,27 @@ const pip = { win: null, cotId: null, i: null, loja: 0, flutuante: false, soFalt
 window.addEventListener('pagehide', () => { try { pip.win?.close(); } catch (e) { /* já fechada */ } });
 const pipSuportado = () => typeof window.documentPictureInPicture?.requestWindow === 'function';
 
-/** Itens na ordem do comparativo, respeitando os filtros ("Mostrar itens de", etiquetas de aviso). */
-function itensPip(c) {
+/** Itens na ordem do comparativo, respeitando os filtros ("Mostrar itens de", etiquetas de aviso). Os já comprados (por fora) e os que estão em Dúvidas (em todas as lojas com quantidade) não entram, a não ser com `comExcluidos`. */
+function itensPip(c, comExcluidos = false) {
   const linhas = [...document.querySelectorAll('.tab-comp tbody tr[data-comp-linha]')];
-  if (linhas.length && cotAtual() === c) return linhas.filter(tr => !tr.hidden).map(tr => +tr.dataset.compLinha);
-  const valor = filtroVencedor(c);
-  return comparar(c).linhas.filter(l => linhaNoFiltroVenc(c, l, valor)).map(l => l.i);
+  let r;
+  if (linhas.length && cotAtual() === c) r = linhas.filter(tr => !tr.hidden).map(tr => +tr.dataset.compLinha);
+  else {
+    const valor = filtroVencedor(c);
+    r = comparar(c).linhas.filter(l => linhaNoFiltroVenc(c, l, valor)).map(l => l.i);
+  }
+  if (comExcluidos) return r;
+  const duv = duvidasPorItem(c);
+  return r.filter(i => !itemForaDaJanela(c, i, duv));
+}
+
+/** O item que a janela mostra depois que `i` sair dela: o próximo que fica na janela, ou o anterior se era o último. */
+function proximoAposSairPip(c, i) {
+  const ant = itensPip(c, true);
+  const pos = ant.indexOf(i);
+  const duv = duvidasPorItem(c);
+  const fica = x => x !== i && !itemForaDaJanela(c, x, duv);
+  return ant.slice(pos + 1).find(fica) ?? [...ant.slice(0, Math.max(pos, 0))].reverse().find(fica) ?? null;
 }
 
 async function abrirPip() {
@@ -12820,9 +12915,12 @@ async function duvidaPip() {
   if (cotTravada(db.cotacoes.find(x => x.id === pip.cotId))) { avisarTravada(); return; }
   const c = db.cotacoes.find(x => x.id === pip.cotId);
   if (!c || !pip.win) return;
-  const n = await duvidasDoItem(c, pip.i, null, '', pip.win.document);
+  const atual = pip.i;
+  const n = await duvidasDoItem(c, atual, null, '', pip.win.document);
   if (n <= 0) { desenharPip(true); return; }
   render();
+  // o item em dúvida sai da janela: ela passa para o próximo (se só uma loja ficou em dúvida, ele continua aí)
+  if (itemForaDaJanela(c, atual)) { const prox = proximoAposSairPip(c, atual); if (prox != null) { irParaItemPip(c, prox); toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila). Ele não aparece mais na janela; para desfazer, use ✕ tirar da dúvida no comparativo.`, 5000); return; } }
   desenharPip(true);
   toast(`${n} item(ns) em Dúvidas (${db.duvidas.length} na fila). Se foi engano, clique em ✕ tirar da dúvida no item.`, 5000);
 }
@@ -12896,6 +12994,11 @@ function desenharPipAgora(focar, d, raiz) {
   const sel = ativo ? [ativo.dataset.qtdLoja, ativo.selectionStart, ativo.selectionEnd] : null;
   const comp = comparar(c);
   const lista = itensPip(c);
+  // todos os itens da lista já foram comprados por fora: nada para mostrar
+  if (!lista.length && itensPip(c, true).length) {
+    raiz.innerHTML = `<div class="pip-barra"><select id="pipForn" title="Mostrar só os itens que este fornecedor ganhou">${opcoesVencedor(c, comp, undefined, true)}</select></div><div class="pip-concluido" id="pipTodosComprados" role="status">${(() => { const dp = duvidasPorItem(c); return c.itens.some((_, k) => c.foraDuvida?.[k] || dp.has(k)); })() ? '🛒 Nenhum item para comprar: os que sobram já foram comprados ou estão em dúvida.' : '🛒 Todos os itens já foram comprados.'}<br><small class="muted">Eles não aparecem aqui. Para desfazer, use o comparativo.</small></div>`;
+    return;
+  }
   if (!c.itens[pip.i]) pip.i = lista[0] ?? 0;
   if (lista.length && !lista.includes(pip.i)) pip.i = lista[0];
   const l = comp.linhas[pip.i];
@@ -12907,7 +13010,7 @@ function desenharPipAgora(focar, d, raiz) {
   const [estado, rotEstado] = estadoPip(c, l);
   raiz.innerHTML = `
     <div class="pip-barra">
-      <select id="pipForn" title="Mostrar só os itens que este fornecedor ganhou">${opcoesVencedor(c, comp)}</select>
+      <select id="pipForn" title="Mostrar só os itens que este fornecedor ganhou">${opcoesVencedor(c, comp, undefined, true)}</select>
       <button type="button" data-pip="ant" title="Item anterior (↑)" ${pos <= 0 ? 'disabled' : ''}>◀</button>
       <span class="pip-pos" title="Item da cotação · posição na lista">#${l.i + 1} <span class="muted">· ${pos < 0 ? '—' : pos + 1} de ${lista.length}</span></span>
       <button type="button" data-pip="prox" title="Próximo item (Enter ou ↓)" ${pos >= lista.length - 1 ? 'disabled' : ''}>▶</button>

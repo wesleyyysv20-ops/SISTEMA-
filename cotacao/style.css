@@ -2744,5 +2744,7 @@ body.sem-nuvem .topbar { top: calc(env(safe-area-inset-top, 0px) + var(--faixa-h
 @media (max-width: 1100px) { .tab-comp td.col-escolhido .esc-avisos { text-align: center; } }
 .barra-fixa-comp { position: fixed; right: 68px; bottom: 84px; z-index: 45; height: 42px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: var(--r-pill, 21px); background: var(--card); border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(10, 18, 40, .18); }
 .barra-fixa-comp[hidden] { display: none; }
+.barra-fixa-comp.sem-topo { right: 18px; }
+body.com-barra-fixa { padding-bottom: 72px; } /* a barra fixa não tapa o fim da página */
 .barra-fixa-comp button { margin: 0; white-space: nowrap; }
-@media (max-width: 760px) { .barra-fixa-comp { right: 60px; bottom: calc(var(--altura-menu) + 14px + env(safe-area-inset-bottom, 0px)); } }
+@media (max-width: 760px) { .barra-fixa-comp.sem-topo { right: 12px; } .barra-fixa-comp { right: 60px; bottom: calc(var(--altura-menu) + 14px + env(safe-area-inset-bottom, 0px)); } }
