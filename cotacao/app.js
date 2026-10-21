@@ -2972,16 +2972,80 @@ async function baixarPlanilha(c, fi) {
 
 /* ---------------- Excel: leitura da resposta ---------------- */
 
+/** Letras da coluna (1 = A) para o nome da célula. */
+function letraColuna(n) {
+  let t = '';
+  while (n > 0) { const r = (n - 1) % 26; t = String.fromCharCode(65 + r) + t; n = Math.floor((n - 1) / 26); }
+  return t;
+}
+
+/** Lê o .ods inteiro (todas as abas, por nome) mantendo a numeração exata de linhas e colunas.
+ *  Devolve abas "falsas" com getCell('G15') compatível com cellValue/cellTexto. */
+async function lerAbasOds(file) {
+  const xml = await arquivoDoZip(await file.arrayBuffer(), 'content.xml');
+  if (!xml) throw new Error('Não achei a planilha dentro do arquivo .ods.');
+  const doc = new DOMParser().parseFromString(new TextDecoder().decode(xml), 'application/xml');
+  const NS = 'urn:oasis:names:tc:opendocument:xmlns:table:1.0';
+  const NSO = 'urn:oasis:names:tc:opendocument:xmlns:office:1.0';
+  const abas = [];
+  for (const tab of doc.getElementsByTagNameNS(NS, 'table')) {
+    const celulas = new Map();
+    let r = 0;
+    for (const tr of tab.children) {
+      if (tr.namespaceURI !== NS || tr.localName !== 'table-row') continue;
+      const repL = Number(tr.getAttributeNS(NS, 'number-rows-repeated')) || 1;
+      const linha = [];
+      let col = 0;
+      for (const td of tr.children) {
+        if (td.namespaceURI !== NS || !/^(covered-)?table-cell$/.test(td.localName)) continue;
+        const repC = Number(td.getAttributeNS(NS, 'number-columns-repeated')) || 1;
+        const tipo = td.getAttributeNS(NSO, 'value-type');
+        let valor = null;
+        if (/^(float|currency|percentage)$/.test(tipo)) {
+          const n = Number(td.getAttributeNS(NSO, 'value'));
+          valor = Number.isFinite(n) ? n : null;
+        } else {
+          const txt = [...td.children].filter(x => x.localName === 'p').map(x => x.textContent).join('\n').trim();
+          valor = txt === '' ? null : txt;
+        }
+        if (valor != null) for (let k = 0; k < Math.min(repC, 200); k++) linha.push([col + k + 1, valor]);
+        col += repC;
+      }
+      // linhas vazias repetidas só avançam a numeração; linhas com conteúdo repetem (com limite)
+      for (let k = 0; k < Math.min(repL, 500); k++) {
+        for (const [c, v] of linha) celulas.set(letraColuna(c) + (r + k + 1), v);
+      }
+      r += repL;
+    }
+    abas.push({
+      name: tab.getAttributeNS(NS, 'name'),
+      getCell: ref => ({ value: celulas.has(ref) ? celulas.get(ref) : null }),
+    });
+  }
+  return abas;
+}
+
 async function lerPlanilha(file) {
   const cab = new Uint8Array(await file.slice(0, 4).arrayBuffer());
   if (!(cab[0] === 0x50 && cab[1] === 0x4b)) {
-    throw new Error(`O arquivo "${file.name}" não está no formato Excel .xlsx${cab[0] === 0xd0 ? ' (é o formato antigo .xls)' : ''}.\nAbra no Excel e use "Salvar como" → "Pasta de Trabalho do Excel (.xlsx)", depois importe de novo.`);
+    throw new Error(`O arquivo "${file.name}" não está no formato Excel .xlsx ou LibreOffice .ods${cab[0] === 0xd0 ? ' (é o formato antigo .xls)' : ''}.\nAbra no Excel e use "Salvar como" → "Pasta de Trabalho do Excel (.xlsx)", depois importe de novo.`);
   }
-  const wb = await novoLivroExcel();
-  try {
-    await wb.xlsx.load(await file.arrayBuffer());
-  } catch (e) {
-    throw new Error(`Não consegui abrir "${file.name}". Abra no Excel, use "Salvar como" .xlsx e importe de novo.\n(detalhe técnico: ${e.message})`);
+  let wb;
+  if (/\.ods$/i.test(file.name || '') || await zipEhOds(file)) {
+    let abas;
+    try {
+      abas = await lerAbasOds(file);
+    } catch (e) {
+      throw new Error(`Não consegui abrir "${file.name}". Abra no LibreOffice ou Excel, use "Salvar como" .xlsx e importe de novo.\n(detalhe técnico: ${e.message})`);
+    }
+    wb = { worksheets: abas, getWorksheet: nome => abas.find(a => a.name === nome) };
+  } else {
+    wb = await novoLivroExcel();
+    try {
+      await wb.xlsx.load(await file.arrayBuffer());
+    } catch (e) {
+      throw new Error(`Não consegui abrir "${file.name}". Abra no Excel, use "Salvar como" .xlsx e importe de novo.\n(detalhe técnico: ${e.message})`);
+    }
   }
   const m = wb.getWorksheet('_dados');
   let meta = null;
@@ -3483,6 +3547,22 @@ function pedidosPorFornecedor(c, lojaId = null) {
   }).filter(p => p.itens.length);
 }
 
+/** Assinatura curta do pedido de um fornecedor (código + quantidade por loja + preço + marca): detecta mudança depois de exportado. */
+function assinaturaPedido(p) {
+  const LJ = lojas();
+  const txt = [...p.itens].sort((a, b) => a.i - b.i)
+    .map(x => `${x.i}|${LJ.map(lj => x.qtds[lj.id] || 0).join(',')}|${x.qtd}|${x.preco}|${x.marca || ''}`).join(';');
+  let h = 5381;
+  for (let k = 0; k < txt.length; k++) h = ((h * 33) ^ txt.charCodeAt(k)) >>> 0;
+  return h.toString(36) + '.' + p.itens.length;
+}
+
+/** Pedido já exportado que mudou depois (quantidade, preço, vencedor)? Cotação antiga, sem assinatura guardada: nunca. */
+function pedidoMudouDepoisDeExportar(f, ped) {
+  if (!f?.concluidoEm || !f.pedidoAssinatura) return false;
+  return !ped?.itens.length || assinaturaPedido(ped) !== f.pedidoAssinatura; // pedido vazio agora também é mudança
+}
+
 /** Marca que vai no pedido: a pedida por extenso quando a resposta é ela (ou abreviação dela). */
 function marcaPedido(pedida, resposta, status) {
   if ((status === 'ok' || status === 'abrev') && opcoesMarca(pedida).length === 1) return opcoesMarca(pedida)[0];
@@ -3593,7 +3673,14 @@ function anotarPedidoExportado(c, fi, lojaId = null) {
     const lojasComItens = lojas().filter(lj => pedidosPorFornecedor(c, lj.id).some(p => p.fi === fi)).map(lj => lj.id);
     if (!lojasComItens.every(id => f.exportadoLojas[id])) return;
   }
-  f.concluidoEm = f.concluidoEm || agora;
+  const ped = pedidosPorFornecedor(c).find(p => p.fi === fi);
+  const sig = ped ? assinaturaPedido(ped) : null;
+  if (sig && f.pedidoAssinatura && f.pedidoAssinatura !== sig) {
+    // o pedido mudou desde a última exportação: este é um pedido novo (precisa ser enviado de novo)
+    delete f.pedidoEnviadoEm;
+    f.concluidoEm = agora;
+  } else f.concluidoEm = f.concluidoEm || agora;
+  if (sig) f.pedidoAssinatura = sig;
 }
 
 async function baixarPedidos(c, fi = null, lojaId = null) {
@@ -5860,7 +5947,7 @@ function renderCotacoes() {
     <div class="row-between cab-pagina">
       <div class="cab-tit"><h2>Cotações</h2><p class="cab-sub">Acompanhe as respostas, os pedidos e o andamento de cada cotação</p></div>
       <div class="row">
-        ${abertas.length ? '<label class="btn" style="margin:0" title="Importar as planilhas que os fornecedores devolveram (o sistema acha a cotação e o fornecedor de cada uma)">📥 Importar respostas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>' : ''}
+        ${abertas.length ? '<label class="btn" style="margin:0" title="Importar as planilhas que os fornecedores devolveram (o sistema acha a cotação e o fornecedor de cada uma)">📥 Importar respostas<input type="file" class="hidden" accept=".xlsx,.xls,.ods" multiple data-import-geral></label>' : ''}
         <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido de compra">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
       </div>
@@ -6322,6 +6409,10 @@ function checklistPedido(c, fi) {
   const compra = ganhos.filter(l => l.q > 0);
   const ultimos = ultimosPrecos(c.id);
   const itens = fn => compra.filter(fn).map(l => l.i);
+  // os demais avisos olham exatamente o que vai na planilha (inclui a parte dividida; Dúvidas fica de fora)
+  const noPedido = new Set((pedidosPorFornecedor(c).find(p => p.fi === fi)?.itens || []).map(x => x.i));
+  const doPedido = comp.linhas.filter(l => noPedido.has(l.i) && !l.comprado);
+  const itensPed = fn => doPedido.filter(fn).map(l => l.i);
   const lista = [];
   const add = (nivel, icone, texto, is) => { if (is.length) lista.push({ nivel, icone, texto, itens: is }); };
   if (comp.porLoja) {
@@ -6329,16 +6420,16 @@ function checklistPedido(c, fi) {
   }
   add('erro', '📦', 'acima do estoque informado', itens(l => l.estoque != null && l.q > l.estoque));
   add('erro', '✗', 'com a marca recusada (comprando por não haver outro preço)', itens(l => l.recusadaGanhou));
-  add('aviso', '🏷️', 'marca diferente da pedida ou para conferir', itens(l => (l.marcas[fi] === 'errada' || l.marcas[fi] === 'duvida') && !l.recusas[fi] && !l.permitidas[fi]));
-  add('aviso', '⚠', 'preço fora do normal (último preço pago ou os outros fornecedores)', itens(l => {
+  add('aviso', '🏷️', 'marca diferente da pedida ou para conferir', itensPed(l => (l.marcas[fi] === 'errada' || l.marcas[fi] === 'duvida') && !l.recusas[fi] && !l.permitidas[fi]));
+  add('aviso', '⚠', 'preço fora do normal (último preço pago ou os outros fornecedores)', itensPed(l => {
     const o = f.respostas?.[l.i];
     const p = l.precos[fi];
     const ult = ultimos[idProdutoItem(l.it)] || null;
     return alertasPreco(p, ult, l.precos).length && !(o?.precoConferido != null && o.precoConferido === p);
   }));
-  add('aviso', '⚠', 'mais de 100% de diferença para o 2º lugar (preço pode estar errado)', itens(l => difSuspeita(l)));
+  add('aviso', '⚠', 'mais de 100% de diferença para o 2º lugar (preço pode estar errado)', itensPed(l => difSuspeita(l)));
   add('info', '❓', 'em Dúvidas: ficam fora deste pedido até sair da fila', itens(l => l.duvida));
-  add('info', '🐢', 'com entrega demorada (GO)', itens(l => entregaDemorada(f, f.respostas?.[l.i])));
+  add('info', '🐢', 'com entrega demorada (GO)', itensPed(l => entregaDemorada(f, f.respostas?.[l.i])));
   return lista;
 }
 
@@ -6426,7 +6517,7 @@ async function exportarPedidoForn(c, fi, doc = document) {
     return porLoja.map(({ lj }) => ({ id: lj.id, rotulo: `Planilha de ${lj.nome}`, nome: nomePedido(c, f, lj) }));
   };
   const lista = checklistPedido(c, fi);
-  const ganhos = comp.linhas.filter(l => l.vencedor === fi && l.q > 0).length;
+  const ganhos = total.itens.length; // os mesmos itens que vão na planilha
   const pendente = lista.some(x => x.nivel !== 'info');
   const resp = await dialogoFormatoPedido({ f, padrao: f.formatoPedido || cad?.formatoPedido, lojasComItens: porLoja.map(x => x.lj), porLoja: comp.porLoja, nomesArquivos, checklist: htmlChecklistPedido(c, lista, ganhos), pendente, doc });
   if (!resp) return;
@@ -6720,7 +6811,7 @@ function secaoPedidos(c, comp) {
     <div class="table-wrap"><table>
       <thead><tr><th>Fornecedor</th>${comp.porLoja ? LJ.map(lj => `<th class="r">${esc(lj.nome)}</th>`).join('') : ''}<th class="r">Total do pedido</th>${temFrete ? '<th class="r">Frete / mínimo</th>' : ''}${temPag ? '<th>Pagamento / entrega</th>' : ''}<th>Recebimento</th><th><span class="sr-only">Ações</span></th></tr></thead>
       <tbody>${peds.map(p => `<tr>
-        <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span>${p.f.concluidoEm ? `<br><span class="badge ok" title="Pedido exportado (cotação do fornecedor concluída)">✓ exportado ${fmtData(p.f.concluidoEm)}</span>` : ''}${p.f.pedidoEnviadoEm ? `<br><span class="badge ok">✉ pedido enviado ${fmtData(p.f.pedidoEnviadoEm)}</span>` : ''}</td>
+        <td><b>${esc(p.f.nome)}</b><br><span class="small muted">${p.itens.length} item(ns)</span>${p.f.concluidoEm ? `<br><span class="badge ok" title="Pedido exportado (cotação do fornecedor concluída)">✓ exportado ${fmtData(p.f.concluidoEm)}</span>` : ''}${pedidoMudouDepoisDeExportar(p.f, p) ? `<br><span class="badge warn" title="Quantidade, preço ou vencedor mudou depois da exportação. Exporte de novo antes de enviar.">⚠ Pedido mudou — exporte de novo</span>` : ''}${p.f.pedidoEnviadoEm ? `<br><span class="badge ok">✉ pedido enviado ${fmtData(p.f.pedidoEnviadoEm)}</span>` : ''}</td>
         ${comp.porLoja ? LJ.map(lj => `<td class="r">${itensLoja(p, lj) ? `${fmtMoeda(totLoja(p, lj))}<br><span class="small muted">${itensLoja(p, lj)} item(ns)</span>` : '<span class="muted">—</span>'}</td>`).join('') : ''}
         <td class="r"><b>${fmtMoeda(p.total)}</b></td>
         ${temFrete ? `<td class="r small">${celulaFrete(infoMin(p.f.fornecedorId))}</td>` : ''}
@@ -6740,7 +6831,14 @@ function secaoPedidos(c, comp) {
 
 /** Atualiza totais e pedidos sem redesenhar a tabela (para não perder o campo em edição). */
 /** Botão "⬇ Exportar (N)" do quadro Fornecedores (atualizado também enquanto se digitam as quantidades). */
-function botaoExportarForn(f, fi, n) {
+function botaoExportarForn(f, fi, n, mudou = false) {
+  // pedido mudou depois de exportado: a planilha antiga não vale mais
+  if (f.concluidoEm && mudou && !n) {
+    return `<span class="exp-forn" data-exp-f="${fi}"><span class="badge warn" title="O pedido já exportado ficou vazio (quantidades zeradas ou outro vencedor). A planilha enviada antes está desatualizada.">⚠ Pedido mudou — ficou vazio</span></span>`;
+  }
+  if (n && f.concluidoEm && mudou) {
+    return `<span class="exp-forn" data-exp-f="${fi}"><span class="badge warn" title="Quantidade, preço ou vencedor mudou depois da exportação. A planilha enviada antes está desatualizada.">⚠ Pedido mudou — exporte de novo</span> <button class="sm primary" data-act="exportarPedidoForn" data-f="${fi}" title="Exportar o pedido atualizado de ${esc(f.nome)} (${n} item(ns))">⬇ Exportar (${n})</button></span>`;
+  }
   // pedido já exportado: o próximo passo é mandar para o vendedor
   if (n && f.concluidoEm) {
     return `<span class="exp-forn" data-exp-f="${fi}">${f.pedidoEnviadoEm
@@ -7113,12 +7211,13 @@ function atualizarResumosCot(c) {
 }
 
 function atualizarBotoesExportar(c) {
-  const qtd = Object.fromEntries(pedidosPorFornecedor(c).map(p => [p.fi, p.itens.length]));
+  const peds = pedidosPorFornecedor(c);
+  const qtd = Object.fromEntries(peds.map(p => [p.fi, p.itens.length]));
   for (const el of document.querySelectorAll('.exp-forn[data-exp-f]')) {
     const fi = +el.dataset.expF;
     const f = c.fornecedores[fi];
     if (!f) continue;
-    const novo = botaoExportarForn(f, fi, qtd[fi] || 0);
+    const novo = botaoExportarForn(f, fi, qtd[fi] || 0, pedidoMudouDepoisDeExportar(f, peds.find(p => p.fi === fi)));
     if (el.outerHTML !== novo) el.outerHTML = novo;
   }
 }
@@ -7267,8 +7366,8 @@ function renderCotacao(id) {
       <td>${f.respondidoEm ? `<span class="badge ok">${t.cotados}/${c.itens.length} itens</span>` : `<span class="badge ${atrasado && prazo.dias < 0 ? 'danger' : 'warn'}" title="${atrasado ? esc(textoPrazo(prazo.dias, c.prazoHora)) : ''}">${atrasado && prazo.dias < 0 ? 'atrasada' : 'aguardando'}</span>`}${f.cobradoEm && !f.respondidoEm ? `<br><span class="small muted">cobrado em ${fmtData(f.cobradoEm)}</span>` : ''}</td>
       <td class="r">${f.respondidoEm ? (comp.porLoja ? fmtMoeda(t.total) : `<span class="muted" title="Sem quantidade das lojas: estimativa com a quantidade da lista">${fmtMoeda(t.total)}<br><small>estimativa</small></span>`) : '—'}</td>
       <td class="actions-cell">
-        ${botaoExportarForn(f, fi, pedidoDe[fi]?.itens.length || 0)}
-        <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥<span class="rot-acao"> Importar</span><input type="file" class="hidden" accept=".xlsx,.xls" data-import="${fi}"></label>
+        ${botaoExportarForn(f, fi, pedidoDe[fi]?.itens.length || 0, pedidoMudouDepoisDeExportar(f, pedidoDe[fi]))}
+        <label class="btn sm" style="margin:0" title="Importar a planilha que o fornecedor devolveu">📥<span class="rot-acao"> Importar</span><input type="file" class="hidden" accept=".xlsx,.xls,.ods" data-import="${fi}"></label>
         <button type="button" class="btn sm" data-act="digitar" data-f="${fi}" title="Digitar os preços manualmente">✎<span class="rot-acao"> Digitar</span></button>
         <details class="menu-acoes"><summary class="btn sm" title="Mais ações: digitar preços, baixar a planilha, remover">⋯</summary>
           <div class="menu-acoes-lista">
@@ -7515,7 +7614,7 @@ function renderCotacao(id) {
       ${disponiveis.length ? `<select id="addFornCot" style="width:auto;max-width:280px">${disponiveis.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select>
       <button class="sm" data-act="addFornCot">+ Adicionar fornecedor</button>` : ''}
       <button class="sm" data-act="baixarGeral" title="Planilha da cotação sem nome de fornecedor">⬇ Planilha da cotação</button>
-      <label class="btn sm" style="margin:0" title="Importar uma planilha preenchida pelo fornecedor">📥 Importar planilhas respondidas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-cot></label>
+      <label class="btn sm" style="margin:0" title="Importar uma planilha preenchida pelo fornecedor">📥 Importar planilhas respondidas<input type="file" class="hidden" accept=".xlsx,.xls,.ods" multiple data-import-cot></label>
     </div>
     ${nf ? `<div class="row barra-lote">
       <span class="small muted" id="qtdSel">${textoSel(c)}</span>
@@ -8112,6 +8211,8 @@ async function exportarRelatorio() {
     notas.map(x => [x.nome, x.nota, `${x.respondidas}/${x.recebidas}`, x.comPrazo ? `${x.noPrazo}/${x.comPrazo}` : '', `${x.itensCotados}/${x.itensPedidos}`, x.marcaErrada, x.notas ? `${x.notasDiv}/${x.notas}` : '', x.cobrado]), [26, 8, 11, 10, 13, 13, 20, 18]);
   aba('Preços suspeitos', ['Cotação', 'Data', 'Código', 'Descrição', 'Fornecedor', 'Preço (R$)', 'Preço típico dos outros (R$)', 'Situação'],
     precosSuspeitos().map(x => [x.c.numero, x.c.data, x.l.it.codigo || '', x.l.it.descricao || '', x.c.fornecedores[x.j]?.nome || '', x.p, x.tipico, x.alto ? 'muito acima' : 'muito abaixo']), [9, 12, 18, 36, 20, 12, 22, 14]);
+  aba('Itens mais cotados', ['Código', 'Descrição', 'Marca', 'Vezes cotado', 'Sem preço', 'Comprado', 'Finalizadas sem qtd.', 'Qtd. comprada', 'Último preço pago (R$)', 'Fornecedor', 'Data'],
+    itensMaisCotados().map(x => [x.it.codigo || '', x.it.descricao || '', x.it.marca || '', x.vezes, x.semPreco, x.finais ? `${x.compras} de ${x.finais}` : '', x.semInfo, x.qtd, x.ultimo ? x.ultimo.preco : null, x.ultimo?.forn || '', x.ultimo?.data || '']), [18, 36, 14, 13, 11, 12, 18, 14, 20, 22, 12]);
   // formatos: colunas "(R$)" em dinheiro, "%"/"Vantagem" em porcentagem; no Resumo, pela linha
   const formato = txt => (/\(R\$\)/.test(txt) ? '#,##0.00' : /%|Vantagem|Dif\. típica/.test(txt) ? '0.0%' : null);
   for (const ws of wb.worksheets) {
@@ -8754,7 +8855,7 @@ function acoesCotForn(f, c) {
   const sit = respondeu(fc) ? '<span class="badge ok">✓ respondeu</span>' : fc.enviadoEm ? `<span class="badge blue">enviada ${fmtData(fc.enviadoEm)}</span>` : '<span class="badge">não enviada</span>';
   return `${sit}
     <button type="button" class="sm" data-act="enviarDaAbaForn" data-id="${esc(f.id)}" title="Baixar a planilha de ${esc(f.nome)} e abrir o e-mail">✉ Enviar</button>
-    <label class="btn sm" style="margin:0" title="Importar a planilha que ${esc(f.nome)} devolveu">📥 Resposta<input type="file" class="hidden" accept=".xlsx,.xls" data-import-resp-forn="${esc(f.id)}"></label>`;
+    <label class="btn sm" style="margin:0" title="Importar a planilha que ${esc(f.nome)} devolveu">📥 Resposta<input type="file" class="hidden" accept=".xlsx,.xls,.ods" data-import-resp-forn="${esc(f.id)}"></label>`;
 }
 
 function linhasFornecedores() {
@@ -8899,7 +9000,7 @@ function renderInicio() {
     <div class="row-between cab-pagina">
       <div class="cab-tit"><h2>Início</h2><p class="cab-sub saudacao">${esc(saudacaoInicio())}</p></div>
       <div class="row">
-        ${ativas.length ? '<label class="btn" style="margin:0" title="Importar as planilhas que os fornecedores devolveram (o sistema acha a cotação e o fornecedor de cada uma)">📥 Importar respostas<input type="file" class="hidden" accept=".xlsx,.xls" multiple data-import-geral></label>' : ''}
+        ${ativas.length ? '<label class="btn" style="margin:0" title="Importar as planilhas que os fornecedores devolveram (o sistema acha a cotação e o fornecedor de cada uma)">📥 Importar respostas<input type="file" class="hidden" accept=".xlsx,.xls,.ods" multiple data-import-geral></label>' : ''}
         <label class="btn" style="margin:0" title="Conferir a nota fiscal (XML da NF-e) com o pedido">🧾 Conferir NF-e<input type="file" class="hidden" accept=".xml,text/xml,application/xml" multiple data-import-nfe-geral></label>
         <a class="btn btn-primary" href="#" data-route="nova">+ Nova cotação</a>
       </div>
@@ -11006,6 +11107,12 @@ const acoes = {
     const f = c?.fornecedores[+el.dataset.f];
     if (!f) return;
     f.concluidoEm = new Date().toISOString();
+    const ped = pedidosPorFornecedor(c).find(p => p.fi === +el.dataset.f);
+    if (ped) {
+      const sig = assinaturaPedido(ped);
+      if (f.pedidoAssinatura && f.pedidoAssinatura !== sig) delete f.pedidoEnviadoEm; // pedido mudou: precisa enviar de novo
+      f.pedidoAssinatura = sig;
+    }
     salvar();
     render();
     toast(`Cotação de ${f.nome} marcada como concluída.`);
@@ -12481,7 +12588,7 @@ function avisoConcluidoPip(c, lista) {
   const fi = valor && valor !== '__sem' ? c.fornecedores.findIndex(f => f.fornecedorId === valor) : -1;
   if (!falta) {
     const f = c.fornecedores[fi];
-    const exp = !f ? '' : f.concluidoEm ? ' <span class="pip-exportado">· ✓ pedido exportado</span>'
+    const exp = !f ? '' : f.concluidoEm && !pedidoMudouDepoisDeExportar(f, pedidosPorFornecedor(c).find(p => p.fi === fi)) ? ' <span class="pip-exportado">· ✓ pedido exportado</span>'
       : `<br><button type="button" class="sm primary pip-exportar" data-pip="exportar" data-f="${fi}" title="Exportar o pedido de ${esc(f.nome)} (com o checklist) sem sair desta janela">⬇ Exportar pedido de ${esc(f.nome)}</button>`;
     return `<div class="pip-concluido" role="status">✓ Todos os itens ${fi >= 0 ? `de <b>${esc(de)}</b>` : esc(de)} já têm a quantidade informada.${exp}</div>`;
   }
